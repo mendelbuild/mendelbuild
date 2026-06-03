@@ -1,8 +1,8 @@
-# MendelCode
+# MendelBuild
 
 ## Current Status
 
-MendelCode is a true prototype-level experiment which should not be taken seriously or used for anything "real" until further notice. _Caveat emptor._
+MendelBuild is a true prototype-level experiment which should not be taken seriously or used for anything "real" until further notice. _Caveat emptor._
 
 ## Philosophical background
 

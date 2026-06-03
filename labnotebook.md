@@ -1,6 +1,44 @@
-# MendelCode Lab Notebook
+# MendelBuild Lab Notebook
 
 Posts are in reverse chronological order.
+
+## 2026-06-03
+
+I once again don't have enough time (1h) to really build anything meaningful here. Instead I thought I could sketch out some pseudocode data structures.
+
+Strategy:
+- Plain-English summary (optional)
+- List of OKRs
+- List of Roadmaps
+
+OKR:
+- optional parent Objective
+- Plain-English Objective
+- List of "Key Results": (NOTE: data may come from outside of Mendel)
+  - target measurement
+  - target date
+
+Roadmap: (can have multiple roadmaps... e.g., for business, product, eng, etc?)
+- DAG of Leaps
+- Unlike a traditional roadmap, less about walltimes than sequencing
+
+The Decision Queue:
+- basically a table of Decisions
+
+Decision:
+- Kind: select exactly one, select at most one, accept/reject, rank
+- Objectivity score (the more objective, the easier to automate)
+- Importance score (some sort of estimate of how likely this is to affect higher-level goals)
+
+Leap: (NOTE: this is an important term... worth getting it right. Batch? Run? Leap? Jump?)
+- "Kind" (e.g., Feature, Performance, Fitness?? Not sure what words to use...)
+- qualitative goal (English text)
+- function to convert a Variation into a Score
+- List of Variations
+
+
+Variation:
+
 
 ## 2026-06-02
 
