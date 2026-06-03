@@ -2,6 +2,22 @@
 
 Posts are in reverse chronological order.
 
+## 2026-06-02
+
+I spent part of today implementing a "marionette" prototype (trying to reveal ulterior motives lurking behind political speech and actions).
+
+I haven't done as much research as I probably should, but a brief look around at "prior art" in this area seems to focus on attempts to align and/or more strictly validate individual changes (rather than evaluating a population).
+
+There's no way I'm going to do any actual code-related things today/tonight because it's already 10pm. That being said, maybe I could use this time to brainstorm how/where I could start (tomorrow?):
+* I need a basic POC of some Go code driving headless Claude Code sessions (somehow)... or maybe their equivalent?
+* I should design the data structures for hierarchical selection criteria / goals / missions / etc etc etc
+* I could design the queue (for humans, that is) where input is needed
+* I could design the cost-budgeting pieces (both tokens and dollars)... I guess it would require an understanding of approximate percent completion of both the overall objective and the budget set to get there.
+
+The idea would be able to describe some sort of webapp, press "Go", and then watch the system iterate until it gets there. It would be more compelling if it saw live traffic somehow... maybe there could be an AdWords component or something??
+
+Okay... gotta turn in.
+
 ## 2026-05-26
 
 Given that it's a prototype, I'm comfortable playing fast and loose with much of v0.1, but I do want to be deliberate and intentional about the HCI aspects.
@@ -43,3 +59,4 @@ I guess these individual runs/revs are "the new pull request", with the lifetime
 If the only thing that Mendel does is to manage all of that complexity, it would be an improvement over Claude Code, at least given my priorities. And I guess each change could have some sort of throughline about various quality metrics, too (code smells, telemetry, cost estimates, latency, etc).
 
 So: when I get back to this, I need to think through what that might look like... how to handle the variations and UX exploration, and how to handle the queue of necessary decisions.
+
