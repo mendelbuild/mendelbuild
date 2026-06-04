@@ -2,6 +2,83 @@
 
 Posts are in reverse chronological order.
 
+## 2026-06-04
+
+I finally have a day to devote to this project but am having trouble getting out of writer's block (again). I also have a cat that refuses to get off my lap and a tweaked back that's creating ergonomic problems with typing.
+
+Anyway, I felt excited about the convergence of Hops, Queues, Roadmaps, and OKRs/Strategy into a single coherent system. I guess theoretically the "Roadmap" could become just a "type of Hop" (alongside design, coding, etc). Actually, I guess (?) that OKRs could also be subjected to some sort of population modeling, though that makes my head spin.
+
+Would it be fair to say that all Roadmap items are "Hops" of some kind? Maybe that would help to formalize and standardize the dependencies between Hops as well as the uncertainty/cost associated with various potential outcomes.
+
+Trying again at establishing key primitives (soon I will be doing this in some sort of more formal way... Go or SQL or whatever):
+- Project
+  - Id
+  - Strategy
+  - List of Ecosystem
+  - List of Repository
+  - (Credentials?)
+- Repository
+  - Id
+  - Type (code, design, marketing, etc)
+  - Function to get a interface to the repo at a given commit/guid
+- Strategy
+  - Id
+  - Objective
+  - KRs: List of KeyResult
+  - SubStrategies: List of Strategy
+  - Roadmap
+  - Budgets: List of Budget
+- KeyResult
+  - Id
+  - Rationale
+  - Target
+  - Time horizon requirement [i.e., some measurements require a time aggregation, perhaps even weeks/months]
+  - History (timeseries)
+- Roadmap
+  - List: Deliverable
+- Deliverable:
+  - Id
+  - List of Hop
+  - Prereqs: List of DeliverableIds
+- Budget:
+  - Id
+  - Type (dollars, tokens, errors?)
+  - Spending (timeseries broken down by line item)
+  - Forecast (timeseries also broken down by line item)
+- Ecosystems:
+  - Id
+  - Type (web, prod, AdWords)
+  - HealthFuncs: List of HealthFunc (can be used to establish ecosystem quality KRs)
+- Hop:
+  - Id
+  - Qualitative goal
+  - Pruner: func from Variation to bool
+  - Scorer: func from Variation to float (only for retained Variations)
+  - RelatedKRs: List of KeyResults
+  - List of Variation
+  - Budgets: List of BudgetAllocation (cloud costs, tokens, etc)
+- Variation:
+  - Id
+  - Hop ptr
+  - Progression: Timestamped List of VariationLifeStage (won't spell this out, but basically generation, pre-prod, prod, failed, selected)
+  - Repo location (Id and commit)
+  - Ecosystem location (may be null)
+- BudgetAllocation:
+  - Id
+  - Type
+  - Limit (total, not per time)
+  - Period (time interval)
+  - Usage (timeseries)
+- DecisionQueue:
+  - (all past and future Decisions, filterable and sortable in different ways)
+- Decision:
+  - Kind: approve roadmap change, approve Hop, promote Variations, bless Variation, etc etc etc
+  - Objectivity score (the more objective, the easier to automate)
+  - Importance score (some sort of estimate of how likely this is to affect higher-level goals)
+  - Audit log
+
+
+
 ## 2026-06-03
 
 I once again don't have enough time (1h) to really build anything meaningful here. Instead I thought I could sketch out some pseudocode data structures.
@@ -23,21 +100,26 @@ Roadmap: (can have multiple roadmaps... e.g., for business, product, eng, etc?)
 - Unlike a traditional roadmap, less about walltimes than sequencing
 
 The Decision Queue:
-- basically a table of Decisions
+- basically a SQL-style table of Decisions...
+- TODO: <need more work here>
 
 Decision:
 - Kind: select exactly one, select at most one, accept/reject, rank
 - Objectivity score (the more objective, the easier to automate)
 - Importance score (some sort of estimate of how likely this is to affect higher-level goals)
 
-Leap: (NOTE: this is an important term... worth getting it right. Batch? Run? Leap? Jump?)
+Hop: (NOTE: this is an important term... worth getting it right. Batch? Run? Leap? Jump?)
 - "Kind" (e.g., Feature, Performance, Fitness?? Not sure what words to use...)
 - qualitative goal (English text)
+- O/KR alignment (English? Ideally quantitative but not always realistic)
 - function to convert a Variation into a Score
 - List of Variations
 
-
 Variation:
+- <pointer to Hop>
+- <pointer to RCS or equiv – GUID of variation "assets">
+- list of timeseries of Hop metrics / eval criteria
+- 
 
 
 ## 2026-06-02
