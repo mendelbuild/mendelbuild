@@ -2,6 +2,43 @@
 
 Posts are in reverse chronological order.
 
+## 2026-06-05
+
+Given the below, let's now think through a few scenarios... (note: originally started on this yesterday but didn't get far)
+
+#### Determining Roadmaps
+
+- Human+Agent can collaborate, or the agent can try to DIY and put the Roadmap in the queue.
+- The goal is not to "fill up" the roadmap, but rather to advance the strategy
+- Roadmap needs to be populated with Hops (incl Budgets!), incl HopGoals, though the Variations come later
+- Entire Roadmap enters decision queue
+- Needs to be a mechanism to push back on inadequate budget / assess feasibility
+
+#### Life-of-a-Hop
+
+- Hop is defined, likely by an AI with human review or approval, including one or more HopGoals
+- The HopGoals need to apply apples-to-apples across the variations and should be decided first
+- If we start with "EPD Hops" (combo of eng, product, design), I guess we can ask for multiple designs, and possibly also multiple implementations that optimize for different things (code brevity vs performance vs minimal dependencies)
+  - Note that this would extend well to the idea of sub-hops... one for Product+Design, then further dependent Hops for eng implementation
+- There are three Decisions per variation: (1) whether to bother implementing, (2) whether to promote to recv live traffic, and then (3) whether it *could* be selected as "the" Variation to merge back to `main`
+- Humans should weigh in on every promotion to prod as well as the `main` merge... eventually some of this could be done by an agent, but not until there's more data to train on
+- We would need a cost estimate for each Budgeted quantity before every stage of this process, including the exploration of Variations. I guess initially there can just be static models for some of these things, though eventually it could be a RL-trained service that provides an IQR (or similar) for each type of activity and budget type
+  - Obviously we wouldn't bother creating more variations than we could ever have budgets to create and run
+- We could watch the system churning away on the various tasks, or move over to the Queue to review/approve/deny pieces as they come in
+
+#### Handling schema changes with different variations
+
+From the very first explorations of these ideas, I've been concerned about schema changes that are "Hop-specific"... how to handle?
+
+One idea would be to just embrace the idea that there's a lot of detritus in the datastore and to be resilient to extra/vestigial data in Variations that don't know what to do with something.
+
+Much (much) harder to handle missing data that's expected or needed! I think (?) the best option would be to get code checked into `main` that removes the dependency on the thing to be changed/removed; then WAIT for every Variation that expects it to be there to terminate; then to actually remove the dependency in code; and then finally to drop the data itself.
+
+For field additions, I guess there "just" need to be destructors/finalizers for Variations that are killed to drop (and maybe backup) the data they added that's no longer needed.
+
+I must admit that the database will get very messy very quickly in this world... but I also don't know what to do to get around that.
+
+
 ## 2026-06-04
 
 I finally have a day to devote to this project but am having trouble getting out of writer's block (again). I also have a cat that refuses to get off my lap and a tweaked back that's creating ergonomic problems with typing.
@@ -27,7 +64,12 @@ Trying again at establishing key primitives (soon I will be doing this in some s
   - KRs: List of KeyResult
   - SubStrategies: List of Strategy
   - Roadmap
-  - Budgets: List of Budget
+  - List of FundingSource
+- FundingSource
+  - Id
+  - Type (dollars, tokens, etc)
+  - Amount
+  - Strategic target (i.e., before funding source dries up)
 - KeyResult
   - Id
   - Rationale
@@ -40,35 +82,36 @@ Trying again at establishing key primitives (soon I will be doing this in some s
   - Id
   - List of Hop
   - Prereqs: List of DeliverableIds
-- Budget:
-  - Id
-  - Type (dollars, tokens, errors?)
-  - Spending (timeseries broken down by line item)
-  - Forecast (timeseries also broken down by line item)
 - Ecosystems:
   - Id
   - Type (web, prod, AdWords)
   - HealthFuncs: List of HealthFunc (can be used to establish ecosystem quality KRs)
 - Hop:
   - Id
-  - Qualitative goal
+  - (optional Parent Hop ptr)
+  - List of HopGoal
   - Pruner: func from Variation to bool
   - Scorer: func from Variation to float (only for retained Variations)
   - RelatedKRs: List of KeyResults
   - List of Variation
-  - Budgets: List of BudgetAllocation (cloud costs, tokens, etc)
+  - Budgets: List of BudgetAllocation
+- HopGoal:
+  - Id
+  - Type (KR, qualitative, quantitative)
+  - Target (whether numerical or string)
+  - Time horizon requirement [a la KeyResult]
+- BudgetAllocation:
+  - Id
+  - Type (dollars, cloud $, tokens, errors?)
+  - Limit
+  - Spending (timeseries broken down by line item)
+  - Forecast (timeseries also broken down by line item)
 - Variation:
   - Id
   - Hop ptr
   - Progression: Timestamped List of VariationLifeStage (won't spell this out, but basically generation, pre-prod, prod, failed, selected)
   - Repo location (Id and commit)
   - Ecosystem location (may be null)
-- BudgetAllocation:
-  - Id
-  - Type
-  - Limit (total, not per time)
-  - Period (time interval)
-  - Usage (timeseries)
 - DecisionQueue:
   - (all past and future Decisions, filterable and sortable in different ways)
 - Decision:
@@ -76,8 +119,6 @@ Trying again at establishing key primitives (soon I will be doing this in some s
   - Objectivity score (the more objective, the easier to automate)
   - Importance score (some sort of estimate of how likely this is to affect higher-level goals)
   - Audit log
-
-
 
 ## 2026-06-03
 
