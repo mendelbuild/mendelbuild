@@ -154,7 +154,7 @@ The central control plane. Responsibilities:
 - Persist all primitives (Projects, Hops, Variations, Decisions, etc.)
 - Orchestrate Hop execution and Variation lifecycle
 - Enforce budgets and track spending
-- Expose APIs for agents, UIs, and the routing SDK
+- Expose APIs for external agents, UIs, and the routing SDK (see below)
 
 **Database**: A relational SQL database (Postgres initially, but schema should be portable). Stores:
 - All entity state
@@ -165,7 +165,7 @@ The central control plane. Responsibilities:
 
 Infrastructure for running multiple Variations simultaneously:
 - **Traffic Router**: Directs requests to appropriate Variation based on routing key
-- **Migration Manager**: Tracks schema changes per-Variation, handles cleanup
+- **Migration Manager**: Tracks schema/storage changes per-Variation, handles cleanup
 - **Metrics Collector**: Gathers evaluation data from Ecosystems
 
 ### 3.3 Agent Adapters
@@ -173,7 +173,7 @@ Infrastructure for running multiple Variations simultaneously:
 Thin interfaces for AI agents (Claude Code, etc.) to:
 - Receive Hop specifications and context
 - Return Variation artifacts (code, commits)
-- Report progress and cost consumption
+- Report progress and cost / budgetary consumption (esp tokens)
 
 Agents are stateless from MendelBuild's perspective — all durable state lives in Core.
 
@@ -181,7 +181,7 @@ Agents are stateless from MendelBuild's perspective — all durable state lives 
 
 ## 4. Traffic Routing SDK
 
-A lightweight, LaunchDarkly-inspired SDK for consistent traffic routing across Variations.
+A lightweight SDK for consistent traffic routing across Variations.
 
 ### 4.1 Design Goals
 
@@ -191,6 +191,8 @@ A lightweight, LaunchDarkly-inspired SDK for consistent traffic routing across V
 - Language-agnostic protocol (Go reference, then JS/Python/etc.)
 
 ### 4.2 Public API Surface
+
+What follows is an example of the public routing API in Go. Some details may change, but the basic idea – to get a stable Variation assignment for a routingKey – is what matters here.
 
 ```go
 // MendelClient is the entry point for routing decisions
@@ -217,16 +219,16 @@ func NewClient(cfg MendelConfig) (MendelClient, error)
 
 The **routing key** determines which Variation a request sees. Choose keys that ensure:
 - **Consistency**: Same user/session/entity always sees same Variation
-- **Independence**: Different Hops can use different keys without correlation
+- **Independence**: Different Hops can use different keys without correlation (XXX: I don't understand what this means in practice)
 
-**Bucketing Algorithm** (LaunchDarkly-inspired):
+**Bucketing Algorithm**
 ```
 bucket = SHA1(hopID + "." + salt + "." + routingKey)[0:15]
 bucket_int = parse_hex(bucket)
 bucket_pct = bucket_int / 0xFFFFFFFFFFFFFFF  // 0.0 to 1.0
 ```
 
-Traffic allocation rules (e.g., "Variation A: 50%, Variation B: 50%") are fetched from Core and cached locally.
+Traffic allocation rules (e.g., "Variation A: 50%, Variation B: 50%") are fetched from Core and cached locally. There is always a "default Variation" for every Hop that can be used as a fallback if Core is unavailable.
 
 ### 4.4 Rule Sync Protocol
 
@@ -235,46 +237,45 @@ Traffic allocation rules (e.g., "Variation A: 50%, Variation B: 50%") are fetche
 3. Background goroutine polls for updates (default: 30s)
 4. Graceful fallback if Core unreachable (use cached rules)
 
-TODO: Consider streaming (SSE/WebSocket) for real-time updates in v2.
-
 ---
 
 ## 5. Variation Lifecycle
 
-TODO: Formalize state machine. Reference k8s pod lifecycle and LaunchDarkly flag states.
+TODO: Formalize state machine. Reference k8s pod lifecycle and routing flag states.
 
 ### 5.1 Proposed States
 
+XXX: Use Mermaid for these DAG diagrams, not ASCII.
+
 ```
-┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-│ CREATING │───▶│ PENDING  │───▶│  ACTIVE  │───▶│ SELECTED │
-└──────────┘    └────┬─────┘    └────┬─────┘    └──────────┘
-                     │               │
-                     ▼               ▼
-                ┌──────────┐    ┌──────────┐
-                │  FAILED  │    │ DRAINING │
-                └──────────┘    └────┬─────┘
-                                     ▼
-                                ┌──────────┐
-                                │ TERMINATED│
-                                └──────────┘
+┌──────────┐    ┌──────────┐    ┌-──────────┐     ┌──────────┐    ┌──────────┐
+│ CREATING │───▶│ PENDING  │───▶│ MIGRATING │────▶│  ACTIVE  │───▶│ SELECTED │
+└──────────┘    └────┬─────┘    └-───--─────┘     └────┬─────┘    └──────────┘
+                     │                                 │
+                     ▼                                 ▼
+                ┌──────────┐                     ┌──────────┐
+                │  PRUNED  │                     │ DRAINING │
+                └──────────┘                     └────┬─────┘
+                                                      ▼
+                                                 ┌──────────┐
+                                                 │TERMINATED│
+                                                 └──────────┘
 ```
 
 - **CREATING**: Agent is generating the Variation
 - **PENDING**: Code exists, awaiting promotion decision
+- **PRUNED**: Pruned or errored out
+- **MIGRATING**: Receiving live traffic in an Ecosystem
 - **ACTIVE**: Receiving live traffic in an Ecosystem
 - **DRAINING**: Traffic being shifted away, cleanup pending
 - **TERMINATED**: Fully cleaned up (migrations reverted, resources freed)
-- **FAILED**: Pruned or errored out
 - **SELECTED**: Chosen as the winner, merged to main
-
-TODO: Define triggers for each transition. Can transitions go backwards (e.g., ACTIVE → PENDING for pause)?
 
 ---
 
 ## 6. Data Model (SQL Schema Sketches)
 
-TODO: Full schema. Initial sketch:
+XXX: we should just point to the appropriate repo file for this... it will fall out of date quickly.
 
 ```sql
 -- Core entities
@@ -320,34 +321,19 @@ CREATE TABLE budget_spend_log (...);
 
 | Area | Question | Notes |
 |------|----------|-------|
-| **Variation Lifecycle** | Exact state transitions and triggers? | Reference k8s, LaunchDarkly |
-| **Scorer/Pruner** | How to specify? DSL, code reference, plugin? | Must be serializable/distributable |
+| **Variation Lifecycle** | Exact state transitions and triggers? | Reference k8s, routing flags |
+| **Scorer/Pruner** | Explain Scorer/Pruner polymorphism and reliance on Decisions for anything "hard" | For each type of Variation, there's a mostly prefab Scorer/Pruner with some optionality for Variation- or Hop-specific metrics |
 | **Migration Cleanup** | Finalizer semantics for killed Variations? | Backup before drop? |
 | **Repository Interface** | Abstraction for branch/commit/abandon? | Git-first, but pluggable |
 | **Budget Enforcement** | Hard stop vs soft limit vs graceful degradation? | Currently: soft with Decision |
 | **Incident Detection** | OTel integration specifics? | HealthFuncs on Ecosystem? |
 | **Rollback** | Automatic vs Decision-gated? | Importance/objectivity scoring |
+| **Falling back on manual changes** | How to handle situations that can't handle the concurrency | Surfacing the need for a solution to fix the Gantt chart; a "Manual Hop"?? |
 | **Multi-Hop Transactions** | Atomicity across dependent Hops? | Deferred to v2? |
 | **Agent Protocol** | Exact interface for agent adapters? | Start with Claude Code |
 
 ---
 
-## 8. Glossary
-
-| Term | Definition |
-|------|------------|
-| **Hop** | A unit of evolutionary experimentation with goals, budget, and multiple competing Variations |
-| **Variation** | A concrete implementation attempt within a Hop |
-| **Decision** | A choice point requiring resolution (by agent or human) |
-| **Ecosystem** | A runtime environment where Variations are deployed |
-| **Pruner** | Function that rejects unfit Variations (binary) |
-| **Scorer** | Function that ranks surviving Variations (continuous) |
-| **Routing Key** | Identifier used to consistently assign requests to Variations |
-
----
-
 ## Appendix A: References
 
-- [LaunchDarkly SDK Architecture](https://launchdarkly.com/docs/home/getting-started/architecture)
-- [LaunchDarkly Flag Evaluation Rules](https://launchdarkly.com/docs/sdk/concepts/flag-evaluation-rules)
 - Blog: "Natural Selection, But in Production" — foggyfuture.substack.com
