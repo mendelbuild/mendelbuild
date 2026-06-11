@@ -36,7 +36,9 @@ Much (much) harder to handle missing data that's expected or needed! I think (?)
 
 For field additions, I guess there "just" need to be destructors/finalizers for Variations that are killed to drop (and maybe backup) the data they added that's no longer needed.
 
-I must admit that the database will get very messy very quickly in this world... but I also don't know what to do to get around that.
+I must concede that the database will get very messy very quickly in this world (at least by normal human DBA standards)... but I also don't know what to do to get around that.
+
+For this to feel sane, the up- and down-migrations need to be formal parts of the data model, too.
 
 
 ## 2026-06-04
