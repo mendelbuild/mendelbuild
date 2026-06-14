@@ -297,8 +297,8 @@ CREATE INDEX idx_var_migrations ON variation_migrations(variation_id, sequence_n
 -- DECISIONS
 --------------------------------------------------------------------------------
 -- A Decision is a choice point in the system. Every Decision has objectivity
--- and importance scores that help determine whether it needs human review.
-
+-- and importance scores that can be used, in conjunction with "details", to
+-- determine which human or agent should review.
 CREATE TABLE decisions (
     id UUID PRIMARY KEY,
 
@@ -309,14 +309,29 @@ CREATE TABLE decisions (
     title TEXT NOT NULL,
     details TEXT,  -- Markdown OK; can include links
 
-    -- Scores that determine routing to human vs agent
+    -- Scores that help determine routing to human vs agent
     objectivity_score REAL NOT NULL CHECK (objectivity_score >= 0 AND objectivity_score <= 1),
+    -- Importance scores are meant to be comparable at the Project level. I.e.,
+    -- even if a Decision is "important" to a Hop, if that Hop is not important
+    -- in the Project, neither is the Decision.
     importance_score REAL NOT NULL CHECK (importance_score >= 0 AND importance_score <= 1),
 
-    -- Resolution state
-    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'resolved')),
+    -- Resolution state (see DESIGN.md Section 2.3)
+    --   'needs_assignment' - Decision created, awaiting routing to agent/human
+    --   'assigned'         - Routed to a specific agent or human
+    --   'accepted'         - Assignee has acknowledged and is working on it
+    --   'resolved'         - Decision made
+    status TEXT NOT NULL DEFAULT 'needs_assignment' CHECK (status IN ('needs_assignment', 'assigned', 'accepted', 'resolved')),
+
+    assigned_to TEXT,      -- Identifier for agent or user; format TBD
+    assigned_at TIMESTAMP,
+
+    accepted_by TEXT,      -- Identifier for agent or user; format TBD
+    accepted_at TIMESTAMP,
+
     resolved_by TEXT,      -- Identifier for agent or user; format TBD
     resolved_at TIMESTAMP,
+
     resolution TEXT,       -- The actual decision made
     rationale TEXT,        -- Why this decision was made
 
@@ -340,14 +355,15 @@ CREATE TABLE repositories (
     id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(id),
 
+    -- TODO: over time, support more repository types.
     name TEXT NOT NULL,
-    repo_type TEXT NOT NULL CHECK (repo_type IN ('code', 'design', 'documentation')),
+    repo_type TEXT NOT NULL CHECK (repo_type IN ('git', 'figma', 'gdrive')),
 
     -- Connection details
     url TEXT,  -- e.g., git URL
 
-    -- The "blessed" branch
-    main_branch TEXT NOT NULL DEFAULT 'main',
+    -- Repository config (repo_type specific)
+    config JSONB,
 
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -369,11 +385,8 @@ CREATE TABLE ecosystems (
     name TEXT NOT NULL,
     ecosystem_type TEXT NOT NULL,  -- 'kubernetes', 'vercel', 'squarespace', 'adwords', etc.
 
-    -- Connection/config details
+    -- Ecosystem configuration details (ecosystem_type specific)
     config JSONB,
-
-    -- Health function references; implementation TBD
-    health_funcs TEXT[],
 
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -396,9 +409,6 @@ CREATE TABLE traffic_allocations (
     -- Salt used for bucketing (combined with hopID and routingKey)
     bucket_salt TEXT NOT NULL,
 
-    -- Fallback Variation if SDK can't reach Core
-    default_variation_id UUID REFERENCES variations(id),
-
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -407,12 +417,19 @@ CREATE TABLE traffic_allocations (
 CREATE TABLE traffic_allocation_slices (
     id UUID PRIMARY KEY,
     traffic_allocation_id UUID NOT NULL REFERENCES traffic_allocations(id),
+    -- The variation_id must be associated with the traffic_allocation's hop_id
     variation_id UUID NOT NULL REFERENCES variations(id),
 
-    -- Percentage of traffic (0.0 to 1.0); all slices should sum to 1.0
-    percentage REAL NOT NULL CHECK (percentage >= 0 AND percentage <= 1),
+    -- Percentage of traffic (0.0 to 1.0); all slices for any given
+    -- traffic_allocation should sum to 1.0.
+    --
+    -- If the numbers do not sum to 1.0, all fractions will be normalized such
+    -- that the sum is indeed exactly 1.0.
+    fraction REAL NOT NULL CHECK (fraction >= 0 AND fraction <= 1),
 
-    -- Ordering matters for bucketing
+    -- Ordering matters for deterministic bucketing. The SDK walks slices in
+    -- bucket_order, accumulating fractions until the user's bucket_pct is exceeded.
+    -- Without consistent ordering, the same bucket_pct could map to different variations.
     bucket_order INTEGER NOT NULL
 );
 

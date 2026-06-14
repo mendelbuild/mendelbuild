@@ -79,13 +79,22 @@ Each Hop can have many Variations; Variations are filtered using Hop Pruners, as
 - **Kind**: Pass/Fail, Choose One, Choose Many
 - **Details**: Based on the type and 'Kind' of decision, a human- and agent-readable summary of the option or options for the Decision (perhaps with hyperlinks out of the MendelBuild system for more detail)
 - **Objectivity score**: How objectively measurable is this decision? (0.0–1.0)
-- **Importance score**: How much does this affect strategic goals? (0.0–1.0)
-- **Audit log**: Who/what decided, when, with what rationale
+- **Importance score**: How much does this affect strategic goals? (0.0–1.0). Importance is comparable at the Project level — even if a Decision is "important" to a Hop, if that Hop is not important to the Project, neither is the Decision.
+- **Status**: Lifecycle state (see below)
+- **Audit trail**: Who assigned/accepted/resolved, when, with what rationale
 
+**Decision Lifecycle**:
+```
+needs_assignment → assigned → accepted → resolved
+```
+- **needs_assignment**: Decision created, awaiting routing to an agent or human
+- **assigned**: Routed to a specific agent or human
+- **accepted**: Assignee has acknowledged and is working on it
+- **resolved**: Decision made (resolution and rationale recorded)
 
 **Decision Queue**: An abstraction representing all pending (and historical) decisions. This is *not* exclusively a queue for human decisions — it's a unified interface where decisions are resolved by the appropriate actor. The more important and subjective (i.e., non-objective) decisions are more likely to require human involvement, but the thresholds can be configured.
 
-Eventually, humans with expertise in a particular product or tech area should be the ones to handle decisiosn in those areas, much like code review assignment works/worked in the past, before agentic coding went mainstream.
+Eventually, humans with expertise in a particular product or tech area should be the ones to handle decisions in those areas, much like code review assignment works/worked in the past, before agentic coding went mainstream.
 
 ### 2.4 Repositories and Ecosystems
 
