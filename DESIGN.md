@@ -38,17 +38,22 @@ This section defines the core primitives and explains how they compose into a co
 
 ```
 Project
-  └── Strategy (OKRs, funding sources)
-        └── Roadmap
-              └── Hop
-                    └── Variation (1..n)
+  └── Strategy
+        ├── Objectives (1..n) → Key Results (1..n)
+        ├── Funding Sources
+        └── Hops (DAG)
+              └── Variation (1..n)
 ```
 
 **Project**: The top-level container. A Project has a Strategy, one or more Repositories, and connections to Ecosystems where code runs.
 
-**Strategy**: Captures objectives (OKRs), funding sources, and the Roadmap. Strategies can nest (sub-strategies) for organizational alignment.
+**Strategy**: The organizational unit for a body of work. Contains:
+- **Objectives**: The "O" in OKR — plain-English goals
+- **Key Results**: Quantitative targets attached to Objectives, expressed with parseable units (e.g., "1000 users", "99.9%", "< 200ms p99")
+- **Funding Sources**: Resource pools (dollars, claude_tokens) linked to Key Results via success criteria
+- **Hops**: A DAG of evolutionary experiments (sequenced by dependencies, not wall-clock time)
 
-**Roadmap**: A DAG of Hops. Unlike traditional roadmaps, less about wall-clock time than sequencing and dependencies.
+Strategies can nest (sub-strategies) for organizational alignment.
 
 ### 2.2 Hops and Variations
 
@@ -111,38 +116,39 @@ Budget enforcement is soft by default: every time control returns to MendelBuild
 ### 2.6 How It All Fits Together
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│                           PROJECT                                  │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │ STRATEGY (OKRs + Funding)                                    │  │
-│  │   ┌────────────────────────────────────────────────────────┐ │  │
-│  │   │ ROADMAP (DAG of Hops)                                  │ │  │
-│  │   │   ┌───────────┐   ┌──────────┐   ┌──────────┐          │ │  │
-│  │   │   │    Hop    |──▶│    Hop   │──▶│    Hop   │ ──▶ ...  │ │  │
-│  │   │   │  ┌─────┐  │   │ ┌─────┐  │   │ ┌─────┐  │          │ │  │
-│  │   │   │  │Var A│  │   │ │Var X│  │   │ │Var L│  │          │ │  │
-│  │   │   │  │Var B│  │   │ │Var Y│  │   │ │Var M│  │          │ │  │
-│  │   │   │  │Var C│  │   │ └─────┘  │   │ |Var N|  │          │ │  │
-│  │   │   │  └─────┘  │   └────────-─┘   | |Var O|  |          │ │  │
-│  │   │   └-────────-─┘                  | └-----┘  |          │ │  │
-│  │   |                                  └----------┘          | │  │
-│  │   └────────────────────────────────────────────────────────┘ │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-│                                                                    │
-│    ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐    │
-│    │ Repositories │  │  Ecosystems  │  │   Decision Queue     │    │
-│    │ (code, main) │  │  (k8s, web)  │  │ (pending decisions)  │    │
-│    └──────────────┘  └──────────────┘  └──────────────────────┘    │
-└──────────────────────────────────────────────────────────────---───┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                            PROJECT                                  │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │ STRATEGY                                                      │  │
+│  │   Objectives → Key Results ← Funding Sources                  │  │
+│  │   ┌────────────────────────────────────────────────────────┐  │  │
+│  │   │ HOPS (DAG)                                             │  │  │
+│  │   │   ┌───────────┐   ┌──────────┐   ┌──────────┐          │  │  │
+│  │   │   │    Hop    │──▶│    Hop   │──▶│    Hop   │ ──▶ ...  │  │  │
+│  │   │   │  ┌─────┐  │   │ ┌─────┐  │   │ ┌─────┐  │          │  │  │
+│  │   │   │  │Var A│  │   │ │Var X│  │   │ │Var L│  │          │  │  │
+│  │   │   │  │Var B│  │   │ │Var Y│  │   │ │Var M│  │          │  │  │
+│  │   │   │  │Var C│  │   │ └─────┘  │   │ │Var N│  │          │  │  │
+│  │   │   │  └─────┘  │   └──────────┘   │ │Var O│  │          │  │  │
+│  │   │   └──────────-┘                  │ └─────┘  │          │  │  │
+│  │   │                                  └──────────┘          │  │  │
+│  │   └────────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                                                                     │
+│    ┌──────────────┐  ┌──────────────┐  ┌───────────────────────┐    │
+│    │ Repositories │  │  Ecosystems  │  │    Decision Queue     │    │
+│    │ (code, main) │  │  (k8s, web)  │  │  (pending decisions)  │    │
+│    └──────────────┘  └──────────────┘  └───────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 **Flow**:
-1. Strategy defines what success looks like (OKRs) and available resources (Funding)
-2. Roadmap sequences Hops based on dependencies
-4. Each Hop spawns multiple Variations (via agents)
-5. Pruner kills unfit Variations; Scorer ranks survivors
-6. Decisions enter the queue; resolved by agents or humans based on scores
-7. Selected Variation merges to main; others are cleaned up
+1. Strategy defines Objectives, Key Results, and Funding Sources
+2. Hops form a DAG; dependencies determine sequencing
+3. Each Hop spawns multiple Variations (via agents)
+4. Pruner kills unfit Variations; Scorer ranks survivors
+5. Decisions enter the queue; resolved by agents or humans based on scores
+6. Selected Variation merges to main; others are cleaned up
 
 ---
 
@@ -219,7 +225,7 @@ func NewClient(cfg MendelConfig) (MendelClient, error)
 
 The **routing key** determines which Variation a request sees. Choose keys that ensure:
 - **Consistency**: Same user/session/entity always sees same Variation
-- **Independence**: Different Hops can use different keys without correlation (XXX: I don't understand what this means in practice)
+- **Independence**: Because `hopID` is included in the hash, a given routing key will bucket differently across different Hops. This means user "abc123" might land in the 30th percentile for Hop A but the 70th percentile for Hop B — the experiments are statistically independent. No action required from the developer; this is automatic.
 
 **Bucketing Algorithm**
 ```
@@ -245,21 +251,19 @@ TODO: Formalize state machine. Reference k8s pod lifecycle and routing flag stat
 
 ### 5.1 Proposed States
 
-XXX: Use Mermaid for these DAG diagrams, not ASCII.
-
-```
-┌──────────┐    ┌──────────┐    ┌-──────────┐     ┌──────────┐    ┌──────────┐
-│ CREATING │───▶│ PENDING  │───▶│ MIGRATING │────▶│  ACTIVE  │───▶│ SELECTED │
-└──────────┘    └────┬─────┘    └-───--─────┘     └────┬─────┘    └──────────┘
-                     │                                 │
-                     ▼                                 ▼
-                ┌──────────┐                     ┌──────────┐
-                │  PRUNED  │                     │ DRAINING │
-                └──────────┘                     └────┬─────┘
-                                                      ▼
-                                                 ┌──────────┐
-                                                 │TERMINATED│
-                                                 └──────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> CREATING
+    CREATING --> PENDING
+    PENDING --> PRUNED
+    PENDING --> MIGRATING
+    MIGRATING --> ACTIVE
+    ACTIVE --> DRAINING
+    ACTIVE --> SELECTED
+    DRAINING --> TERMINATED
+    TERMINATED --> [*]
+    PRUNED --> [*]
+    SELECTED --> [*]
 ```
 
 - **CREATING**: Agent is generating the Variation
@@ -273,47 +277,20 @@ XXX: Use Mermaid for these DAG diagrams, not ASCII.
 
 ---
 
-## 6. Data Model (SQL Schema Sketches)
+## 6. Data Model
 
-XXX: we should just point to the appropriate repo file for this... it will fall out of date quickly.
+The canonical SQL schema lives in [`schema/001_initial.sql`](schema/001_initial.sql) and includes inline commentary on each table. Key entities:
 
-```sql
--- Core entities
-CREATE TABLE projects (...);
-CREATE TABLE strategies (...);
-CREATE TABLE roadmaps (...);
-CREATE TABLE deliverables (...);
-CREATE TABLE hops (...);
-CREATE TABLE hop_goals (...);
-CREATE TABLE variations (...);
-
--- Decisions
-CREATE TABLE decisions (
-    id UUID PRIMARY KEY,
-    kind TEXT NOT NULL,
-    objectivity_score REAL NOT NULL,
-    importance_score REAL NOT NULL,
-    status TEXT NOT NULL,  -- pending, resolved
-    resolved_by TEXT,      -- agent ID or user ID
-    resolved_at TIMESTAMP,
-    rationale TEXT
-);
-
--- Migrations (per-variation schema changes)
-CREATE TABLE variation_migrations (
-    id UUID PRIMARY KEY,
-    variation_id UUID REFERENCES variations(id),
-    direction TEXT NOT NULL,  -- up, down
-    sql_up TEXT NOT NULL,
-    sql_down TEXT NOT NULL,
-    applied_at TIMESTAMP,
-    reverted_at TIMESTAMP
-);
-
--- Budget tracking
-CREATE TABLE budget_allocations (...);
-CREATE TABLE budget_spend_log (...);
-```
+- `projects`, `strategies` — organizational containers
+- `objectives`, `key_results`, `key_result_history` — OKR modeling with timeseries
+- `funding_sources`, `funding_success_criteria` — resource pools linked to KRs
+- `hops`, `hop_dependencies` — evolutionary units and their DAG (Hops attach to Strategies)
+- `variations`, `variation_state_history` — implementation attempts and lifecycle
+- `variation_migrations` — polymorphic per-variation changes (kind + JSON params)
+- `decisions` — audit trail with objectivity/importance scores
+- `budget_allocations`, `budget_spend_log` — cost tracking
+- `traffic_allocations`, `traffic_allocation_slices` — SDK routing rules
+- `repositories`, `ecosystems` — external systems
 
 ---
 
