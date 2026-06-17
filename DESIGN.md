@@ -288,7 +288,7 @@ stateDiagram-v2
 
 ## 6. Data Model
 
-The canonical SQL schema lives in [`schema/001_initial.sql`](schema/001_initial.sql) and includes inline commentary on each table. Key entities:
+The canonical SQL schema lives in [`schema/full.sql`](schema/full.sql) (complete reference) with incremental migrations in [`schema/migrations/`](schema/migrations/). Key entities:
 
 - `projects`, `strategies` — organizational containers
 - `objectives`, `key_results`, `key_result_history` — OKR modeling with timeseries
