@@ -76,7 +76,7 @@ Each Hop can have many Variations; Variations are filtered using Hop Pruners, as
 ### 2.3 Decisions and the Decision Queue
 
 **Decision**: A choice point in the system. Every Decision has:
-- **Kind**: Pass/Fail, Choose One, Choose Many
+- **Kind**: Pass/Fail, Choose One, Choose Many, or Roadmap Review (conversational edit/approve)
 - **Details**: Based on the type and 'Kind' of decision, a human- and agent-readable summary of the option or options for the Decision (perhaps with hyperlinks out of the MendelBuild system for more detail)
 - **Objectivity score**: How objectively measurable is this decision? (0.0–1.0)
 - **Importance score**: How much does this affect strategic goals? (0.0–1.0). Importance is comparable at the Project level — even if a Decision is "important" to a Hop, if that Hop is not important to the Project, neither is the Decision.

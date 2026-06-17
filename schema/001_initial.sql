@@ -303,7 +303,11 @@ CREATE TABLE decisions (
     id UUID PRIMARY KEY,
 
     -- What kind of decision?
-    kind TEXT NOT NULL CHECK (kind IN ('pass_fail', 'choose_one', 'choose_many')),
+    --   'pass_fail'      - Binary yes/no decision
+    --   'choose_one'     - Select exactly one option (e.g., pick winning Variation)
+    --   'choose_many'    - Select zero or more options
+    --   'roadmap_review' - Conversational edit/approve cycle for Roadmap proposals
+    kind TEXT NOT NULL CHECK (kind IN ('pass_fail', 'choose_one', 'choose_many', 'roadmap_review')),
 
     -- Human- and agent-readable summary
     title TEXT NOT NULL,
