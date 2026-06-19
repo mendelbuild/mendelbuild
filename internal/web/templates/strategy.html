@@ -3,48 +3,139 @@
 <h1>{{.Project.Name}}</h1>
 <h2>Strategy: {{.Strategy.Name}}</h2>
 
-<div class="card">
-    <h2>Funding</h2>
-    {{if .Funding}}
-    <div class="funding">
-        {{range .Funding}}
-        <div class="funding-item">
-            <div class="amount">
-                {{if eq .ResourceType "dollars"}}${{printf "%.2f" .Amount}}{{else}}{{printf "%.0f" .Amount}}{{end}}
+<div style="display: flex; gap: 20px; align-items: flex-start;">
+    <div style="flex: 2;">
+        <div class="card">
+            <h2>Funding</h2>
+            {{if .Funding}}
+            <div class="funding">
+                {{range .Funding}}
+                <div class="funding-item">
+                    <div class="amount">
+                        {{if eq .ResourceType "dollars"}}${{printf "%.2f" .Amount}}{{else}}{{printf "%.0f" .Amount}}{{end}}
+                    </div>
+                    <div class="type">{{.ResourceType}}</div>
+                </div>
+                {{end}}
             </div>
-            <div class="type">{{.ResourceType}}</div>
+            {{else}}
+            <p class="empty">No funding sources defined.</p>
+            {{end}}
         </div>
-        {{end}}
-    </div>
-    {{else}}
-    <p class="empty">No funding sources defined.</p>
-    {{end}}
-</div>
 
-<div class="card">
-    <h2>Objectives &amp; Key Results</h2>
-    {{if .Objectives}}
-        {{range .Objectives}}
-        <div class="objective">
-            <h3>{{.Objective.Description}}</h3>
-            {{if .KeyResults}}
-                {{range .KeyResults}}
-                <div class="key-result">
-                    <strong>{{.Description}}</strong>
-                    <span class="target">{{.TargetUnits}}</span>
-                    {{if .TargetDate}}
-                    <span style="color: #666; margin-left: 10px;">by {{.TargetDate.Format "2006-01-02"}}</span>
+        <div class="card">
+            <h2>Objectives &amp; Key Results</h2>
+            {{if .Objectives}}
+                {{range .Objectives}}
+                <div class="objective">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                        <h3 style="margin: 0;">{{.Objective.Description}}</h3>
+                        {{if .HopCount}}
+                        <span class="status status-active">{{.HopCount}} hop(s)</span>
+                        {{else}}
+                        <span class="status status-pending">Not planned</span>
+                        {{end}}
+                    </div>
+                    {{if .KeyResults}}
+                        {{range .KeyResults}}
+                        <div class="key-result">
+                            <strong>{{.Description}}</strong>
+                            <span class="target">{{.TargetUnits}}</span>
+                            {{if .TargetDate}}
+                            <span style="color: #666; margin-left: 10px;">by {{.TargetDate.Format "2006-01-02"}}</span>
+                            {{end}}
+                        </div>
+                        {{end}}
+                    {{else}}
+                    <p class="empty">No key results defined.</p>
                     {{end}}
                 </div>
                 {{end}}
             {{else}}
-            <p class="empty">No key results defined.</p>
+            <p class="empty">No objectives defined.</p>
+            {{end}}
+        </div>
+
+        <div class="card">
+            <h2>Roadmap (Hops)</h2>
+            {{if .Hops}}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Hops}}
+                    <tr>
+                        <td>
+                            <strong>{{.Name}}</strong>
+                            {{if .Commentary}}<br><small style="color: #666;">{{.Commentary}}</small>{{end}}
+                        </td>
+                        <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
+                        <td>{{.CreatedAt.Format "2006-01-02"}}</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+            {{else}}
+            <p class="empty">No hops defined yet.</p>
+            {{end}}
+        </div>
+    </div>
+
+    <div style="flex: 1;">
+        <div class="card" id="manage-roadmap">
+            <h2>Manage Roadmap</h2>
+
+            {{if $.PendingDecision}}
+            <div style="padding: 15px; background: #cce5ff; border-radius: 4px; margin-bottom: 15px;">
+                <strong>Pending Review</strong><br>
+                <a href="/p/{{$.ProjectID}}/decisions/{{$.PendingDecision.ID}}">{{$.PendingDecision.Title}}</a>
+                <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
+                    Created {{$.PendingDecision.CreatedAt.Format "Jan 2, 2006"}}
+                </div>
+            </div>
+            {{end}}
+
+            {{if .Hops}}
+            <div style="margin-bottom: 15px;">
+                <strong>Current:</strong> {{len .Hops}} hop(s)
+            </div>
+            <form method="POST" action="/p/{{$.ProjectID}}/roadmap/propose">
+                <button type="submit" style="width: 100%; padding: 10px; background: #ffc107; color: #212529; border: none; border-radius: 4px; cursor: pointer;">
+                    Propose Changes
+                </button>
+            </form>
+            {{else}}
+            <p style="color: #666; margin-bottom: 15px;">
+                No roadmap exists yet. Generate a proposal based on your objectives and funding.
+            </p>
+            <form method="POST" action="/p/{{$.ProjectID}}/roadmap/propose">
+                <button type="submit" style="width: 100%; padding: 10px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    Generate Roadmap Proposal
+                </button>
+            </form>
+            {{end}}
+        </div>
+
+        {{if $.RecentDecisions}}
+        <div class="card">
+            <h2>Recent Decisions</h2>
+            {{range $.RecentDecisions}}
+            <div style="padding: 8px 0; border-bottom: 1px solid #eee;">
+                <a href="/p/{{$.ProjectID}}/decisions/{{.ID}}">{{.Title}}</a>
+                <div style="font-size: 0.8em;">
+                    <span class="status status-{{.Status}}">{{.Status}}</span>
+                    {{if .Resolution}} - {{.Resolution}}{{end}}
+                </div>
+            </div>
             {{end}}
         </div>
         {{end}}
-    {{else}}
-    <p class="empty">No objectives defined.</p>
-    {{end}}
+    </div>
 </div>
 {{else}}
 <p class="empty">Strategy not found.</p>

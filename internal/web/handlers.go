@@ -33,12 +33,14 @@ type StrategyView struct {
 	Strategy   *domain.Strategy
 	Objectives []ObjectiveView
 	Funding    []domain.FundingSource
+	Hops       []domain.Hop
 }
 
-// ObjectiveView holds an objective with its key results.
+// ObjectiveView holds an objective with its key results and hop coverage.
 type ObjectiveView struct {
 	Objective  domain.Objective
 	KeyResults []domain.KeyResult
+	HopCount   int
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +64,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleProjectDashboard(w http.ResponseWriter, r *http.Request) {
-	// For now, redirect to strategy page
 	projectID := chi.URLParam(r, "projectID")
 	http.Redirect(w, r, "/p/"+projectID+"/strategy", http.StatusFound)
 }
@@ -87,10 +88,26 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get decisions for sidebar
+	decisions, _ := s.db.GetDecisionsByProject(ctx, projectID)
+	var pendingDecision *domain.Decision
+	var recentDecisions []domain.Decision
+	for i := range decisions {
+		d := &decisions[i]
+		if d.Kind == domain.DecisionKindRoadmapReview && d.Status != domain.DecisionStatusResolved {
+			pendingDecision = d
+		}
+		if len(recentDecisions) < 5 {
+			recentDecisions = append(recentDecisions, *d)
+		}
+	}
+
 	data := map[string]interface{}{
-		"Title":     "Strategy: " + view.Strategy.Name,
-		"ProjectID": projectID,
-		"Strategy":  view,
+		"Title":           "Strategy: " + view.Strategy.Name,
+		"ProjectID":       projectID,
+		"Strategy":        view,
+		"PendingDecision": pendingDecision,
+		"RecentDecisions": recentDecisions,
 	}
 
 	if err := renderPage(w, "strategy.html", data); err != nil {
@@ -99,12 +116,23 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
-	projectID := chi.URLParam(r, "projectID")
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	decisions, err := s.db.GetDecisionsByProject(ctx, projectID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	data := map[string]interface{}{
 		"Title":     "Decisions",
 		"ProjectID": projectID,
-		"Decisions": []domain.Decision{}, // TODO: implement
+		"Decisions": decisions,
 	}
 
 	if err := renderPage(w, "decisions.html", data); err != nil {
@@ -194,6 +222,26 @@ func (s *Server) getStrategyViewByProject(ctx context.Context, project *domain.P
 		return nil, err
 	}
 
+	hops, err := s.db.GetHopsByStrategy(ctx, strategy.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build objective ID to hop count map
+	objHopCount := make(map[string]int)
+	for _, hop := range hops {
+		if hop.Params != nil {
+			var params struct {
+				ObjectiveIDs []string `json:"objective_ids"`
+			}
+			if err := json.Unmarshal(hop.Params, &params); err == nil {
+				for _, objID := range params.ObjectiveIDs {
+					objHopCount[objID]++
+				}
+			}
+		}
+	}
+
 	var objViews []ObjectiveView
 	for _, obj := range objectives {
 		krs, err := s.db.GetKeyResultsByObjective(ctx, obj.ID)
@@ -203,6 +251,7 @@ func (s *Server) getStrategyViewByProject(ctx context.Context, project *domain.P
 		objViews = append(objViews, ObjectiveView{
 			Objective:  obj,
 			KeyResults: krs,
+			HopCount:   objHopCount[obj.ID.String()],
 		})
 	}
 
@@ -216,5 +265,6 @@ func (s *Server) getStrategyViewByProject(ctx context.Context, project *domain.P
 		Strategy:   &strategy,
 		Objectives: objViews,
 		Funding:    funding,
+		Hops:       hops,
 	}, nil
 }

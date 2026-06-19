@@ -1,0 +1,139 @@
+{{define "page-content"}}
+{{with .View}}
+<h1>{{.Decision.Title}}</h1>
+
+<div style="display: flex; gap: 20px; align-items: flex-start;">
+    {{/* Left column: Roadmap editor */}}
+    <div style="flex: 1;">
+        <div class="card">
+            <h2>Proposed Roadmap</h2>
+            <form method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/roadmap">
+                <textarea name="roadmap" style="width: 100%; height: 400px; font-family: monospace; font-size: 12px; padding: 10px; border: 1px solid #ccc; border-radius: 4px;">{{if .Decision.Details}}{{.Decision.Details}}{{end}}</textarea>
+                <div style="margin-top: 10px; display: flex; gap: 10px;">
+                    <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Save Changes</button>
+                    {{if ne .Decision.Status "resolved"}}
+                    <button type="button" onclick="document.getElementById('approve-form').submit()" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Approve &amp; Create Hops</button>
+                    <button type="button" onclick="document.getElementById('reject-form').submit()" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Reject</button>
+                    {{end}}
+                </div>
+            </form>
+            <form id="approve-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/approve" style="display: none;"></form>
+            <form id="reject-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/reject" style="display: none;"></form>
+        </div>
+
+        {{if .Roadmap}}
+        <div class="card">
+            <h2>Hops Summary</h2>
+            {{if .Roadmap.Hops}}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Kind</th>
+                        <th>Dependencies</th>
+                        <th>Objectives</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Roadmap.Hops}}
+                    <tr>
+                        <td><strong>{{.Name}}</strong></td>
+                        <td>{{.Kind}}</td>
+                        <td>{{if .DependsOn}}{{range $i, $d := .DependsOn}}{{if $i}}, {{end}}{{$d}}{{end}}{{else}}<span class="empty">none</span>{{end}}</td>
+                        <td>{{len .ObjectiveIDs}} objective(s)</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+            {{else}}
+            <p class="empty">No hops in proposal.</p>
+            {{end}}
+
+            {{if .Roadmap.FeasibilityNotes}}
+            <div style="margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 4px;">
+                <strong>Feasibility Notes:</strong> {{.Roadmap.FeasibilityNotes}}
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+    </div>
+
+    {{/* Right column: Chat history */}}
+    <div style="flex: 1;">
+        <div class="card">
+            <h2>Conversation</h2>
+
+            <div style="max-height: 300px; overflow-y: auto; margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 4px;">
+                {{if .Messages}}
+                {{range .Messages}}
+                <div style="margin-bottom: 10px; padding: 8px; border-radius: 4px; {{if eq .Role "user"}}background: #cce5ff;{{else if eq .Role "agent"}}background: #d4edda;{{else}}background: #fff3cd;{{end}}">
+                    <div style="font-size: 0.8em; color: #666; margin-bottom: 4px;">
+                        <strong>{{if eq .Role "user"}}You{{else if eq .Role "agent"}}Agent{{else}}System{{end}}</strong>
+                        <span style="float: right;">{{.CreatedAt.Format "15:04"}}</span>
+                    </div>
+                    <div>{{.Content}}</div>
+                    {{if .TokensUsed}}<div style="font-size: 0.75em; color: #999;">Tokens: {{.TokensUsed}}</div>{{end}}
+                </div>
+                {{end}}
+                {{else}}
+                <p class="empty">No messages yet.</p>
+                {{end}}
+            </div>
+
+            {{if ne .Decision.Status "resolved"}}
+            <form method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/message">
+                <textarea name="feedback" placeholder="Enter your feedback for the agent..." style="width: 100%; height: 80px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical;"></textarea>
+                <div style="margin-top: 10px; display: flex; gap: 10px;">
+                    <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Send Feedback</button>
+                    <button type="button" onclick="document.getElementById('regenerate-form').submit()" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Regenerate</button>
+                </div>
+            </form>
+            <form id="regenerate-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/regenerate" style="display: none;"></form>
+            {{else}}
+            {{if eq .Decision.Resolution "approved"}}
+            <div style="padding: 15px; background: #d4edda; border-radius: 4px; text-align: center;">
+                <strong>This roadmap has been approved.</strong><br>
+                <a href="/p/{{$.ProjectID}}/strategy">View Strategy</a>
+            </div>
+            {{else if eq .Decision.Resolution "rejected"}}
+            <div style="padding: 15px; background: #f8d7da; border-radius: 4px; text-align: center;">
+                <strong>This roadmap was rejected.</strong><br>
+                <a href="/p/{{$.ProjectID}}/decisions">Back to Decisions</a>
+            </div>
+            {{else}}
+            <div style="padding: 15px; background: #e2e3e5; border-radius: 4px; text-align: center;">
+                <strong>This decision has been resolved.</strong>
+            </div>
+            {{end}}
+            {{end}}
+        </div>
+
+        <div class="card">
+            <h2>Decision Info</h2>
+            <table>
+                <tr>
+                    <th>Status</th>
+                    <td><span class="status status-{{.Decision.Status}}">{{.Decision.Status}}</span></td>
+                </tr>
+                {{if .Strategy}}
+                <tr>
+                    <th>Strategy</th>
+                    <td>{{.Strategy.Name}}</td>
+                </tr>
+                {{end}}
+                <tr>
+                    <th>Created</th>
+                    <td>{{.Decision.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                </tr>
+                {{if .Decision.ResolvedAt}}
+                <tr>
+                    <th>Resolved</th>
+                    <td>{{.Decision.ResolvedAt.Format "2006-01-02 15:04"}}</td>
+                </tr>
+                {{end}}
+            </table>
+        </div>
+    </div>
+</div>
+{{end}}
+{{end}}

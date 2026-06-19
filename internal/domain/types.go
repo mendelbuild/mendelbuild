@@ -96,9 +96,8 @@ type Hop struct {
 	ID         uuid.UUID       `json:"id"`
 	StrategyID uuid.UUID       `json:"strategy_id"`
 	Name       string          `json:"name"`
-	Commentary *string         `json:"commentary,omitempty"`
-	Kind       string          `json:"kind"`
-	KindParams json.RawMessage `json:"kind_params,omitempty"`
+	Commentary string          `json:"commentary"`
+	Params     json.RawMessage `json:"params,omitempty"` // Stores objective_ids and other hop metadata
 	Status     HopStatus       `json:"status"`
 	CreatedAt  time.Time       `json:"created_at"`
 	UpdatedAt  time.Time       `json:"updated_at"`
@@ -178,6 +177,16 @@ type Decision struct {
 	SubjectID        *uuid.UUID     `json:"subject_id,omitempty"`
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`
+}
+
+// DecisionMessage is a message in a decision review conversation.
+type DecisionMessage struct {
+	ID         uuid.UUID  `json:"id"`
+	DecisionID uuid.UUID  `json:"decision_id"`
+	Role       string     `json:"role"` // "user", "agent", "system"
+	Content    string     `json:"content"`
+	TokensUsed *int       `json:"tokens_used,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
 }
 
 // RepoType represents the type of repository.
