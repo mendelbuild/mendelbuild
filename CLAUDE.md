@@ -117,3 +117,8 @@ ALTER TABLE hops ALTER COLUMN commentary DROP NOT NULL;
 
 - `MENDEL_DB_URL`: PostgreSQL connection string
 - `ANTHROPIC_API_KEY`: Anthropic API key for agent calls
+- `MENDEL_WORK_DIR`: Working directory for git clones (default: `/tmp/mendel`)
+
+## Development Plans
+
+Final implementation plans for each phase are stored in `dev/claude_plans/` for future reference. These documents capture architectural decisions and implementation details.
