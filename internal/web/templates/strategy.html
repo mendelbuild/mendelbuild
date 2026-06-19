@@ -46,6 +46,37 @@
     <p class="empty">No objectives defined.</p>
     {{end}}
 </div>
+
+<div class="card">
+    <h2>Roadmap (Hops)</h2>
+    {{if .Hops}}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Kind</th>
+                <th>Status</th>
+                <th>Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Hops}}
+            <tr>
+                <td>
+                    <strong>{{.Name}}</strong>
+                    {{if .Commentary}}<br><small style="color: #666;">{{.Commentary}}</small>{{end}}
+                </td>
+                <td>{{.Kind}}</td>
+                <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
+                <td>{{.CreatedAt.Format "2006-01-02"}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{else}}
+    <p class="empty">No hops defined yet. <a href="/p/{{$.ProjectID}}/decisions">View decisions</a> to create a roadmap.</p>
+    {{end}}
+</div>
 {{else}}
 <p class="empty">Strategy not found.</p>
 {{end}}

@@ -38,6 +38,11 @@ func (s *Server) setupRoutes() {
 		r.Get("/", s.handleProjectDashboard)
 		r.Get("/strategy", s.handleStrategy)
 		r.Get("/decisions", s.handleDecisions)
+		r.Get("/decisions/{decisionID}", s.handleDecisionDetail)
+		r.Post("/decisions/{decisionID}/message", s.handleSendMessage)
+		r.Post("/decisions/{decisionID}/regenerate", s.handleRegenerate)
+		r.Post("/decisions/{decisionID}/roadmap", s.handleUpdateRoadmap)
+		r.Post("/decisions/{decisionID}/approve", s.handleApprove)
 	})
 
 	// API endpoints (for htmx)

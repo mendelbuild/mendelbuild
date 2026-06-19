@@ -180,6 +180,16 @@ type Decision struct {
 	UpdatedAt        time.Time      `json:"updated_at"`
 }
 
+// DecisionMessage is a message in a decision review conversation.
+type DecisionMessage struct {
+	ID         uuid.UUID  `json:"id"`
+	DecisionID uuid.UUID  `json:"decision_id"`
+	Role       string     `json:"role"` // "user", "agent", "system"
+	Content    string     `json:"content"`
+	TokensUsed *int       `json:"tokens_used,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
 // RepoType represents the type of repository.
 type RepoType string
 

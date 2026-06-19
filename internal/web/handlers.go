@@ -33,6 +33,7 @@ type StrategyView struct {
 	Strategy   *domain.Strategy
 	Objectives []ObjectiveView
 	Funding    []domain.FundingSource
+	Hops       []domain.Hop
 }
 
 // ObjectiveView holds an objective with its key results.
@@ -99,12 +100,23 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
-	projectID := chi.URLParam(r, "projectID")
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	decisions, err := s.db.GetDecisionsByProject(ctx, projectID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	data := map[string]interface{}{
 		"Title":     "Decisions",
 		"ProjectID": projectID,
-		"Decisions": []domain.Decision{}, // TODO: implement
+		"Decisions": decisions,
 	}
 
 	if err := renderPage(w, "decisions.html", data); err != nil {
@@ -211,10 +223,16 @@ func (s *Server) getStrategyViewByProject(ctx context.Context, project *domain.P
 		return nil, err
 	}
 
+	hops, err := s.db.GetHopsByStrategy(ctx, strategy.ID)
+	if err != nil {
+		return nil, err
+	}
+
 	return &StrategyView{
 		Project:    project,
 		Strategy:   &strategy,
 		Objectives: objViews,
 		Funding:    funding,
+		Hops:       hops,
 	}, nil
 }

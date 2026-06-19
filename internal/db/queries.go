@@ -300,3 +300,229 @@ func (db *DB) GetFundingSourcesByStrategy(ctx context.Context, strategyID uuid.U
 	}
 	return sources, nil
 }
+
+// GetStrategy retrieves a strategy by ID.
+func (db *DB) GetStrategy(ctx context.Context, id uuid.UUID) (*domain.Strategy, error) {
+	var s domain.Strategy
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, project_id, parent_id, name, created_at, updated_at
+		FROM strategies WHERE id = $1
+	`, id).Scan(&s.ID, &s.ProjectID, &s.ParentID, &s.Name, &s.CreatedAt, &s.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// CreateDecision creates a new decision.
+func (db *DB) CreateDecision(ctx context.Context, d *domain.Decision) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO decisions (id, kind, title, details, objectivity_score, importance_score, status, subject_type, subject_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+	`, d.ID, d.Kind, d.Title, d.Details, d.ObjectivityScore, d.ImportanceScore, d.Status, d.SubjectType, d.SubjectID, d.CreatedAt)
+	return err
+}
+
+// GetDecision retrieves a decision by ID.
+func (db *DB) GetDecision(ctx context.Context, id uuid.UUID) (*domain.Decision, error) {
+	var d domain.Decision
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, kind, title, details, objectivity_score, importance_score, status,
+			   assigned_to, assigned_at, accepted_by, accepted_at,
+			   resolved_by, resolved_at, resolution, rationale,
+			   subject_type, subject_id, created_at, updated_at
+		FROM decisions WHERE id = $1
+	`, id).Scan(
+		&d.ID, &d.Kind, &d.Title, &d.Details, &d.ObjectivityScore, &d.ImportanceScore, &d.Status,
+		&d.AssignedTo, &d.AssignedAt, &d.AcceptedBy, &d.AcceptedAt,
+		&d.ResolvedBy, &d.ResolvedAt, &d.Resolution, &d.Rationale,
+		&d.SubjectType, &d.SubjectID, &d.CreatedAt, &d.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// GetDecisionsBySubject retrieves all decisions for a subject.
+func (db *DB) GetDecisionsBySubject(ctx context.Context, subjectType string, subjectID uuid.UUID) ([]domain.Decision, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, kind, title, details, objectivity_score, importance_score, status,
+			   assigned_to, assigned_at, accepted_by, accepted_at,
+			   resolved_by, resolved_at, resolution, rationale,
+			   subject_type, subject_id, created_at, updated_at
+		FROM decisions
+		WHERE subject_type = $1 AND subject_id = $2
+		ORDER BY created_at DESC
+	`, subjectType, subjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var decisions []domain.Decision
+	for rows.Next() {
+		var d domain.Decision
+		if err := rows.Scan(
+			&d.ID, &d.Kind, &d.Title, &d.Details, &d.ObjectivityScore, &d.ImportanceScore, &d.Status,
+			&d.AssignedTo, &d.AssignedAt, &d.AcceptedBy, &d.AcceptedAt,
+			&d.ResolvedBy, &d.ResolvedAt, &d.Resolution, &d.Rationale,
+			&d.SubjectType, &d.SubjectID, &d.CreatedAt, &d.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		decisions = append(decisions, d)
+	}
+	return decisions, nil
+}
+
+// GetDecisionsByProject retrieves all decisions related to a project (via strategies).
+func (db *DB) GetDecisionsByProject(ctx context.Context, projectID uuid.UUID) ([]domain.Decision, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT d.id, d.kind, d.title, d.details, d.objectivity_score, d.importance_score, d.status,
+			   d.assigned_to, d.assigned_at, d.accepted_by, d.accepted_at,
+			   d.resolved_by, d.resolved_at, d.resolution, d.rationale,
+			   d.subject_type, d.subject_id, d.created_at, d.updated_at
+		FROM decisions d
+		JOIN strategies s ON d.subject_type = 'strategy' AND d.subject_id = s.id
+		WHERE s.project_id = $1
+		ORDER BY d.created_at DESC
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var decisions []domain.Decision
+	for rows.Next() {
+		var d domain.Decision
+		if err := rows.Scan(
+			&d.ID, &d.Kind, &d.Title, &d.Details, &d.ObjectivityScore, &d.ImportanceScore, &d.Status,
+			&d.AssignedTo, &d.AssignedAt, &d.AcceptedBy, &d.AcceptedAt,
+			&d.ResolvedBy, &d.ResolvedAt, &d.Resolution, &d.Rationale,
+			&d.SubjectType, &d.SubjectID, &d.CreatedAt, &d.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		decisions = append(decisions, d)
+	}
+	return decisions, nil
+}
+
+// UpdateDecision updates a decision.
+func (db *DB) UpdateDecision(ctx context.Context, d *domain.Decision) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE decisions SET
+			title = $2, details = $3, status = $4,
+			assigned_to = $5, assigned_at = $6,
+			accepted_by = $7, accepted_at = $8,
+			resolved_by = $9, resolved_at = $10,
+			resolution = $11, rationale = $12,
+			updated_at = NOW()
+		WHERE id = $1
+	`, d.ID, d.Title, d.Details, d.Status,
+		d.AssignedTo, d.AssignedAt,
+		d.AcceptedBy, d.AcceptedAt,
+		d.ResolvedBy, d.ResolvedAt,
+		d.Resolution, d.Rationale)
+	return err
+}
+
+// CreateDecisionMessage creates a new decision message.
+func (db *DB) CreateDecisionMessage(ctx context.Context, m *domain.DecisionMessage) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO decision_messages (id, decision_id, role, content, tokens_used, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, m.ID, m.DecisionID, m.Role, m.Content, m.TokensUsed, m.CreatedAt)
+	return err
+}
+
+// GetDecisionMessages retrieves all messages for a decision.
+func (db *DB) GetDecisionMessages(ctx context.Context, decisionID uuid.UUID) ([]domain.DecisionMessage, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, decision_id, role, content, tokens_used, created_at
+		FROM decision_messages
+		WHERE decision_id = $1
+		ORDER BY created_at ASC
+	`, decisionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []domain.DecisionMessage
+	for rows.Next() {
+		var m domain.DecisionMessage
+		if err := rows.Scan(&m.ID, &m.DecisionID, &m.Role, &m.Content, &m.TokensUsed, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		messages = append(messages, m)
+	}
+	return messages, nil
+}
+
+// CreateHop creates a new hop.
+func (db *DB) CreateHop(ctx context.Context, h *domain.Hop) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO hops (id, strategy_id, name, commentary, kind, kind_params, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+	`, h.ID, h.StrategyID, h.Name, h.Commentary, h.Kind, h.KindParams, h.Status, h.CreatedAt)
+	return err
+}
+
+// CreateHopDependency creates a hop dependency.
+func (db *DB) CreateHopDependency(ctx context.Context, hopID, dependsOnHopID uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO hop_dependencies (hop_id, depends_on_hop_id)
+		VALUES ($1, $2)
+	`, hopID, dependsOnHopID)
+	return err
+}
+
+// CreateBudgetAllocation creates a budget allocation for a hop.
+func (db *DB) CreateBudgetAllocation(ctx context.Context, hopID, fundingSourceID uuid.UUID, limitAmount float64) error {
+	id := uuid.New()
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO budget_allocations (id, hop_id, funding_source_id, limit_amount, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+	`, id, hopID, fundingSourceID, limitAmount)
+	return err
+}
+
+// GetFundingSourceByType retrieves a funding source by strategy and resource type.
+func (db *DB) GetFundingSourceByType(ctx context.Context, strategyID uuid.UUID, resourceType string) (*domain.FundingSource, error) {
+	var f domain.FundingSource
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, strategy_id, resource_type, amount, created_at, updated_at
+		FROM funding_sources
+		WHERE strategy_id = $1 AND resource_type = $2
+	`, strategyID, resourceType).Scan(&f.ID, &f.StrategyID, &f.ResourceType, &f.Amount, &f.CreatedAt, &f.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
+
+// GetHopsByStrategy retrieves all hops for a strategy.
+func (db *DB) GetHopsByStrategy(ctx context.Context, strategyID uuid.UUID) ([]domain.Hop, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, strategy_id, name, commentary, kind, kind_params, status, created_at, updated_at
+		FROM hops
+		WHERE strategy_id = $1
+		ORDER BY created_at ASC
+	`, strategyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var hops []domain.Hop
+	for rows.Next() {
+		var h domain.Hop
+		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Kind, &h.KindParams, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+			return nil, err
+		}
+		hops = append(hops, h)
+	}
+	return hops, nil
+}

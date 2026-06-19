@@ -2,7 +2,7 @@
 <h1>Decisions</h1>
 
 <div class="card">
-    <h2>Pending Decisions</h2>
+    <h2>All Decisions</h2>
     {{if .Decisions}}
     <table>
         <thead>
@@ -23,13 +23,13 @@
                 <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
                 <td>{{printf "%.2f" .ImportanceScore}}</td>
                 <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
-                <td><a href="/decisions/{{.ID}}">Review</a></td>
+                <td><a href="/p/{{$.ProjectID}}/decisions/{{.ID}}">Review</a></td>
             </tr>
             {{end}}
         </tbody>
     </table>
     {{else}}
-    <p class="empty">No pending decisions.</p>
+    <p class="empty">No decisions yet. Use <code>mendel propose-roadmap -strategy &lt;uuid&gt;</code> to create one.</p>
     {{end}}
 </div>
 {{end}}
