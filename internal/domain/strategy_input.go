@@ -3,7 +3,6 @@ package domain
 import "encoding/json"
 
 // StrategyInput represents the JSON input format for loading a strategy.
-// See PLAN_v0.1.md for the full specification.
 type StrategyInput struct {
 	Project    string          `json:"project"`
 	Strategy   StrategyDef     `json:"strategy"`

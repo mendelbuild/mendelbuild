@@ -312,7 +312,7 @@ func proposeRoadmap(args []string) {
 	fmt.Printf("Tokens used: %d\n", tokens)
 	fmt.Printf("Proposed %d hops:\n", len(roadmap.Hops))
 	for i, hop := range roadmap.Hops {
-		fmt.Printf("  %d. %s (%s)\n", i+1, hop.Name, hop.Kind)
+		fmt.Printf("  %d. %s\n", i+1, hop.Name)
 	}
 	fmt.Printf("\nView at: http://localhost:8080/p/<project-id>/decisions/%s\n", decision.ID)
 }

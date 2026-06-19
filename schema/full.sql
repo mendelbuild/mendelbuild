@@ -141,7 +141,7 @@ CREATE TABLE funding_success_criteria (
 -- HOPS
 --------------------------------------------------------------------------------
 -- A Hop is the fundamental unit of evolutionary experimentation.
--- It defines WHAT we want (via commentary + kind-specific params) but not HOW.
+-- It defines WHAT we want (via commentary) but not HOW.
 -- Each Hop can spawn multiple Variations that compete.
 --
 -- Hops form a DAG via hop_dependencies. They attach directly to Strategies
@@ -159,18 +159,11 @@ CREATE TABLE hops (
 
     name TEXT NOT NULL,
 
-    -- Context about the Hop; helps with qualitative pruning/scoring
-    commentary TEXT,
+    -- Context about the Hop: what it achieves, why it matters, expected impact
+    commentary TEXT NOT NULL,
 
-    -- Hop "kind" determines which Pruner/Scorer implementation is used.
-    -- Implementations are hardcoded in Core; params customize behavior.
-    -- Example kinds: 'code_quality', 'performance', 'user_engagement', 'cost_reduction'
-    kind TEXT NOT NULL,
-
-    -- JSON blob with parameters for this kind's Pruner and Scorer.
-    -- Schema depends on kind. Example for 'code_quality':
-    --   {"min_test_coverage": 0.8, "max_lint_errors": 0, "weight_performance": 0.3}
-    kind_params JSONB,
+    -- JSON blob with hop metadata (e.g., objective_ids linking to OKRs)
+    params JSONB,
 
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'completed', 'abandoned')),
 

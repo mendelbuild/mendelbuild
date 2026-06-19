@@ -13,8 +13,8 @@ All LLM API calls in MendelBuild use Anthropic's **structured outputs** feature 
 ```go
 // 1. Define types with desc tags (types.go)
 type ProposedHop struct {
-    Name string `json:"name" desc:"Short kebab-case identifier (e.g., 'user-onboarding')"`
-    Kind string `json:"kind" desc:"Must be one of: 'feature', 'infrastructure', 'performance'"`
+    Name       string `json:"name" desc:"Short kebab-case identifier (e.g., 'user-onboarding')"`
+    Commentary string `json:"commentary" desc:"Explains what this hop achieves and its expected impact. 2-4 sentences."`
 }
 
 // 2. Generate schema from type (schema.go)
@@ -44,11 +44,11 @@ The `desc` tag is the source of truth for LLM guidance. Be specific:
 
 ```go
 type ProposedHop struct {
-    // Good: specific constraints and examples
-    Kind string `json:"kind" desc:"Hop category. Must be one of: 'feature', 'infrastructure', 'performance', 'code_quality', 'user_engagement', 'cost_reduction'"`
-
     // Good: explains purpose and format
     ObjectiveIDs []string `json:"objective_ids" desc:"UUIDs of objectives this hop advances. Copy exact IDs from strategy input."`
+
+    // Good: specific format and expectations
+    Commentary string `json:"commentary" desc:"Explains what this hop achieves, why it matters, and its expected impact. 2-4 sentences."`
 
     // Bad: too vague
     Name string `json:"name" desc:"The name"`
@@ -91,6 +91,26 @@ internal/
   domain/            # Core domain types
   web/               # HTTP server and templates
 schema/migrations/   # SQL migration files
+```
+
+## Database Migrations
+
+**Never edit existing migrations.** Once a migration is committed, treat it as immutable. To change the schema:
+
+1. Create a new migration file (e.g., `003_add_column.up.sql`)
+2. Write the ALTER statements needed to transform the current schema
+3. Create the corresponding `.down.sql` to revert
+4. Update `schema/full.sql` to reflect the final schema state
+
+Migration files live in `schema/migrations/` and are read at runtime. The `full.sql` file represents the complete current schema for reference.
+
+Example: To add a NOT NULL constraint to an existing column:
+```sql
+-- 003_make_commentary_required.up.sql
+ALTER TABLE hops ALTER COLUMN commentary SET NOT NULL;
+
+-- 003_make_commentary_required.down.sql
+ALTER TABLE hops ALTER COLUMN commentary DROP NOT NULL;
 ```
 
 ## Environment Variables

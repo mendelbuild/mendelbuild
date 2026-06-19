@@ -63,7 +63,6 @@
                 <thead>
                     <tr>
                         <th>Name</th>
-                        <th>Kind</th>
                         <th>Status</th>
                         <th>Created</th>
                     </tr>
@@ -75,7 +74,6 @@
                             <strong>{{.Name}}</strong>
                             {{if .Commentary}}<br><small style="color: #666;">{{.Commentary}}</small>{{end}}
                         </td>
-                        <td>{{.Kind}}</td>
                         <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
                         <td>{{.CreatedAt.Format "2006-01-02"}}</td>
                     </tr>

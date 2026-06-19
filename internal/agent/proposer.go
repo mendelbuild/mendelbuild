@@ -17,8 +17,7 @@ Guidelines:
 4. Order hops logically - foundational work before dependent work
 5. Consider budget constraints from funding sources
 6. Keep hop names short but descriptive (use kebab-case)
-7. Commentary should explain the "why" and expected impact
-8. Valid hop kinds: 'code_quality', 'performance', 'user_engagement', 'cost_reduction', 'feature', 'infrastructure'`
+7. Commentary should explain the "why" and expected impact (2-4 sentences)`
 
 const revisionSystemPrompt = `You are a strategic roadmap proposer for MendelBuild. You are revising an existing roadmap based on user feedback.
 
@@ -35,8 +34,7 @@ Guidelines:
 4. Order hops logically - foundational work before dependent work
 5. Consider budget constraints from funding sources
 6. Keep hop names short but descriptive (use kebab-case)
-7. Commentary should explain the "why" and expected impact
-8. Valid hop kinds: 'code_quality', 'performance', 'user_engagement', 'cost_reduction', 'feature', 'infrastructure'`
+7. Commentary should explain the "why" and expected impact (2-4 sentences)`
 
 // Proposer generates roadmap proposals.
 type Proposer struct {

@@ -230,11 +230,11 @@ func (s *Server) getStrategyViewByProject(ctx context.Context, project *domain.P
 	// Build objective ID to hop count map
 	objHopCount := make(map[string]int)
 	for _, hop := range hops {
-		if hop.KindParams != nil {
+		if hop.Params != nil {
 			var params struct {
 				ObjectiveIDs []string `json:"objective_ids"`
 			}
-			if err := json.Unmarshal(hop.KindParams, &params); err == nil {
+			if err := json.Unmarshal(hop.Params, &params); err == nil {
 				for _, objID := range params.ObjectiveIDs {
 					objHopCount[objID]++
 				}

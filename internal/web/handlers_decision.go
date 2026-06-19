@@ -444,7 +444,7 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 		hopID := uuid.New()
 		hopNameToID[ph.Name] = hopID
 
-		kindParams, _ := json.Marshal(map[string]interface{}{
+		params, _ := json.Marshal(map[string]interface{}{
 			"objective_ids": ph.ObjectiveIDs,
 		})
 
@@ -452,9 +452,8 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 			ID:         hopID,
 			StrategyID: *decision.SubjectID,
 			Name:       ph.Name,
-			Commentary: &ph.Commentary,
-			Kind:       ph.Kind,
-			KindParams: kindParams,
+			Commentary: ph.Commentary,
+			Params:     params,
 			Status:     domain.HopStatusPending,
 			CreatedAt:  now,
 			UpdatedAt:  now,

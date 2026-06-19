@@ -9,16 +9,15 @@ type ResourceEstimate struct {
 // ProposedHop is a hop proposal within a roadmap.
 type ProposedHop struct {
 	Name           string             `json:"name" desc:"Short kebab-case identifier (e.g., 'core-budget-calculator', 'user-onboarding-flow')"`
-	Kind           string             `json:"kind" desc:"Hop category. Must be one of: 'feature', 'infrastructure', 'performance', 'code_quality', 'user_engagement', 'cost_reduction'"`
 	Commentary     string             `json:"commentary" desc:"Explains what this hop achieves, why it matters, and its expected impact. 2-4 sentences."`
-	ObjectiveIDs   []string           `json:"objective_ids" desc:"UUIDs of objectives this hop advances. Copy exact IDs from the strategy input."`
-	EstimatedCosts []ResourceEstimate `json:"estimated_costs" desc:"Resource estimates for this hop. Include entries for each relevant resource type from the strategy's funding sources."`
+	ObjectiveIDs   []string           `json:"objective_ids" desc:"UUIDs of objectives this hop is meant to advance. Use the exact IDs from the strategy input."`
+	EstimatedCosts []ResourceEstimate `json:"estimated_costs" desc:"Resource estimates for this hop. Include entries for each relevant resource type from the strategy's funding sources. Missing funding sources are assumed to be zero cost estimates."`
 	DependsOn      []string           `json:"depends_on" desc:"Names of other hops in this roadmap that must complete first. Use exact hop names. Empty array if no dependencies."`
 }
 
 // ProposedRoadmap is an AI-generated roadmap proposal.
 type ProposedRoadmap struct {
-	Hops             []ProposedHop `json:"hops" desc:"Ordered list of hops to execute. Earlier hops should be foundational."`
+	Hops             []ProposedHop `json:"hops" desc:"Ordered list of hops to execute."`
 	FeasibilityNotes string        `json:"feasibility_notes" desc:"Overall assessment of roadmap feasibility, key risks, assumptions, and budget concerns. 2-4 sentences."`
 }
 

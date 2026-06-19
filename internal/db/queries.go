@@ -464,9 +464,9 @@ func (db *DB) GetDecisionMessages(ctx context.Context, decisionID uuid.UUID) ([]
 // CreateHop creates a new hop.
 func (db *DB) CreateHop(ctx context.Context, h *domain.Hop) error {
 	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO hops (id, strategy_id, name, commentary, kind, kind_params, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
-	`, h.ID, h.StrategyID, h.Name, h.Commentary, h.Kind, h.KindParams, h.Status, h.CreatedAt)
+		INSERT INTO hops (id, strategy_id, name, commentary, params, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+	`, h.ID, h.StrategyID, h.Name, h.Commentary, h.Params, h.Status, h.CreatedAt)
 	return err
 }
 
@@ -506,7 +506,7 @@ func (db *DB) GetFundingSourceByType(ctx context.Context, strategyID uuid.UUID, 
 // GetHopsByStrategy retrieves all hops for a strategy.
 func (db *DB) GetHopsByStrategy(ctx context.Context, strategyID uuid.UUID) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, strategy_id, name, commentary, kind, kind_params, status, created_at, updated_at
+		SELECT id, strategy_id, name, commentary, params, status, created_at, updated_at
 		FROM hops
 		WHERE strategy_id = $1
 		ORDER BY created_at ASC
@@ -519,7 +519,7 @@ func (db *DB) GetHopsByStrategy(ctx context.Context, strategyID uuid.UUID) ([]do
 	var hops []domain.Hop
 	for rows.Next() {
 		var h domain.Hop
-		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Kind, &h.KindParams, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 		hops = append(hops, h)
