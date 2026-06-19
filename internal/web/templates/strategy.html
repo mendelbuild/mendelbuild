@@ -71,7 +71,7 @@
                     {{range .Hops}}
                     <tr>
                         <td>
-                            <strong>{{.Name}}</strong>
+                            <a href="/p/{{$.ProjectID}}/hops/{{.ID}}" style="color: #007bff; text-decoration: none; font-weight: bold;">{{.Name}}</a>
                             {{if .Commentary}}<br><small style="color: #666;">{{.Commentary}}</small>{{end}}
                         </td>
                         <td><span class="status status-{{.Status}}">{{.Status}}</span></td>

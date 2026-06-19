@@ -37,6 +37,12 @@ func (s *Server) setupRoutes() {
 	r.Route("/p/{projectID}", func(r chi.Router) {
 		r.Get("/", s.handleProjectDashboard)
 		r.Get("/strategy", s.handleStrategy)
+
+		// Hop routes
+		r.Get("/hops/{hopID}", s.handleHopDetail)
+		r.Post("/hops/{hopID}/propose-variations", s.handleProposeVariations)
+
+		// Decision routes
 		r.Get("/decisions", s.handleDecisions)
 		r.Get("/decisions/{decisionID}", s.handleDecisionDetail)
 		r.Post("/decisions/{decisionID}/message", s.handleSendMessage)

@@ -21,6 +21,15 @@ func (db *DB) LoadStrategy(ctx context.Context, input *domain.StrategyInput) (uu
 
 	now := time.Now()
 
+	// Prepare project config JSON from credentials
+	var projectConfig json.RawMessage
+	if input.Credentials.AnthropicAPIKey != "" {
+		configBytes, _ := json.Marshal(domain.ProjectConfig{
+			AnthropicAPIKey: input.Credentials.AnthropicAPIKey,
+		})
+		projectConfig = configBytes
+	}
+
 	// Upsert project (check if exists first since name isn't unique-constrained)
 	var projectID uuid.UUID
 	err = tx.QueryRow(ctx, `SELECT id FROM projects WHERE name = $1`, input.Project).Scan(&projectID)
@@ -28,12 +37,16 @@ func (db *DB) LoadStrategy(ctx context.Context, input *domain.StrategyInput) (uu
 		// Doesn't exist, create it
 		projectID = uuid.New()
 		_, err = tx.Exec(ctx, `
-			INSERT INTO projects (id, name, created_at, updated_at)
-			VALUES ($1, $2, $3, $3)
-		`, projectID, input.Project, now)
+			INSERT INTO projects (id, name, config, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $4)
+		`, projectID, input.Project, projectConfig, now)
 	} else {
-		// Exists, update timestamp
-		_, err = tx.Exec(ctx, `UPDATE projects SET updated_at = $1 WHERE id = $2`, now, projectID)
+		// Exists, update timestamp and config if provided
+		if projectConfig != nil {
+			_, err = tx.Exec(ctx, `UPDATE projects SET config = $1, updated_at = $2 WHERE id = $3`, projectConfig, now, projectID)
+		} else {
+			_, err = tx.Exec(ctx, `UPDATE projects SET updated_at = $1 WHERE id = $2`, now, projectID)
+		}
 	}
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("upsert project: %w", err)
@@ -187,9 +200,9 @@ func (db *DB) LoadStrategy(ctx context.Context, input *domain.StrategyInput) (uu
 func (db *DB) GetProject(ctx context.Context, id uuid.UUID) (*domain.Project, error) {
 	var p domain.Project
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, name, created_at, updated_at
+		SELECT id, name, config, created_at, updated_at
 		FROM projects WHERE id = $1
-	`, id).Scan(&p.ID, &p.Name, &p.CreatedAt, &p.UpdatedAt)
+	`, id).Scan(&p.ID, &p.Name, &p.Config, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -200,9 +213,9 @@ func (db *DB) GetProject(ctx context.Context, id uuid.UUID) (*domain.Project, er
 func (db *DB) GetProjectByName(ctx context.Context, name string) (*domain.Project, error) {
 	var p domain.Project
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, name, created_at, updated_at
+		SELECT id, name, config, created_at, updated_at
 		FROM projects WHERE name = $1
-	`, name).Scan(&p.ID, &p.Name, &p.CreatedAt, &p.UpdatedAt)
+	`, name).Scan(&p.ID, &p.Name, &p.Config, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -525,4 +538,159 @@ func (db *DB) GetHopsByStrategy(ctx context.Context, strategyID uuid.UUID) ([]do
 		hops = append(hops, h)
 	}
 	return hops, nil
+}
+
+// GetHop retrieves a hop by ID.
+func (db *DB) GetHop(ctx context.Context, id uuid.UUID) (*domain.Hop, error) {
+	var h domain.Hop
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, strategy_id, name, commentary, params, status, created_at, updated_at
+		FROM hops WHERE id = $1
+	`, id).Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.Status, &h.CreatedAt, &h.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &h, nil
+}
+
+// UpdateHopStatus updates the status of a hop.
+func (db *DB) UpdateHopStatus(ctx context.Context, hopID uuid.UUID, status domain.HopStatus) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE hops SET status = $1, updated_at = NOW() WHERE id = $2
+	`, status, hopID)
+	return err
+}
+
+// CreateVariation creates a new variation.
+func (db *DB) CreateVariation(ctx context.Context, v *domain.Variation) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO variations (id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+	`, v.ID, v.HopID, v.Name, v.Approach, v.RepositoryID, v.CommitRef, v.EcosystemID, v.DeploymentRef, v.Status, v.CreatedAt)
+	return err
+}
+
+// GetVariation retrieves a variation by ID.
+func (db *DB) GetVariation(ctx context.Context, id uuid.UUID) (*domain.Variation, error) {
+	var v domain.Variation
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref, status, created_at, updated_at
+		FROM variations WHERE id = $1
+	`, id).Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef, &v.Status, &v.CreatedAt, &v.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+// UpdateVariation updates a variation.
+func (db *DB) UpdateVariation(ctx context.Context, v *domain.Variation) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE variations SET
+			name = $2, approach = $3, repository_id = $4, commit_ref = $5,
+			ecosystem_id = $6, deployment_ref = $7, status = $8, updated_at = NOW()
+		WHERE id = $1
+	`, v.ID, v.Name, v.Approach, v.RepositoryID, v.CommitRef, v.EcosystemID, v.DeploymentRef, v.Status)
+	return err
+}
+
+// GetVariationsByHop retrieves all variations for a hop.
+func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain.Variation, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref, status, created_at, updated_at
+		FROM variations
+		WHERE hop_id = $1
+		ORDER BY created_at ASC
+	`, hopID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var variations []domain.Variation
+	for rows.Next() {
+		var v domain.Variation
+		if err := rows.Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef, &v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
+			return nil, err
+		}
+		variations = append(variations, v)
+	}
+	return variations, nil
+}
+
+// CreateVariationStateTransition records a state transition for a variation.
+func (db *DB) CreateVariationStateTransition(ctx context.Context, variationID uuid.UUID, fromStatus, toStatus, reason string) error {
+	id := uuid.New()
+	var fromPtr *string
+	if fromStatus != "" {
+		fromPtr = &fromStatus
+	}
+	var reasonPtr *string
+	if reason != "" {
+		reasonPtr = &reason
+	}
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO variation_state_history (id, variation_id, from_status, to_status, transitioned_at, reason)
+		VALUES ($1, $2, $3, $4, NOW(), $5)
+	`, id, variationID, fromPtr, toStatus, reasonPtr)
+	return err
+}
+
+// GetRepositoryByProject retrieves the repository for a project.
+func (db *DB) GetRepositoryByProject(ctx context.Context, projectID uuid.UUID) (*domain.Repository, error) {
+	var r domain.Repository
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, project_id, name, repo_type, url, config, created_at, updated_at
+		FROM repositories WHERE project_id = $1 LIMIT 1
+	`, projectID).Scan(&r.ID, &r.ProjectID, &r.Name, &r.RepoType, &r.URL, &r.Config, &r.CreatedAt, &r.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// LogBudgetSpend logs a budget spend entry.
+func (db *DB) LogBudgetSpend(ctx context.Context, allocationID uuid.UUID, amount float64, description string) error {
+	id := uuid.New()
+	var descPtr *string
+	if description != "" {
+		descPtr = &description
+	}
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO budget_spend_log (id, budget_allocation_id, amount, recorded_at, description)
+		VALUES ($1, $2, $3, NOW(), $4)
+	`, id, allocationID, amount, descPtr)
+	return err
+}
+
+// GetBudgetAllocationsByHop retrieves all budget allocations for a hop.
+func (db *DB) GetBudgetAllocationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain.BudgetAllocation, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, hop_id, funding_source_id, limit_amount, created_at, updated_at
+		FROM budget_allocations
+		WHERE hop_id = $1
+	`, hopID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var allocations []domain.BudgetAllocation
+	for rows.Next() {
+		var a domain.BudgetAllocation
+		if err := rows.Scan(&a.ID, &a.HopID, &a.FundingSourceID, &a.LimitAmount, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			return nil, err
+		}
+		allocations = append(allocations, a)
+	}
+	return allocations, nil
+}
+
+// GetBudgetSpendByAllocation retrieves total spend for a budget allocation.
+func (db *DB) GetBudgetSpendByAllocation(ctx context.Context, allocationID uuid.UUID) (float64, error) {
+	var total float64
+	err := db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount), 0) FROM budget_spend_log WHERE budget_allocation_id = $1
+	`, allocationID).Scan(&total)
+	return total, err
 }

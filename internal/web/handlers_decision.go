@@ -14,10 +14,26 @@ import (
 
 // DecisionDetailView holds data for rendering a decision detail page.
 type DecisionDetailView struct {
-	Decision *domain.Decision
-	Messages []domain.DecisionMessage
-	Roadmap  *agent.ProposedRoadmap
-	Strategy *domain.Strategy
+	Decision         *domain.Decision
+	Messages         []domain.DecisionMessage
+	Roadmap          *agent.ProposedRoadmap
+	Strategy         *domain.Strategy
+	Hop              *domain.Hop
+	VariationProposal *VariationProposalView
+}
+
+// VariationProposalView holds parsed variation proposal data.
+type VariationProposalView struct {
+	HopID      string
+	Variations []ProposedVariationView
+}
+
+// ProposedVariationView holds a single proposed variation.
+type ProposedVariationView struct {
+	Name            string
+	Approach        string
+	Differentiation string
+	EstimatedTokens int
 }
 
 func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
@@ -41,24 +57,59 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var roadmap *agent.ProposedRoadmap
-	if decision.Details != nil && *decision.Details != "" {
-		var rm agent.ProposedRoadmap
-		if err := json.Unmarshal([]byte(*decision.Details), &rm); err == nil {
-			roadmap = &rm
-		}
-	}
-
-	var strategy *domain.Strategy
-	if decision.SubjectType != nil && *decision.SubjectType == "strategy" && decision.SubjectID != nil {
-		strategy, _ = s.db.GetStrategy(ctx, *decision.SubjectID)
-	}
-
 	view := &DecisionDetailView{
 		Decision: decision,
 		Messages: messages,
-		Roadmap:  roadmap,
-		Strategy: strategy,
+	}
+
+	templateName := "decision_roadmap.html"
+
+	switch decision.Kind {
+	case domain.DecisionKindRoadmapReview:
+		// Parse roadmap from details
+		if decision.Details != nil && *decision.Details != "" {
+			var rm agent.ProposedRoadmap
+			if err := json.Unmarshal([]byte(*decision.Details), &rm); err == nil {
+				view.Roadmap = &rm
+			}
+		}
+		// Load strategy
+		if decision.SubjectType != nil && *decision.SubjectType == "strategy" && decision.SubjectID != nil {
+			view.Strategy, _ = s.db.GetStrategy(ctx, *decision.SubjectID)
+		}
+
+	case domain.DecisionKindVariationReview:
+		templateName = "decision_variation.html"
+		// Parse variation proposal from details
+		if decision.Details != nil && *decision.Details != "" {
+			var proposal struct {
+				HopID      string `json:"hop_id"`
+				Variations []struct {
+					Name            string `json:"name"`
+					Approach        string `json:"approach"`
+					Differentiation string `json:"differentiation"`
+					EstimatedTokens int    `json:"estimated_tokens"`
+				} `json:"variations"`
+			}
+			if err := json.Unmarshal([]byte(*decision.Details), &proposal); err == nil {
+				vpv := &VariationProposalView{
+					HopID: proposal.HopID,
+				}
+				for _, v := range proposal.Variations {
+					vpv.Variations = append(vpv.Variations, ProposedVariationView{
+						Name:            v.Name,
+						Approach:        v.Approach,
+						Differentiation: v.Differentiation,
+						EstimatedTokens: v.EstimatedTokens,
+					})
+				}
+				view.VariationProposal = vpv
+			}
+		}
+		// Load hop
+		if decision.SubjectType != nil && *decision.SubjectType == "hop" && decision.SubjectID != nil {
+			view.Hop, _ = s.db.GetHop(ctx, *decision.SubjectID)
+		}
 	}
 
 	data := map[string]interface{}{
@@ -67,7 +118,7 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 		"View":      view,
 	}
 
-	if err := renderPage(w, "decision_roadmap.html", data); err != nil {
+	if err := renderPage(w, templateName, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -414,9 +465,23 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if decision.SubjectID == nil {
-		http.Error(w, "no strategy associated", http.StatusBadRequest)
+		http.Error(w, "no subject associated", http.StatusBadRequest)
 		return
 	}
+
+	// Handle based on decision kind
+	switch decision.Kind {
+	case domain.DecisionKindRoadmapReview:
+		s.approveRoadmap(w, r, decision, projectID)
+	case domain.DecisionKindVariationReview:
+		s.approveVariations(w, r, decision, projectID)
+	default:
+		http.Error(w, "unsupported decision kind", http.StatusBadRequest)
+	}
+}
+
+func (s *Server) approveRoadmap(w http.ResponseWriter, r *http.Request, decision *domain.Decision, projectID string) {
+	ctx := r.Context()
 
 	// Parse roadmap
 	var roadmap agent.ProposedRoadmap
@@ -502,7 +567,7 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 	// Save system message
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decisionID,
+		DecisionID: decision.ID,
 		Role:       "system",
 		Content:    fmt.Sprintf("Roadmap approved. Created %d hops.", len(roadmap.Hops)),
 		CreatedAt:  time.Now(),
@@ -511,6 +576,57 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 
 	// Redirect to strategy page
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/strategy", projectID), http.StatusSeeOther)
+}
+
+func (s *Server) approveVariations(w http.ResponseWriter, r *http.Request, decision *domain.Decision, projectID string) {
+	ctx := r.Context()
+
+	if decision.Details == nil {
+		http.Error(w, "no variations to approve", http.StatusBadRequest)
+		return
+	}
+
+	// Parse variation proposal
+	var proposal struct {
+		HopID      uuid.UUID `json:"hop_id"`
+		Variations []struct {
+			Name            string `json:"name"`
+			Approach        string `json:"approach"`
+			Differentiation string `json:"differentiation"`
+			EstimatedTokens int    `json:"estimated_tokens"`
+		} `json:"variations"`
+	}
+	if err := json.Unmarshal([]byte(*decision.Details), &proposal); err != nil {
+		http.Error(w, "error parsing variations: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Update decision status first
+	decision.Status = domain.DecisionStatusResolved
+	resolution := "approved"
+	decision.Resolution = &resolution
+	resolvedAt := time.Now()
+	decision.ResolvedAt = &resolvedAt
+	decision.UpdatedAt = resolvedAt
+
+	if err := s.db.UpdateDecision(ctx, decision); err != nil {
+		http.Error(w, "error updating decision", http.StatusInternalServerError)
+		return
+	}
+
+	// Save system message about approval
+	sysMsg := &domain.DecisionMessage{
+		ID:         uuid.New(),
+		DecisionID: decision.ID,
+		Role:       "system",
+		Content:    fmt.Sprintf("Variations approved. Starting code generation for %d variations.", len(proposal.Variations)),
+		CreatedAt:  time.Now(),
+	}
+	s.db.CreateDecisionMessage(ctx, sysMsg)
+
+	// Note: Code generation is triggered asynchronously or via CLI command
+	// For now, we just redirect to the hop detail page
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/hops/%s", projectID, decision.SubjectID.String()), http.StatusSeeOther)
 }
 
 func validateRoadmap(r *agent.ProposedRoadmap) error {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/agent"
+	"github.com/bhs/mendelbuild/internal/codegen"
 	"github.com/bhs/mendelbuild/internal/db"
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/bhs/mendelbuild/internal/web"
@@ -35,6 +36,8 @@ func main() {
 		runMigrations(args)
 	case "propose-roadmap":
 		proposeRoadmap(args)
+	case "generate":
+		runGenerate(args)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -50,10 +53,12 @@ Commands:
   load-strategy     Load a strategy from JSON file
   migrate           Run database migrations
   propose-roadmap   Generate a roadmap proposal for a strategy
+  generate          Run code generation for a hop's approved variations
 
 Environment:
   MENDEL_DB_URL       Postgres connection string (default: postgres://localhost:5432/mendelbuild?sslmode=disable)
-  ANTHROPIC_API_KEY   API key for Anthropic Claude (required for propose-roadmap)
+  ANTHROPIC_API_KEY   API key for Anthropic Claude (required for propose-roadmap, generate)
+  MENDEL_WORK_DIR     Working directory for git clones (default: /tmp/mendel)
 
 Run 'mendel <command> -h' for more information on a command.`)
 }
@@ -319,4 +324,102 @@ func proposeRoadmap(args []string) {
 
 func strPtr(s string) *string {
 	return &s
+}
+
+func runGenerate(args []string) {
+	fs := flag.NewFlagSet("generate", flag.ExitOnError)
+	decisionID := fs.String("decision", "", "Approved variation_review decision UUID")
+	concurrency := fs.Int("concurrency", 2, "Number of parallel generators")
+	fs.Parse(args)
+
+	if *decisionID == "" {
+		fmt.Fprintln(os.Stderr, "usage: mendel generate -decision <uuid>")
+		os.Exit(1)
+	}
+
+	decisionUUID, err := uuid.Parse(*decisionID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid decision UUID: %v\n", err)
+		os.Exit(1)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	database, err := db.Connect(ctx, getConnString())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error connecting to database: %v\n", err)
+		os.Exit(1)
+	}
+	defer database.Close()
+
+	// Load decision
+	decision, err := database.GetDecision(ctx, decisionUUID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading decision: %v\n", err)
+		os.Exit(1)
+	}
+
+	if decision.Kind != domain.DecisionKindVariationReview {
+		fmt.Fprintf(os.Stderr, "Decision is not a variation_review (kind: %s)\n", decision.Kind)
+		os.Exit(1)
+	}
+
+	if decision.Status != domain.DecisionStatusResolved || decision.Resolution == nil || *decision.Resolution != "approved" {
+		fmt.Fprintln(os.Stderr, "Decision must be approved before generating code")
+		os.Exit(1)
+	}
+
+	if decision.SubjectID == nil {
+		fmt.Fprintln(os.Stderr, "Decision has no hop associated")
+		os.Exit(1)
+	}
+
+	hopID := *decision.SubjectID
+
+	// Parse variation proposal from decision details
+	if decision.Details == nil {
+		fmt.Fprintln(os.Stderr, "Decision has no variation proposal")
+		os.Exit(1)
+	}
+
+	proposal, err := codegen.ParseVariationProposal(*decision.Details)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing variation proposal: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Starting code generation for %d variations...\n", len(proposal.Variations))
+
+	// Run orchestrator
+	orchestrator := codegen.NewOrchestrator(database, *concurrency)
+	config := codegen.GeneratorConfig{} // Config will be loaded from DB
+
+	result, err := orchestrator.Orchestrate(ctx, hopID, proposal, config)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error running orchestrator: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\nCode generation complete:\n")
+	fmt.Printf("  Success: %d\n", result.SuccessCount)
+	fmt.Printf("  Failed:  %d\n", result.FailureCount)
+	fmt.Printf("  Tokens:  %d\n", result.TotalTokens)
+
+	for _, r := range result.Results {
+		status := "SUCCESS"
+		if !r.Success {
+			status = "FAILED"
+		}
+		fmt.Printf("\n  %s: %s\n", r.VariationID, status)
+		if r.BranchName != "" {
+			fmt.Printf("    Branch: %s\n", r.BranchName)
+		}
+		if r.CommitRef != "" {
+			fmt.Printf("    Commit: %s\n", r.CommitRef[:8])
+		}
+		if r.Error != "" {
+			fmt.Printf("    Error: %s\n", r.Error)
+		}
+	}
 }

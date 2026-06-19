@@ -4,9 +4,15 @@ import "encoding/json"
 
 // StrategyInput represents the JSON input format for loading a strategy.
 type StrategyInput struct {
-	Project    string          `json:"project"`
-	Strategy   StrategyDef     `json:"strategy"`
-	Repository RepositoryDef   `json:"repository"`
+	Project     string         `json:"project"`
+	Strategy    StrategyDef    `json:"strategy"`
+	Repository  RepositoryDef  `json:"repository"`
+	Credentials CredentialsDef `json:"credentials,omitempty"`
+}
+
+// CredentialsDef holds project-wide credentials.
+type CredentialsDef struct {
+	AnthropicAPIKey string `json:"anthropic_api_key,omitempty"`
 }
 
 // StrategyDef defines a strategy with objectives and funding.
@@ -47,4 +53,5 @@ type RepositoryDef struct {
 // RepoConfig holds repository-specific configuration.
 type RepoConfig struct {
 	TestCommand string `json:"test_command,omitempty"`
+	AuthToken   string `json:"auth_token,omitempty"` // Git auth token (works for GitHub, GitLab, etc.)
 }
