@@ -43,6 +43,8 @@ func (s *Server) setupRoutes() {
 		r.Post("/decisions/{decisionID}/regenerate", s.handleRegenerate)
 		r.Post("/decisions/{decisionID}/roadmap", s.handleUpdateRoadmap)
 		r.Post("/decisions/{decisionID}/approve", s.handleApprove)
+		r.Post("/decisions/{decisionID}/reject", s.handleReject)
+		r.Post("/roadmap/propose", s.handleProposeRoadmap)
 	})
 
 	// API endpoints (for htmx)

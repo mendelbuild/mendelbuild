@@ -583,3 +583,160 @@ func hasCycle(hops []agent.ProposedHop) bool {
 	}
 	return false
 }
+
+func (s *Server) handleProposeRoadmap(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	// Get strategy
+	strategies, err := s.db.GetStrategiesByProject(ctx, projectID)
+	if err != nil || len(strategies) == 0 {
+		http.Error(w, "no strategy found", http.StatusNotFound)
+		return
+	}
+	strategy := strategies[0]
+
+	// Build strategy context
+	objectives, _ := s.db.GetObjectivesByStrategy(ctx, strategy.ID)
+	var objInfos []agent.ObjectiveInfo
+	for _, obj := range objectives {
+		krs, _ := s.db.GetKeyResultsByObjective(ctx, obj.ID)
+		var krInfos []agent.KeyResultInfo
+		for _, kr := range krs {
+			krInfo := agent.KeyResultInfo{
+				ID:          kr.ID.String(),
+				Description: kr.Description,
+				TargetUnits: kr.TargetUnits,
+			}
+			if kr.TargetDate != nil {
+				date := kr.TargetDate.Format("2006-01-02")
+				krInfo.TargetDate = &date
+			}
+			krInfos = append(krInfos, krInfo)
+		}
+		objInfos = append(objInfos, agent.ObjectiveInfo{
+			ID:          obj.ID.String(),
+			Description: obj.Description,
+			KeyResults:  krInfos,
+		})
+	}
+
+	funding, _ := s.db.GetFundingSourcesByStrategy(ctx, strategy.ID)
+	var fundingEstimates []agent.ResourceEstimate
+	for _, f := range funding {
+		fundingEstimates = append(fundingEstimates, agent.ResourceEstimate{
+			ResourceType: string(f.ResourceType),
+			Amount:       f.Amount,
+		})
+	}
+
+	strategyContext := agent.StrategyContext{
+		ID:         strategy.ID.String(),
+		Name:       strategy.Name,
+		Objectives: objInfos,
+		Funding:    fundingEstimates,
+	}
+
+	// Generate proposal
+	client, err := agent.NewClient("")
+	if err != nil {
+		http.Error(w, "error creating agent client: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	proposer := agent.NewProposer(client)
+	roadmap, tokens, err := proposer.ProposeRoadmap(ctx, strategyContext)
+	if err != nil {
+		http.Error(w, "error generating roadmap: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Create decision
+	now := time.Now()
+	roadmapJSON, _ := json.MarshalIndent(roadmap, "", "  ")
+	roadmapStr := string(roadmapJSON)
+
+	decision := &domain.Decision{
+		ID:               uuid.New(),
+		Kind:             domain.DecisionKindRoadmapReview,
+		Title:            fmt.Sprintf("Roadmap Review: %s", strategy.Name),
+		Details:          &roadmapStr,
+		ObjectivityScore: 0.3,
+		ImportanceScore:  0.8,
+		Status:           domain.DecisionStatusNeedsAssignment,
+		SubjectType:      strPtr("strategy"),
+		SubjectID:        &strategy.ID,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+
+	if err := s.db.CreateDecision(ctx, decision); err != nil {
+		http.Error(w, "error creating decision: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Create agent message
+	tokensUsed := tokens
+	agentMsg := &domain.DecisionMessage{
+		ID:         uuid.New(),
+		DecisionID: decision.ID,
+		Role:       "agent",
+		Content:    fmt.Sprintf("Generated roadmap proposal with %d hops.", len(roadmap.Hops)),
+		TokensUsed: &tokensUsed,
+		CreatedAt:  now,
+	}
+	s.db.CreateDecisionMessage(ctx, agentMsg)
+
+	// Redirect to decision page
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decision.ID), http.StatusSeeOther)
+}
+
+func strPtr(s string) *string {
+	return &s
+}
+
+func (s *Server) handleReject(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID := chi.URLParam(r, "projectID")
+	decisionID, err := uuid.Parse(chi.URLParam(r, "decisionID"))
+	if err != nil {
+		http.Error(w, "invalid decision ID", http.StatusBadRequest)
+		return
+	}
+
+	decision, err := s.db.GetDecision(ctx, decisionID)
+	if err != nil {
+		http.Error(w, "decision not found", http.StatusNotFound)
+		return
+	}
+
+	// Update decision status
+	decision.Status = domain.DecisionStatusResolved
+	resolution := "rejected"
+	decision.Resolution = &resolution
+	resolvedAt := time.Now()
+	decision.ResolvedAt = &resolvedAt
+	decision.UpdatedAt = resolvedAt
+
+	if err := s.db.UpdateDecision(ctx, decision); err != nil {
+		http.Error(w, "error updating decision", http.StatusInternalServerError)
+		return
+	}
+
+	// Save system message
+	sysMsg := &domain.DecisionMessage{
+		ID:         uuid.New(),
+		DecisionID: decisionID,
+		Role:       "system",
+		Content:    "Roadmap proposal rejected.",
+		CreatedAt:  time.Now(),
+	}
+	s.db.CreateDecisionMessage(ctx, sysMsg)
+
+	// Redirect to decisions list
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions", projectID), http.StatusSeeOther)
+}

@@ -13,10 +13,12 @@
                     <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Save Changes</button>
                     {{if ne .Decision.Status "resolved"}}
                     <button type="button" onclick="document.getElementById('approve-form').submit()" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Approve &amp; Create Hops</button>
+                    <button type="button" onclick="document.getElementById('reject-form').submit()" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Reject</button>
                     {{end}}
                 </div>
             </form>
             <form id="approve-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/approve" style="display: none;"></form>
+            <form id="reject-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/reject" style="display: none;"></form>
         </div>
 
         {{if .Roadmap}}
@@ -88,10 +90,21 @@
             </form>
             <form id="regenerate-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/regenerate" style="display: none;"></form>
             {{else}}
+            {{if eq .Decision.Resolution "approved"}}
             <div style="padding: 15px; background: #d4edda; border-radius: 4px; text-align: center;">
                 <strong>This roadmap has been approved.</strong><br>
                 <a href="/p/{{$.ProjectID}}/strategy">View Strategy</a>
             </div>
+            {{else if eq .Decision.Resolution "rejected"}}
+            <div style="padding: 15px; background: #f8d7da; border-radius: 4px; text-align: center;">
+                <strong>This roadmap was rejected.</strong><br>
+                <a href="/p/{{$.ProjectID}}/decisions">Back to Decisions</a>
+            </div>
+            {{else}}
+            <div style="padding: 15px; background: #e2e3e5; border-radius: 4px; text-align: center;">
+                <strong>This decision has been resolved.</strong>
+            </div>
+            {{end}}
             {{end}}
         </div>
 
