@@ -13,7 +13,7 @@ import (
 
 const (
 	anthropicAPIURL = "https://api.anthropic.com/v1/messages"
-	defaultModel    = "claude-sonnet-4-20250514"
+	defaultModel    = "claude-sonnet-4-6"
 	apiVersion      = "2023-06-01"
 )
 
@@ -48,12 +48,24 @@ type Message struct {
 	Content string `json:"content"`
 }
 
+// OutputFormat specifies the structured output format.
+type OutputFormat struct {
+	Type   string          `json:"type"`
+	Schema json.RawMessage `json:"schema"`
+}
+
+// OutputConfig specifies output configuration including format.
+type OutputConfig struct {
+	Format *OutputFormat `json:"format,omitempty"`
+}
+
 // Request is an Anthropic API request.
 type Request struct {
-	Model     string    `json:"model"`
-	MaxTokens int       `json:"max_tokens"`
-	System    string    `json:"system,omitempty"`
-	Messages  []Message `json:"messages"`
+	Model        string        `json:"model"`
+	MaxTokens    int           `json:"max_tokens"`
+	System       string        `json:"system,omitempty"`
+	Messages     []Message     `json:"messages"`
+	OutputConfig *OutputConfig `json:"output_config,omitempty"`
 }
 
 // Response is an Anthropic API response.
@@ -87,6 +99,11 @@ func (u Usage) TotalTokens() int {
 
 // SendMessage sends a message to the Anthropic API and returns the response.
 func (c *Client) SendMessage(ctx context.Context, system string, messages []Message, maxTokens int) (*Response, error) {
+	return c.SendMessageWithSchema(ctx, system, messages, maxTokens, nil)
+}
+
+// SendMessageWithSchema sends a message with a JSON schema for structured output.
+func (c *Client) SendMessageWithSchema(ctx context.Context, system string, messages []Message, maxTokens int, schema json.RawMessage) (*Response, error) {
 	if maxTokens == 0 {
 		maxTokens = 4096
 	}
@@ -96,6 +113,15 @@ func (c *Client) SendMessage(ctx context.Context, system string, messages []Mess
 		MaxTokens: maxTokens,
 		System:    system,
 		Messages:  messages,
+	}
+
+	if schema != nil {
+		req.OutputConfig = &OutputConfig{
+			Format: &OutputFormat{
+				Type:   "json_schema",
+				Schema: schema,
+			},
+		}
 	}
 
 	body, err := json.Marshal(req)

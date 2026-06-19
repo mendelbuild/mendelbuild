@@ -2,17 +2,14 @@ package db
 
 import (
 	"context"
-	"embed"
 	"fmt"
-	"io/fs"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-//go:embed migrations/*.sql
-var migrationsFS embed.FS
 
 // DB wraps a pgx connection pool with migration support.
 type DB struct {
@@ -39,10 +36,44 @@ func (db *DB) Close() {
 	db.Pool.Close()
 }
 
+// findMigrationsDir locates the schema/migrations directory.
+// It walks up from the current working directory looking for it.
+func findMigrationsDir() (string, error) {
+	// Try relative to working directory first
+	candidates := []string{
+		"schema/migrations",
+		"../schema/migrations",
+		"../../schema/migrations",
+	}
+
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate, nil
+		}
+	}
+
+	// Try using executable location
+	exe, err := os.Executable()
+	if err == nil {
+		exeDir := filepath.Dir(exe)
+		candidate := filepath.Join(exeDir, "schema/migrations")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("could not find schema/migrations directory")
+}
+
 // Migrate runs all pending up migrations.
 func (db *DB) Migrate(ctx context.Context) error {
+	migrationsDir, err := findMigrationsDir()
+	if err != nil {
+		return err
+	}
+
 	// Create migrations tracking table if not exists
-	_, err := db.Pool.Exec(ctx, `
+	_, err = db.Pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS _migrations (
 			name TEXT PRIMARY KEY,
 			applied_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -68,8 +99,8 @@ func (db *DB) Migrate(ctx context.Context) error {
 		applied[name] = true
 	}
 
-	// Get all up migrations from embedded FS
-	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	// Get all up migrations from filesystem
+	entries, err := os.ReadDir(migrationsDir)
 	if err != nil {
 		return fmt.Errorf("read migrations dir: %w", err)
 	}
@@ -89,7 +120,7 @@ func (db *DB) Migrate(ctx context.Context) error {
 			continue
 		}
 
-		content, err := fs.ReadFile(migrationsFS, "migrations/"+name)
+		content, err := os.ReadFile(filepath.Join(migrationsDir, name))
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", name, err)
 		}
@@ -121,6 +152,11 @@ func (db *DB) Migrate(ctx context.Context) error {
 
 // MigrateDown reverts the last N migrations (default 1).
 func (db *DB) MigrateDown(ctx context.Context, count int) error {
+	migrationsDir, err := findMigrationsDir()
+	if err != nil {
+		return err
+	}
+
 	if count <= 0 {
 		count = 1
 	}
@@ -143,7 +179,7 @@ func (db *DB) MigrateDown(ctx context.Context, count int) error {
 
 	for _, baseName := range toRevert {
 		downFile := baseName + ".down.sql"
-		content, err := fs.ReadFile(migrationsFS, "migrations/"+downFile)
+		content, err := os.ReadFile(filepath.Join(migrationsDir, downFile))
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", downFile, err)
 		}
