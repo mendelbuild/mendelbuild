@@ -1,0 +1,35 @@
+{{define "page-content"}}
+<h1>Decisions</h1>
+
+<div class="card">
+    <h2>Pending Decisions</h2>
+    {{if .Decisions}}
+    <table>
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Kind</th>
+                <th>Status</th>
+                <th>Importance</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Decisions}}
+            <tr>
+                <td>{{.Title}}</td>
+                <td>{{.Kind}}</td>
+                <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
+                <td>{{printf "%.2f" .ImportanceScore}}</td>
+                <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                <td><a href="/decisions/{{.ID}}">Review</a></td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{else}}
+    <p class="empty">No pending decisions.</p>
+    {{end}}
+</div>
+{{end}}

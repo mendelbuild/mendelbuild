@@ -1,0 +1,108 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}} - MendelBuild</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        nav {
+            background: #333;
+            padding: 10px 20px;
+            margin: -20px -20px 20px -20px;
+            display: flex;
+        }
+        nav a {
+            color: white;
+            text-decoration: none;
+            margin-right: 20px;
+        }
+        nav a:hover { text-decoration: underline; }
+        nav .right { margin-left: auto; }
+        h1, h2, h3 { color: #333; }
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .card h2 { margin-top: 0; }
+        .objective {
+            border-left: 4px solid #007bff;
+            padding-left: 15px;
+            margin-bottom: 20px;
+        }
+        .key-result {
+            background: #f8f9fa;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+        }
+        .key-result .target {
+            font-family: monospace;
+            background: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        .funding {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .funding-item {
+            background: #d4edda;
+            padding: 15px 20px;
+            border-radius: 8px;
+            min-width: 150px;
+        }
+        .funding-item .amount {
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+        .funding-item .type {
+            color: #666;
+            font-size: 0.9em;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th { background: #f8f9fa; }
+        .status {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+        }
+        .status-pending { background: #fff3cd; color: #856404; }
+        .status-active { background: #cce5ff; color: #004085; }
+        .status-resolved { background: #d4edda; color: #155724; }
+        .empty { color: #666; font-style: italic; }
+    </style>
+</head>
+<body>
+    <nav>
+        {{if .ProjectID}}<a href="/p/{{.ProjectID}}/strategy">Strategy</a>
+        <a href="/p/{{.ProjectID}}/decisions">Decisions</a>{{end}}
+        <a class="right" href="/">All Projects</a>
+    </nav>
+    {{block "page-content" .}}{{end}}
+</body>
+</html>
+{{end}}

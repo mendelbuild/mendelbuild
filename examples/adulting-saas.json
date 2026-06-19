@@ -1,0 +1,51 @@
+{
+  "project": "adulting-101",
+  "strategy": {
+    "name": "MVP Launch",
+    "objectives": [
+      {
+        "id": "user-education",
+        "description": "Help young adults understand basic personal finance",
+        "key_results": [
+          {
+            "id": "calculator-usage",
+            "description": "Users complete budget calculator",
+            "target_units": ">= 100 completions"
+          },
+          {
+            "id": "session-duration",
+            "description": "Average session duration",
+            "target_units": ">= 5 minutes"
+          }
+        ]
+      },
+      {
+        "id": "mvp-quality",
+        "description": "Ship a functional MVP",
+        "key_results": [
+          {
+            "id": "test-coverage",
+            "description": "Test coverage",
+            "target_units": ">= 80%"
+          },
+          {
+            "id": "error-rate",
+            "description": "Error rate",
+            "target_units": "< 1%"
+          }
+        ]
+      }
+    ],
+    "funding": [
+      {"resource_type": "dollars", "amount": 50.00},
+      {"resource_type": "claude_tokens", "amount": 5000000}
+    ]
+  },
+  "repository": {
+    "url": "https://github.com/example/adulting-101",
+    "main_branch": "main",
+    "config": {
+      "test_command": "npm test"
+    }
+  }
+}

@@ -7,6 +7,7 @@
 *.dll
 *.so
 *.dylib
+bin/
 
 # Test binary, built with `go test -c`
 *.test
@@ -32,3 +33,7 @@ go.work.sum
 # .vscode/
 
 primitives_review.md
+labnotebook.md
+
+# Claude Code
+.claude/

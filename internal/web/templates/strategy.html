@@ -1,0 +1,52 @@
+{{define "page-content"}}
+{{with .Strategy}}
+<h1>{{.Project.Name}}</h1>
+<h2>Strategy: {{.Strategy.Name}}</h2>
+
+<div class="card">
+    <h2>Funding</h2>
+    {{if .Funding}}
+    <div class="funding">
+        {{range .Funding}}
+        <div class="funding-item">
+            <div class="amount">
+                {{if eq .ResourceType "dollars"}}${{printf "%.2f" .Amount}}{{else}}{{printf "%.0f" .Amount}}{{end}}
+            </div>
+            <div class="type">{{.ResourceType}}</div>
+        </div>
+        {{end}}
+    </div>
+    {{else}}
+    <p class="empty">No funding sources defined.</p>
+    {{end}}
+</div>
+
+<div class="card">
+    <h2>Objectives &amp; Key Results</h2>
+    {{if .Objectives}}
+        {{range .Objectives}}
+        <div class="objective">
+            <h3>{{.Objective.Description}}</h3>
+            {{if .KeyResults}}
+                {{range .KeyResults}}
+                <div class="key-result">
+                    <strong>{{.Description}}</strong>
+                    <span class="target">{{.TargetUnits}}</span>
+                    {{if .TargetDate}}
+                    <span style="color: #666; margin-left: 10px;">by {{.TargetDate.Format "2006-01-02"}}</span>
+                    {{end}}
+                </div>
+                {{end}}
+            {{else}}
+            <p class="empty">No key results defined.</p>
+            {{end}}
+        </div>
+        {{end}}
+    {{else}}
+    <p class="empty">No objectives defined.</p>
+    {{end}}
+</div>
+{{else}}
+<p class="empty">Strategy not found.</p>
+{{end}}
+{{end}}
