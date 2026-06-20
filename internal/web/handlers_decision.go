@@ -14,22 +14,25 @@ import (
 
 // DecisionDetailView holds data for rendering a decision detail page.
 type DecisionDetailView struct {
-	Decision         *domain.Decision
-	Messages         []domain.DecisionMessage
-	Roadmap          *agent.ProposedRoadmap
-	Strategy         *domain.Strategy
-	Hop              *domain.Hop
+	Decision          *domain.Decision
+	Messages          []domain.DecisionMessage
+	Roadmap           *agent.ProposedRoadmap
+	Strategy          *domain.Strategy
+	Hop               *domain.Hop
 	VariationProposal *VariationProposalView
+	HopBudget         int // Total token budget for the hop
 }
 
 // VariationProposalView holds parsed variation proposal data.
 type VariationProposalView struct {
-	HopID      string
-	Variations []ProposedVariationView
+	HopID              string
+	Variations         []ProposedVariationView
+	TotalEstimatedTokens int
 }
 
 // ProposedVariationView holds a single proposed variation.
 type ProposedVariationView struct {
+	Index           int
 	Name            string
 	Approach        string
 	Differentiation string
@@ -95,20 +98,40 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 				vpv := &VariationProposalView{
 					HopID: proposal.HopID,
 				}
-				for _, v := range proposal.Variations {
+				totalTokens := 0
+				for i, v := range proposal.Variations {
 					vpv.Variations = append(vpv.Variations, ProposedVariationView{
+						Index:           i,
 						Name:            v.Name,
 						Approach:        v.Approach,
 						Differentiation: v.Differentiation,
 						EstimatedTokens: v.EstimatedTokens,
 					})
+					totalTokens += v.EstimatedTokens
 				}
+				vpv.TotalEstimatedTokens = totalTokens
 				view.VariationProposal = vpv
 			}
 		}
-		// Load hop
+		// Load hop and budget
 		if decision.SubjectType != nil && *decision.SubjectType == "hop" && decision.SubjectID != nil {
 			view.Hop, _ = s.db.GetHop(ctx, *decision.SubjectID)
+			if view.Hop != nil {
+				// Get budget allocation for tokens
+				allocations, _ := s.db.GetBudgetAllocationsByHop(ctx, view.Hop.ID)
+				strategy, _ := s.db.GetStrategy(ctx, view.Hop.StrategyID)
+				if strategy != nil {
+					for _, alloc := range allocations {
+						sources, _ := s.db.GetFundingSourcesByStrategy(ctx, strategy.ID)
+						for _, src := range sources {
+							if src.ID == alloc.FundingSourceID && src.ResourceType == domain.ResourceTypeClaudeTokens {
+								view.HopBudget = int(alloc.LimitAmount)
+								break
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -897,8 +920,27 @@ func (s *Server) approveRoadmap(w http.ResponseWriter, r *http.Request, decision
 func (s *Server) approveVariations(w http.ResponseWriter, r *http.Request, decision *domain.Decision, projectID string) {
 	ctx := r.Context()
 
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
 	if decision.Details == nil {
 		http.Error(w, "no variations to approve", http.StatusBadRequest)
+		return
+	}
+
+	// Get selected variation indices
+	selectedIndices := make(map[int]bool)
+	for _, v := range r.Form["variations"] {
+		var idx int
+		if _, err := fmt.Sscanf(v, "%d", &idx); err == nil {
+			selectedIndices[idx] = true
+		}
+	}
+
+	if len(selectedIndices) == 0 {
+		http.Error(w, "no variations selected", http.StatusBadRequest)
 		return
 	}
 
@@ -917,7 +959,70 @@ func (s *Server) approveVariations(w http.ResponseWriter, r *http.Request, decis
 		return
 	}
 
-	// Update decision status first
+	// Filter to only selected variations
+	var selectedVariations []struct {
+		Name            string `json:"name"`
+		Approach        string `json:"approach"`
+		Differentiation string `json:"differentiation"`
+		EstimatedTokens int    `json:"estimated_tokens"`
+	}
+	var selectedNames []string
+	for i, v := range proposal.Variations {
+		if selectedIndices[i] {
+			selectedVariations = append(selectedVariations, v)
+			selectedNames = append(selectedNames, v.Name)
+		}
+	}
+
+	// Get hop and repository info
+	hop, err := s.db.GetHop(ctx, *decision.SubjectID)
+	if err != nil {
+		http.Error(w, "hop not found", http.StatusNotFound)
+		return
+	}
+
+	strategy, err := s.db.GetStrategy(ctx, hop.StrategyID)
+	if err != nil {
+		http.Error(w, "strategy not found", http.StatusNotFound)
+		return
+	}
+
+	repo, err := s.db.GetRepositoryByProject(ctx, strategy.ProjectID)
+	if err != nil {
+		http.Error(w, "repository not found", http.StatusNotFound)
+		return
+	}
+
+	// Create Variation records for selected variations
+	now := time.Now()
+	for _, v := range selectedVariations {
+		variation := &domain.Variation{
+			ID:           uuid.New(),
+			HopID:        hop.ID,
+			Name:         v.Name,
+			Approach:     v.Approach,
+			RepositoryID: &repo.ID,
+			Status:       domain.VariationStatusCreating,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+
+		if err := s.db.CreateVariation(ctx, variation); err != nil {
+			http.Error(w, "error creating variation: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Record initial state
+		s.db.CreateVariationStateTransition(ctx, variation.ID, "", string(domain.VariationStatusCreating), "variation created from approved proposal")
+	}
+
+	// Update hop status to active
+	if err := s.db.UpdateHopStatus(ctx, hop.ID, domain.HopStatusActive); err != nil {
+		http.Error(w, "error updating hop status", http.StatusInternalServerError)
+		return
+	}
+
+	// Update decision status
 	decision.Status = domain.DecisionStatusResolved
 	resolution := "approved"
 	decision.Resolution = &resolution
@@ -935,13 +1040,12 @@ func (s *Server) approveVariations(w http.ResponseWriter, r *http.Request, decis
 		ID:         uuid.New(),
 		DecisionID: decision.ID,
 		Role:       "system",
-		Content:    fmt.Sprintf("Variations approved. Starting code generation for %d variations.", len(proposal.Variations)),
+		Content:    fmt.Sprintf("Approved %d variation(s): %s\n\nRun code generation with:\n  mendel generate -decision %s", len(selectedVariations), fmt.Sprintf("%v", selectedNames), decision.ID),
 		CreatedAt:  time.Now(),
 	}
 	s.db.CreateDecisionMessage(ctx, sysMsg)
 
-	// Note: Code generation is triggered asynchronously or via CLI command
-	// For now, we just redirect to the hop detail page
+	// Redirect to the hop detail page
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/hops/%s", projectID, decision.SubjectID.String()), http.StatusSeeOther)
 }
 
