@@ -1040,10 +1040,12 @@ func (s *Server) approveVariations(w http.ResponseWriter, r *http.Request, decis
 		ID:         uuid.New(),
 		DecisionID: decision.ID,
 		Role:       "system",
-		Content:    fmt.Sprintf("Approved %d variation(s): %s\n\nRun code generation with:\n  mendel generate -decision %s", len(selectedVariations), fmt.Sprintf("%v", selectedNames), decision.ID),
+		Content:    fmt.Sprintf("Approved %d variation(s): %s\n\nCode generation will start automatically.", len(selectedVariations), fmt.Sprintf("%v", selectedNames)),
 		CreatedAt:  time.Now(),
 	}
 	s.db.CreateDecisionMessage(ctx, sysMsg)
+
+	// Background worker will pick up variations in "creating" status
 
 	// Redirect to the hop detail page
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/hops/%s", projectID, decision.SubjectID.String()), http.StatusSeeOther)

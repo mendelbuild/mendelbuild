@@ -219,3 +219,92 @@ func ParseVariationProposal(details string) (*VariationProposalData, error) {
 	}
 	return &proposal, nil
 }
+
+// RunForExistingVariations runs code generation for already-created variations.
+// Use this when variations have been created via the web UI approval flow.
+func (o *Orchestrator) RunForExistingVariations(ctx context.Context, hopID uuid.UUID) (*OrchestrateResult, error) {
+	// 1. Get the hop
+	hop, err := o.db.GetHop(ctx, hopID)
+	if err != nil {
+		return nil, fmt.Errorf("get hop: %w", err)
+	}
+
+	// 2. Get existing variations for this hop (status = creating)
+	variations, err := o.db.GetVariationsByHop(ctx, hopID)
+	if err != nil {
+		return nil, fmt.Errorf("get variations: %w", err)
+	}
+
+	// Filter to only variations in 'creating' status
+	var pendingVariations []*domain.Variation
+	for i := range variations {
+		if variations[i].Status == domain.VariationStatusCreating {
+			pendingVariations = append(pendingVariations, &variations[i])
+		}
+	}
+
+	if len(pendingVariations) == 0 {
+		return &OrchestrateResult{}, nil
+	}
+
+	// 3. Get repository info and build config
+	config, err := o.buildConfig(ctx, hop.StrategyID)
+	if err != nil {
+		return nil, fmt.Errorf("build config: %w", err)
+	}
+
+	// 4. Run generators concurrently
+	result := o.runGenerators(ctx, pendingVariations, hop.Name, config)
+
+	return result, nil
+}
+
+// buildConfig builds GeneratorConfig from strategy/project settings.
+func (o *Orchestrator) buildConfig(ctx context.Context, strategyID uuid.UUID) (GeneratorConfig, error) {
+	var config GeneratorConfig
+
+	strategy, err := o.db.GetStrategy(ctx, strategyID)
+	if err != nil {
+		return config, fmt.Errorf("get strategy: %w", err)
+	}
+
+	repo, err := o.db.GetRepositoryByProject(ctx, strategy.ProjectID)
+	if err != nil {
+		return config, fmt.Errorf("get repository: %w", err)
+	}
+
+	// Parse repository config
+	var repoConfig struct {
+		MainBranch  string `json:"main_branch"`
+		AuthToken   string `json:"auth_token"`
+		TestCommand string `json:"test_command"`
+	}
+	if repo.Config != nil {
+		json.Unmarshal(repo.Config, &repoConfig)
+	}
+
+	// Get project for API key
+	project, err := o.db.GetProject(ctx, strategy.ProjectID)
+	if err != nil {
+		return config, fmt.Errorf("get project: %w", err)
+	}
+
+	var projectConfig domain.ProjectConfig
+	if project.Config != nil {
+		json.Unmarshal(project.Config, &projectConfig)
+	}
+
+	// Build config
+	if repo.URL != nil {
+		config.RepositoryURL = *repo.URL
+	}
+	config.MainBranch = repoConfig.MainBranch
+	if config.MainBranch == "" {
+		config.MainBranch = "main"
+	}
+	config.AuthToken = repoConfig.AuthToken
+	config.TestCommand = repoConfig.TestCommand
+	config.APIKey = projectConfig.AnthropicAPIKey
+
+	return config, nil
+}

@@ -618,6 +618,31 @@ func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain
 	return variations, nil
 }
 
+// GetHopsWithCreatingVariations returns hops that have variations in "creating" status.
+func (db *DB) GetHopsWithCreatingVariations(ctx context.Context) ([]domain.Hop, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT DISTINCT h.id, h.strategy_id, h.name, h.commentary, h.params, h.status, h.created_at, h.updated_at
+		FROM hops h
+		JOIN variations v ON v.hop_id = h.id
+		WHERE v.status = 'creating'
+		ORDER BY h.created_at ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var hops []domain.Hop
+	for rows.Next() {
+		var h domain.Hop
+		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+			return nil, err
+		}
+		hops = append(hops, h)
+	}
+	return hops, nil
+}
+
 // CreateVariationStateTransition records a state transition for a variation.
 func (db *DB) CreateVariationStateTransition(ctx context.Context, variationID uuid.UUID, fromStatus, toStatus, reason string) error {
 	id := uuid.New()

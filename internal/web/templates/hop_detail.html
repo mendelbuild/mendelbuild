@@ -113,8 +113,8 @@
             </form>
             {{else if eq .Hop.Status "active"}}
             <div style="padding: 15px; background: #cce5ff; border-radius: 4px;">
-                <strong>Active</strong><br>
-                <span style="color: #666;">Variations are being generated or evaluated.</span>
+                <strong>Code Generation In Progress</strong><br>
+                <span style="color: #666;">Claude is implementing the approved variations. Refresh to see status updates.</span>
             </div>
             {{else if eq .Hop.Status "completed"}}
             <div style="padding: 15px; background: #d4edda; border-radius: 4px;">
