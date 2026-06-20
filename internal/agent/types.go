@@ -127,3 +127,19 @@ type VariationProposerInput struct {
 type VariationProposerResponse struct {
 	Proposal VariationProposal `json:"proposal" desc:"The variation proposal"`
 }
+
+// CurrentVariation represents an existing variation in a revision request.
+type CurrentVariation struct {
+	Name            string `json:"name" desc:"Current variation name"`
+	Approach        string `json:"approach" desc:"Current implementation approach"`
+	Differentiation string `json:"differentiation" desc:"Current differentiation rationale"`
+	EstimatedTokens int    `json:"estimated_tokens" desc:"Current token estimate"`
+}
+
+// VariationRevisionInput is the input for revising variations based on feedback.
+type VariationRevisionInput struct {
+	Hop               HopContext         `json:"hop" desc:"The hop context"`
+	RepositoryURL     string             `json:"repository_url" desc:"URL of the code repository"`
+	CurrentVariations []CurrentVariation `json:"current_variations" desc:"The current variation proposals to revise"`
+	Feedback          string             `json:"feedback" desc:"User feedback requesting changes"`
+}
