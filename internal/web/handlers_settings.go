@@ -13,7 +13,6 @@ import (
 type ProjectSettings struct {
 	RepoURL         string
 	MainBranch      string
-	TestCommand     string
 	AuthToken       string
 	AnthropicAPIKey string
 }
@@ -39,16 +38,14 @@ func (s *Server) handleProjectSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if repo.Config != nil {
 			var repoConfig struct {
-				MainBranch  string `json:"main_branch"`
-				AuthToken   string `json:"auth_token"`
-				TestCommand string `json:"test_command"`
+				MainBranch string `json:"main_branch"`
+				AuthToken  string `json:"auth_token"`
 			}
 			if json.Unmarshal(repo.Config, &repoConfig) == nil {
 				if repoConfig.MainBranch != "" {
 					settings.MainBranch = repoConfig.MainBranch
 				}
 				settings.AuthToken = repoConfig.AuthToken
-				settings.TestCommand = repoConfig.TestCommand
 			}
 		}
 	}
@@ -93,7 +90,6 @@ func (s *Server) handleSaveProjectSettings(w http.ResponseWriter, r *http.Reques
 	// Get form values
 	repoURL := r.FormValue("repo_url")
 	mainBranch := r.FormValue("main_branch")
-	testCommand := r.FormValue("test_command")
 	authToken := r.FormValue("auth_token")
 	anthropicAPIKey := r.FormValue("anthropic_api_key")
 
@@ -103,9 +99,8 @@ func (s *Server) handleSaveProjectSettings(w http.ResponseWriter, r *http.Reques
 
 	// Update repository config
 	repoConfig, _ := json.Marshal(map[string]string{
-		"main_branch":  mainBranch,
-		"test_command": testCommand,
-		"auth_token":   authToken,
+		"main_branch": mainBranch,
+		"auth_token":  authToken,
 	})
 
 	if err := s.db.UpsertRepository(ctx, projectID, repoURL, repoConfig); err != nil {
