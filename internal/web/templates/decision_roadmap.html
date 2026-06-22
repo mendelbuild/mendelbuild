@@ -90,12 +90,12 @@
             </form>
             <form id="regenerate-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/regenerate" style="display: none;"></form>
             {{else}}
-            {{if eq .Decision.Resolution "approved"}}
+            {{if eq .Resolution "approved"}}
             <div style="padding: 15px; background: #d4edda; border-radius: 4px; text-align: center;">
                 <strong>This roadmap has been approved.</strong><br>
                 <a href="/p/{{$.ProjectID}}/strategy">View Strategy</a>
             </div>
-            {{else if eq .Decision.Resolution "rejected"}}
+            {{else if eq .Resolution "rejected"}}
             <div style="padding: 15px; background: #f8d7da; border-radius: 4px; text-align: center;">
                 <strong>This roadmap was rejected.</strong><br>
                 <a href="/p/{{$.ProjectID}}/decisions">Back to Decisions</a>

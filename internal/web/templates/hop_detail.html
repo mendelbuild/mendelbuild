@@ -1,0 +1,146 @@
+{{define "page-content"}}
+{{with .View}}
+<h1>Hop: {{.Hop.Name}}</h1>
+<p><a href="/p/{{$.ProjectID}}/strategy">&larr; Back to Strategy</a></p>
+
+<div style="display: flex; gap: 20px; align-items: flex-start;">
+    <div style="flex: 2;">
+        <div class="card">
+            <h2>Details</h2>
+            <table>
+                <tr>
+                    <th style="width: 150px;">Status</th>
+                    <td><span class="status status-{{.Hop.Status}}">{{.Hop.Status}}</span></td>
+                </tr>
+                <tr>
+                    <th>Commentary</th>
+                    <td>{{.Hop.Commentary}}</td>
+                </tr>
+                <tr>
+                    <th>Created</th>
+                    <td>{{.Hop.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                </tr>
+            </table>
+        </div>
+
+        {{if .Objectives}}
+        <div class="card">
+            <h2>Objectives</h2>
+            {{range .Objectives}}
+            <div class="objective">
+                <p style="margin: 0;">{{.Description}}</p>
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+
+        {{if .Allocations}}
+        <div class="card">
+            <h2>Budget Allocation</h2>
+            <div class="funding">
+                {{range .Allocations}}
+                <div class="funding-item">
+                    <div class="amount">{{printf "%.0f" .LimitAmount}}</div>
+                    <div class="type">Allocated</div>
+                </div>
+                {{end}}
+            </div>
+        </div>
+        {{end}}
+
+        <div class="card">
+            <h2>Variations</h2>
+            {{if .Variations}}
+            {{range .Variations}}
+            <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; {{if eq .Variation.Status "creating"}}border-color: #007bff;{{else if eq .Variation.Status "error"}}border-color: #dc3545;{{else if eq .Variation.Status "pending"}}border-color: #28a745;{{end}}">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+                    <div>
+                        <a href="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}" style="font-weight: bold; font-size: 1.1em; color: #007bff; text-decoration: none;">{{.Variation.Name}}</a>
+                        <span class="status {{if eq .Variation.Status "pending"}}status-pending{{else if eq .Variation.Status "creating"}}status-active{{else if eq .Variation.Status "error"}}status-error{{else if eq .Variation.Status "terminated"}}status-resolved{{else}}status-{{.Variation.Status}}{{end}}" style="margin-left: 10px;">
+                            {{.Variation.Status}}
+                        </span>
+                        {{if .Variation.CommitRef}}
+                        <code style="font-size: 0.85em; margin-left: 10px;">{{slice .Variation.CommitRef 0 7}}</code>
+                        {{end}}
+                    </div>
+                    <div>
+                        {{if eq .Variation.Status "error"}}
+                        <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry" style="display: inline;">
+                            <button type="submit" style="padding: 4px 8px; background: #ffc107; color: #212529; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
+                                Retry
+                            </button>
+                        </form>
+                        {{end}}
+                    </div>
+                </div>
+                {{if .Variation.Approach}}
+                <p style="color: #666; margin: 0 0 10px 0; font-size: 0.9em;">{{.Variation.Approach}}</p>
+                {{end}}
+                {{if .RecentLogs}}
+                <div style="background: #f8f9fa; border-radius: 4px; padding: 10px; font-family: monospace; font-size: 0.85em;">
+                    {{range .RecentLogs}}
+                    <div style="margin-bottom: 3px;">
+                        <span style="color: #666;">{{.LoggedAt.Format "15:04:05"}}</span>
+                        {{if eq .Level "milestone"}}<span style="color: #28a745;">[M]</span>{{else if eq .Level "error"}}<span style="color: #dc3545;">[E]</span>{{else}}<span style="color: #007bff;">[I]</span>{{end}}
+                        {{.Message}}
+                    </div>
+                    {{end}}
+                </div>
+                {{end}}
+            </div>
+            {{end}}
+            {{else}}
+            <p class="empty">No variations yet.</p>
+            {{end}}
+        </div>
+    </div>
+
+    <div style="flex: 1;">
+        <div class="card">
+            <h2>Actions</h2>
+
+            {{if .PendingReview}}
+            <div style="padding: 15px; background: #cce5ff; border-radius: 4px; margin-bottom: 15px;">
+                <strong>Pending Review</strong><br>
+                <a href="/p/{{$.ProjectID}}/decisions/{{.PendingReview.ID}}">{{.PendingReview.Title}}</a>
+                <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
+                    Review proposed variations before generating code.
+                </div>
+            </div>
+            {{else if eq .Hop.Status "pending"}}
+            <p style="color: #666; margin-bottom: 15px;">
+                Propose implementation approaches (variations) for this hop. Each variation will be implemented in parallel.
+            </p>
+            <form method="POST" action="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}/propose-variations">
+                <button type="submit" style="width: 100%; padding: 10px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    Propose Variations
+                </button>
+            </form>
+            {{else if eq .Hop.Status "active"}}
+            <div style="padding: 15px; background: #cce5ff; border-radius: 4px;">
+                <strong>Code Generation In Progress</strong><br>
+                <span style="color: #666;">Claude is implementing the approved variations. Refresh to see status updates.</span>
+            </div>
+            {{else if eq .Hop.Status "completed"}}
+            <div style="padding: 15px; background: #d4edda; border-radius: 4px;">
+                <strong>Completed</strong><br>
+                <span style="color: #666;">A variation was selected and merged.</span>
+            </div>
+            {{else if eq .Hop.Status "abandoned"}}
+            <div style="padding: 15px; background: #f8d7da; border-radius: 4px;">
+                <strong>Abandoned</strong><br>
+                <span style="color: #666;">This hop was cancelled.</span>
+            </div>
+            {{end}}
+        </div>
+
+        <div class="card">
+            <h2>Strategy</h2>
+            <p>
+                <a href="/p/{{$.ProjectID}}/strategy">{{.Strategy.Name}}</a>
+            </p>
+        </div>
+    </div>
+</div>
+{{end}}
+{{end}}

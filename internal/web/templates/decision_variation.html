@@ -1,0 +1,196 @@
+{{define "page-content"}}
+{{with .View}}
+<h1>{{.Decision.Title}}</h1>
+
+<div style="display: flex; gap: 20px; align-items: flex-start;">
+    {{/* Left column: Variation proposals */}}
+    <div style="flex: 2;">
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h2 style="margin: 0;">Proposed Variations</h2>
+                {{if .VariationProposal}}
+                <div style="text-align: right;">
+                    <div style="font-size: 0.9em; color: #666;">
+                        Estimated: <strong>{{.VariationProposal.TotalEstimatedTokens}}</strong> tokens
+                    </div>
+                    {{if .HopBudget}}
+                    <div style="font-size: 0.85em; {{if gt .VariationProposal.TotalEstimatedTokens .HopBudget}}color: #dc3545;{{else}}color: #28a745;{{end}}">
+                        Budget: <strong>{{.HopBudget}}</strong> tokens
+                    </div>
+                    {{end}}
+                </div>
+                {{end}}
+            </div>
+
+            {{if .VariationProposal}}
+            <form id="approve-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/approve">
+            {{range $i, $v := .VariationProposal.Variations}}
+            <div class="variation-card" style="border: 2px solid #28a745; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: #f8f9fa;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+                    <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; margin: 0;">
+                        {{if ne $.View.Decision.Status "resolved"}}
+                        <input type="checkbox" name="variations" value="{{$i}}" checked class="variation-checkbox" style="width: 18px; height: 18px;" onchange="updateApproveButton()">
+                        {{end}}
+                        <h3 style="margin: 0;">{{$v.Name}}</h3>
+                    </label>
+                    <span style="background: #e9ecef; padding: 4px 8px; border-radius: 4px; font-size: 0.85em;">
+                        ~{{$v.EstimatedTokens}} tokens
+                    </span>
+                </div>
+
+                <div style="margin-bottom: 10px;">
+                    <strong>Approach:</strong>
+                    <p style="margin: 5px 0; color: #333;">{{$v.Approach}}</p>
+                </div>
+
+                <div style="background: #fff3cd; padding: 10px; border-radius: 4px;">
+                    <strong>Differentiation:</strong>
+                    <p style="margin: 5px 0; color: #666;">{{$v.Differentiation}}</p>
+                </div>
+            </div>
+            {{end}}
+            </form>
+            {{else}}
+            <p class="empty">No variations proposed.</p>
+            {{end}}
+        </div>
+
+        {{if .Decision.Details}}
+        <div class="card">
+            <h2>Raw Proposal (JSON)</h2>
+            <details>
+                <summary style="cursor: pointer; color: #007bff;">View/Edit JSON</summary>
+                <form method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/roadmap">
+                    <textarea name="roadmap" style="width: 100%; height: 300px; font-family: monospace; font-size: 12px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; margin-top: 10px;">{{.Decision.Details}}</textarea>
+                    <button type="submit" style="margin-top: 10px; padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Save Changes</button>
+                </form>
+            </details>
+        </div>
+        {{end}}
+    </div>
+
+    {{/* Right column: Actions and messages */}}
+    <div style="flex: 1;">
+        <div class="card">
+            <h2>Review Actions</h2>
+
+            {{if ne .Decision.Status "resolved"}}
+            <button id="approve-button" type="submit" form="approve-form" style="width: 100%; padding: 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+                Approve {{len .VariationProposal.Variations}} Variation{{if ne (len .VariationProposal.Variations) 1}}s{{end}}
+            </button>
+            <p style="font-size: 0.85em; color: #666; margin-top: 15px;">
+                Approving will create variations and trigger code generation for each selected approach.
+            </p>
+            {{else}}
+            {{if eq .Resolution "approved"}}
+            <div style="padding: 15px; background: #d4edda; border-radius: 4px; text-align: center;">
+                <strong>Variations Approved</strong><br>
+                Code generation has been triggered.<br>
+                {{if .Hop}}
+                <a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">View Hop</a>
+                {{end}}
+            </div>
+            {{else if eq .Resolution "rejected"}}
+            <div style="padding: 15px; background: #f8d7da; border-radius: 4px; text-align: center;">
+                <strong>Proposal Rejected</strong><br>
+                <a href="/p/{{$.ProjectID}}/decisions">Back to Decisions</a>
+            </div>
+            {{else}}
+            <div style="padding: 15px; background: #e2e3e5; border-radius: 4px; text-align: center;">
+                <strong>Decision Resolved</strong>
+            </div>
+            {{end}}
+            {{end}}
+        </div>
+
+        <div class="card">
+            <h2>Conversation</h2>
+            <div style="max-height: 250px; overflow-y: auto; padding: 10px; background: #f8f9fa; border-radius: 4px; margin-bottom: 15px;">
+                {{if .Messages}}
+                {{range .Messages}}
+                <div style="margin-bottom: 10px; padding: 8px; border-radius: 4px; {{if eq .Role "user"}}background: #cce5ff;{{else if eq .Role "agent"}}background: #d4edda;{{else}}background: #fff3cd;{{end}}">
+                    <div style="font-size: 0.8em; color: #666; margin-bottom: 4px;">
+                        <strong>{{if eq .Role "user"}}You{{else if eq .Role "agent"}}Agent{{else}}System{{end}}</strong>
+                        <span style="float: right;">{{.CreatedAt.Format "15:04"}}</span>
+                    </div>
+                    <div style="white-space: pre-wrap;">{{.Content}}</div>
+                    {{if .TokensUsed}}<div style="font-size: 0.75em; color: #999;">Tokens: {{.TokensUsed}}</div>{{end}}
+                </div>
+                {{end}}
+                {{else}}
+                <p class="empty">No messages yet.</p>
+                {{end}}
+            </div>
+
+            {{if ne .Decision.Status "resolved"}}
+            <form method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/message">
+                <textarea name="feedback" placeholder="Provide feedback on the variations..." style="width: 100%; height: 80px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical;"></textarea>
+                <div style="margin-top: 10px; display: flex; gap: 10px;">
+                    <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Send Feedback</button>
+                    <button type="button" onclick="document.getElementById('regenerate-form').submit()" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Regenerate</button>
+                </div>
+            </form>
+            <form id="regenerate-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/regenerate" style="display: none;"></form>
+            {{end}}
+        </div>
+
+        <div class="card">
+            <h2>Decision Info</h2>
+            <table>
+                <tr>
+                    <th style="width: 80px;">Status</th>
+                    <td><span class="status status-{{.Decision.Status}}">{{.Decision.Status}}</span></td>
+                </tr>
+                {{if .Hop}}
+                <tr>
+                    <th>Hop</th>
+                    <td><a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">{{.Hop.Name}}</a></td>
+                </tr>
+                {{end}}
+                <tr>
+                    <th>Created</th>
+                    <td>{{.Decision.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                </tr>
+                {{if .Decision.ResolvedAt}}
+                <tr>
+                    <th>Resolved</th>
+                    <td>{{.Decision.ResolvedAt.Format "2006-01-02 15:04"}}</td>
+                </tr>
+                {{end}}
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function updateApproveButton() {
+    const checkboxes = document.querySelectorAll('.variation-checkbox');
+    const button = document.getElementById('approve-button');
+    const checked = document.querySelectorAll('.variation-checkbox:checked').length;
+
+    if (checked === 0) {
+        button.disabled = true;
+        button.style.background = '#6c757d';
+        button.textContent = 'Select variations to approve';
+    } else {
+        button.disabled = false;
+        button.style.background = '#28a745';
+        button.textContent = 'Approve ' + checked + ' Variation' + (checked !== 1 ? 's' : '');
+    }
+
+    // Update card borders
+    checkboxes.forEach(function(cb) {
+        const card = cb.closest('.variation-card');
+        if (cb.checked) {
+            card.style.borderColor = '#28a745';
+        } else {
+            card.style.borderColor = '#ddd';
+        }
+    });
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', updateApproveButton);
+</script>
+{{end}}
+{{end}}

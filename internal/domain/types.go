@@ -9,10 +9,16 @@ import (
 
 // Project is the top-level container for a MendelBuild project.
 type Project struct {
-	ID        uuid.UUID `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        uuid.UUID       `json:"id"`
+	Name      string          `json:"name"`
+	Config    json.RawMessage `json:"config,omitempty"` // Project-wide credentials (anthropic_api_key, etc.)
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+// ProjectConfig holds project-wide credentials and settings.
+type ProjectConfig struct {
+	AnthropicAPIKey string `json:"anthropic_api_key,omitempty"`
 }
 
 // Strategy captures OKRs, funding sources, and the roadmap (DAG of Hops).
@@ -118,32 +124,84 @@ const (
 	VariationStatusMigrating  VariationStatus = "migrating"
 	VariationStatusActive     VariationStatus = "active"
 	VariationStatusDraining   VariationStatus = "draining"
-	VariationStatusTerminated VariationStatus = "terminated"
+	VariationStatusError      VariationStatus = "error"      // Mendel infrastructure failure (retryable)
+	VariationStatusTerminated VariationStatus = "terminated" // Code/test failure (not retryable)
 	VariationStatusPruned     VariationStatus = "pruned"
 	VariationStatusSelected   VariationStatus = "selected"
 )
 
 // Variation is a concrete implementation attempt within a Hop.
 type Variation struct {
-	ID            uuid.UUID        `json:"id"`
-	HopID         uuid.UUID        `json:"hop_id"`
-	RepositoryID  *uuid.UUID       `json:"repository_id,omitempty"`
-	CommitRef     *string          `json:"commit_ref,omitempty"`
-	EcosystemID   *uuid.UUID       `json:"ecosystem_id,omitempty"`
-	DeploymentRef *string          `json:"deployment_ref,omitempty"`
-	Status        VariationStatus  `json:"status"`
-	CreatedAt     time.Time        `json:"created_at"`
-	UpdatedAt     time.Time        `json:"updated_at"`
+	ID            uuid.UUID       `json:"id"`
+	HopID         uuid.UUID       `json:"hop_id"`
+	Name          string          `json:"name"`                    // e.g., "cache-layer-approach"
+	Approach      string          `json:"approach"`                // Detailed implementation approach
+	RepositoryID  *uuid.UUID      `json:"repository_id,omitempty"`
+	CommitRef     *string         `json:"commit_ref,omitempty"`
+	EcosystemID   *uuid.UUID      `json:"ecosystem_id,omitempty"`
+	DeploymentRef *string         `json:"deployment_ref,omitempty"`
+	Status        VariationStatus `json:"status"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+}
+
+// VariationStateHistory records a state transition for a Variation.
+type VariationStateHistory struct {
+	ID             uuid.UUID `json:"id"`
+	VariationID    uuid.UUID `json:"variation_id"`
+	FromStatus     *string   `json:"from_status,omitempty"`
+	ToStatus       string    `json:"to_status"`
+	TransitionedAt time.Time `json:"transitioned_at"`
+	Reason         *string   `json:"reason,omitempty"`
+}
+
+// LogLevel represents the severity/type of a variation log entry.
+type LogLevel string
+
+const (
+	LogLevelInfo      LogLevel = "info"
+	LogLevelMilestone LogLevel = "milestone"
+	LogLevelError     LogLevel = "error"
+	LogLevelHeartbeat LogLevel = "heartbeat"
+)
+
+// VariationLog is a log entry for a variation's code generation process.
+type VariationLog struct {
+	ID          uuid.UUID `json:"id"`
+	VariationID uuid.UUID `json:"variation_id"`
+	LoggedAt    time.Time `json:"logged_at"`
+	Level       LogLevel  `json:"level"`
+	Message     string    `json:"message"`
+}
+
+// BudgetAllocation is a slice of a FundingSource assigned to a specific Hop.
+type BudgetAllocation struct {
+	ID              uuid.UUID `json:"id"`
+	HopID           uuid.UUID `json:"hop_id"`
+	FundingSourceID uuid.UUID `json:"funding_source_id"`
+	LimitAmount     float64   `json:"limit_amount"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// BudgetSpendLog records consumption against a BudgetAllocation.
+type BudgetSpendLog struct {
+	ID                 uuid.UUID `json:"id"`
+	BudgetAllocationID uuid.UUID `json:"budget_allocation_id"`
+	Amount             float64   `json:"amount"`
+	RecordedAt         time.Time `json:"recorded_at"`
+	Description        *string   `json:"description,omitempty"`
 }
 
 // DecisionKind represents the type of decision.
 type DecisionKind string
 
 const (
-	DecisionKindPassFail      DecisionKind = "pass_fail"
-	DecisionKindChooseOne     DecisionKind = "choose_one"
-	DecisionKindChooseMany    DecisionKind = "choose_many"
-	DecisionKindRoadmapReview DecisionKind = "roadmap_review"
+	DecisionKindPassFail        DecisionKind = "pass_fail"
+	DecisionKindChooseOne       DecisionKind = "choose_one"
+	DecisionKindChooseMany      DecisionKind = "choose_many"
+	DecisionKindRoadmapReview   DecisionKind = "roadmap_review"
+	DecisionKindVariationReview DecisionKind = "variation_review"
 )
 
 // DecisionStatus represents the lifecycle state of a Decision.

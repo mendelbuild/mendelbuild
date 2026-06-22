@@ -14,10 +14,30 @@ import (
 
 // DecisionDetailView holds data for rendering a decision detail page.
 type DecisionDetailView struct {
-	Decision *domain.Decision
-	Messages []domain.DecisionMessage
-	Roadmap  *agent.ProposedRoadmap
-	Strategy *domain.Strategy
+	Decision          *domain.Decision
+	Messages          []domain.DecisionMessage
+	Roadmap           *agent.ProposedRoadmap
+	Strategy          *domain.Strategy
+	Hop               *domain.Hop
+	VariationProposal *VariationProposalView
+	HopBudget         int    // Total token budget for the hop
+	Resolution        string // Dereferenced resolution for template comparison
+}
+
+// VariationProposalView holds parsed variation proposal data.
+type VariationProposalView struct {
+	HopID              string
+	Variations         []ProposedVariationView
+	TotalEstimatedTokens int
+}
+
+// ProposedVariationView holds a single proposed variation.
+type ProposedVariationView struct {
+	Index           int
+	Name            string
+	Approach        string
+	Differentiation string
+	EstimatedTokens int
 }
 
 func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
@@ -41,24 +61,85 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var roadmap *agent.ProposedRoadmap
-	if decision.Details != nil && *decision.Details != "" {
-		var rm agent.ProposedRoadmap
-		if err := json.Unmarshal([]byte(*decision.Details), &rm); err == nil {
-			roadmap = &rm
-		}
-	}
-
-	var strategy *domain.Strategy
-	if decision.SubjectType != nil && *decision.SubjectType == "strategy" && decision.SubjectID != nil {
-		strategy, _ = s.db.GetStrategy(ctx, *decision.SubjectID)
+	resolution := ""
+	if decision.Resolution != nil {
+		resolution = *decision.Resolution
 	}
 
 	view := &DecisionDetailView{
-		Decision: decision,
-		Messages: messages,
-		Roadmap:  roadmap,
-		Strategy: strategy,
+		Decision:   decision,
+		Messages:   messages,
+		Resolution: resolution,
+	}
+
+	templateName := "decision_roadmap.html"
+
+	switch decision.Kind {
+	case domain.DecisionKindRoadmapReview:
+		// Parse roadmap from details
+		if decision.Details != nil && *decision.Details != "" {
+			var rm agent.ProposedRoadmap
+			if err := json.Unmarshal([]byte(*decision.Details), &rm); err == nil {
+				view.Roadmap = &rm
+			}
+		}
+		// Load strategy
+		if decision.SubjectType != nil && *decision.SubjectType == "strategy" && decision.SubjectID != nil {
+			view.Strategy, _ = s.db.GetStrategy(ctx, *decision.SubjectID)
+		}
+
+	case domain.DecisionKindVariationReview:
+		templateName = "decision_variation.html"
+		// Parse variation proposal from details
+		if decision.Details != nil && *decision.Details != "" {
+			var proposal struct {
+				HopID      string `json:"hop_id"`
+				Variations []struct {
+					Name            string `json:"name"`
+					Approach        string `json:"approach"`
+					Differentiation string `json:"differentiation"`
+					EstimatedTokens int    `json:"estimated_tokens"`
+				} `json:"variations"`
+			}
+			if err := json.Unmarshal([]byte(*decision.Details), &proposal); err == nil {
+				vpv := &VariationProposalView{
+					HopID: proposal.HopID,
+				}
+				totalTokens := 0
+				for i, v := range proposal.Variations {
+					vpv.Variations = append(vpv.Variations, ProposedVariationView{
+						Index:           i,
+						Name:            v.Name,
+						Approach:        v.Approach,
+						Differentiation: v.Differentiation,
+						EstimatedTokens: v.EstimatedTokens,
+					})
+					totalTokens += v.EstimatedTokens
+				}
+				vpv.TotalEstimatedTokens = totalTokens
+				view.VariationProposal = vpv
+			}
+		}
+		// Load hop and budget
+		if decision.SubjectType != nil && *decision.SubjectType == "hop" && decision.SubjectID != nil {
+			view.Hop, _ = s.db.GetHop(ctx, *decision.SubjectID)
+			if view.Hop != nil {
+				// Get budget allocation for tokens
+				allocations, _ := s.db.GetBudgetAllocationsByHop(ctx, view.Hop.ID)
+				strategy, _ := s.db.GetStrategy(ctx, view.Hop.StrategyID)
+				if strategy != nil {
+					for _, alloc := range allocations {
+						sources, _ := s.db.GetFundingSourcesByStrategy(ctx, strategy.ID)
+						for _, src := range sources {
+							if src.ID == alloc.FundingSourceID && src.ResourceType == domain.ResourceTypeClaudeTokens {
+								view.HopBudget = int(alloc.LimitAmount)
+								break
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 
 	data := map[string]interface{}{
@@ -67,7 +148,7 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 		"View":      view,
 	}
 
-	if err := renderPage(w, "decision_roadmap.html", data); err != nil {
+	if err := renderPage(w, templateName, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -110,6 +191,20 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error saving message", http.StatusInternalServerError)
 		return
 	}
+
+	// Handle based on decision kind
+	switch decision.Kind {
+	case domain.DecisionKindRoadmapReview:
+		s.sendMessageRoadmap(w, r, decision, feedback)
+	case domain.DecisionKindVariationReview:
+		s.sendMessageVariation(w, r, decision, feedback)
+	default:
+		http.Error(w, "unsupported decision kind for messages", http.StatusBadRequest)
+	}
+}
+
+func (s *Server) sendMessageRoadmap(w http.ResponseWriter, r *http.Request, decision *domain.Decision, feedback string) {
+	ctx := r.Context()
 
 	// Parse current roadmap
 	var currentRoadmap agent.ProposedRoadmap
@@ -211,7 +306,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	// Save agent response message
 	agentMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decisionID,
+		DecisionID: decision.ID,
 		Role:       "agent",
 		Content:    fmt.Sprintf("Revised roadmap based on feedback. Now has %d hops.", len(revisedRoadmap.Hops)),
 		TokensUsed: &tokens,
@@ -224,7 +319,141 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Redirect back to decision page
 	projectID := chi.URLParam(r, "projectID")
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decisionID), http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decision.ID), http.StatusSeeOther)
+}
+
+func (s *Server) sendMessageVariation(w http.ResponseWriter, r *http.Request, decision *domain.Decision, feedback string) {
+	ctx := r.Context()
+
+	if decision.SubjectID == nil {
+		http.Error(w, "no hop associated", http.StatusBadRequest)
+		return
+	}
+
+	// Load hop
+	hop, err := s.db.GetHop(ctx, *decision.SubjectID)
+	if err != nil {
+		http.Error(w, "hop not found", http.StatusNotFound)
+		return
+	}
+
+	// Parse current proposal
+	var currentProposal struct {
+		HopID      string `json:"hop_id"`
+		Variations []struct {
+			Name            string `json:"name"`
+			Approach        string `json:"approach"`
+			Differentiation string `json:"differentiation"`
+			EstimatedTokens int    `json:"estimated_tokens"`
+		} `json:"variations"`
+	}
+	if decision.Details != nil {
+		json.Unmarshal([]byte(*decision.Details), &currentProposal)
+	}
+
+	// Get strategy for objectives
+	strategy, err := s.db.GetStrategy(ctx, hop.StrategyID)
+	if err != nil {
+		http.Error(w, "strategy not found", http.StatusNotFound)
+		return
+	}
+
+	// Get objectives from hop params
+	var objectiveDescs []string
+	if hop.Params != nil {
+		var params struct {
+			ObjectiveIDs []string `json:"objective_ids"`
+		}
+		if err := json.Unmarshal(hop.Params, &params); err == nil {
+			allObjs, _ := s.db.GetObjectivesByStrategy(ctx, strategy.ID)
+			for _, objIDStr := range params.ObjectiveIDs {
+				if objID, err := uuid.Parse(objIDStr); err == nil {
+					for _, obj := range allObjs {
+						if obj.ID == objID {
+							objectiveDescs = append(objectiveDescs, obj.Description)
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Get repository info
+	repo, err := s.db.GetRepositoryByProject(ctx, strategy.ProjectID)
+	if err != nil {
+		http.Error(w, "repository not found", http.StatusNotFound)
+		return
+	}
+
+	repoURL := ""
+	if repo.URL != nil {
+		repoURL = *repo.URL
+	}
+
+	// Build revision input - include current proposal and feedback
+	revisionInput := agent.VariationRevisionInput{
+		Hop: agent.HopContext{
+			ID:         hop.ID.String(),
+			Name:       hop.Name,
+			Commentary: hop.Commentary,
+			Objectives: objectiveDescs,
+		},
+		RepositoryURL:    repoURL,
+		CurrentVariations: make([]agent.CurrentVariation, 0, len(currentProposal.Variations)),
+		Feedback:         feedback,
+	}
+	for _, v := range currentProposal.Variations {
+		revisionInput.CurrentVariations = append(revisionInput.CurrentVariations, agent.CurrentVariation{
+			Name:            v.Name,
+			Approach:        v.Approach,
+			Differentiation: v.Differentiation,
+			EstimatedTokens: v.EstimatedTokens,
+		})
+	}
+
+	// Call variation proposer for revision
+	client, err := agent.NewClient("")
+	if err != nil {
+		http.Error(w, "error creating agent client", http.StatusInternalServerError)
+		return
+	}
+
+	proposer := agent.NewVariationProposer(client)
+	revisedProposal, tokens, err := proposer.ReviseVariations(ctx, revisionInput)
+	if err != nil {
+		http.Error(w, "error revising variations: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Update decision with new proposal
+	proposalJSON, _ := json.MarshalIndent(revisedProposal, "", "  ")
+	proposalStr := string(proposalJSON)
+	decision.Details = &proposalStr
+	decision.UpdatedAt = time.Now()
+
+	if err := s.db.UpdateDecision(ctx, decision); err != nil {
+		http.Error(w, "error updating decision", http.StatusInternalServerError)
+		return
+	}
+
+	// Save agent response message
+	agentMsg := &domain.DecisionMessage{
+		ID:         uuid.New(),
+		DecisionID: decision.ID,
+		Role:       "agent",
+		Content:    fmt.Sprintf("Revised variations based on feedback. Now has %d variations.", len(revisedProposal.Variations)),
+		TokensUsed: &tokens,
+		CreatedAt:  time.Now(),
+	}
+	if err := s.db.CreateDecisionMessage(ctx, agentMsg); err != nil {
+		http.Error(w, "error saving agent message", http.StatusInternalServerError)
+		return
+	}
+
+	// Redirect back to decision page
+	projectID := chi.URLParam(r, "projectID")
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decision.ID), http.StatusSeeOther)
 }
 
 func (s *Server) handleRegenerate(w http.ResponseWriter, r *http.Request) {
@@ -241,6 +470,20 @@ func (s *Server) handleRegenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Handle based on decision kind
+	switch decision.Kind {
+	case domain.DecisionKindRoadmapReview:
+		s.regenerateRoadmap(w, r, decision)
+	case domain.DecisionKindVariationReview:
+		s.regenerateVariations(w, r, decision)
+	default:
+		http.Error(w, "unsupported decision kind for regeneration", http.StatusBadRequest)
+	}
+}
+
+func (s *Server) regenerateRoadmap(w http.ResponseWriter, r *http.Request, decision *domain.Decision) {
+	ctx := r.Context()
+
 	if decision.SubjectID == nil {
 		http.Error(w, "no strategy associated", http.StatusBadRequest)
 		return
@@ -252,7 +495,7 @@ func (s *Server) handleRegenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load strategy context (same as handleSendMessage)
+	// Load strategy context
 	objectives, _ := s.db.GetObjectivesByStrategy(ctx, strategy.ID)
 	var objInfos []agent.ObjectiveInfo
 	for _, obj := range objectives {
@@ -321,7 +564,7 @@ func (s *Server) handleRegenerate(w http.ResponseWriter, r *http.Request) {
 	// Save system message
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decisionID,
+		DecisionID: decision.ID,
 		Role:       "system",
 		Content:    "Roadmap regenerated from scratch.",
 		CreatedAt:  time.Now(),
@@ -331,7 +574,7 @@ func (s *Server) handleRegenerate(w http.ResponseWriter, r *http.Request) {
 	// Save agent message
 	agentMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decisionID,
+		DecisionID: decision.ID,
 		Role:       "agent",
 		Content:    fmt.Sprintf("Generated new roadmap proposal with %d hops.", len(roadmap.Hops)),
 		TokensUsed: &tokens,
@@ -340,7 +583,161 @@ func (s *Server) handleRegenerate(w http.ResponseWriter, r *http.Request) {
 	s.db.CreateDecisionMessage(ctx, agentMsg)
 
 	projectID := chi.URLParam(r, "projectID")
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decisionID), http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decision.ID), http.StatusSeeOther)
+}
+
+func (s *Server) regenerateVariations(w http.ResponseWriter, r *http.Request, decision *domain.Decision) {
+	ctx := r.Context()
+
+	if decision.SubjectID == nil {
+		http.Error(w, "no hop associated", http.StatusBadRequest)
+		return
+	}
+
+	hop, err := s.db.GetHop(ctx, *decision.SubjectID)
+	if err != nil {
+		http.Error(w, "hop not found", http.StatusNotFound)
+		return
+	}
+
+	strategy, err := s.db.GetStrategy(ctx, hop.StrategyID)
+	if err != nil {
+		http.Error(w, "strategy not found", http.StatusNotFound)
+		return
+	}
+
+	// Get objectives from hop params
+	var objectiveDescs []string
+	if hop.Params != nil {
+		var params struct {
+			ObjectiveIDs []string `json:"objective_ids"`
+		}
+		if err := json.Unmarshal(hop.Params, &params); err == nil {
+			allObjs, _ := s.db.GetObjectivesByStrategy(ctx, strategy.ID)
+			for _, objIDStr := range params.ObjectiveIDs {
+				if objID, err := uuid.Parse(objIDStr); err == nil {
+					for _, obj := range allObjs {
+						if obj.ID == objID {
+							objectiveDescs = append(objectiveDescs, obj.Description)
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Get repository info
+	repo, err := s.db.GetRepositoryByProject(ctx, strategy.ProjectID)
+	if err != nil {
+		http.Error(w, "repository not found", http.StatusNotFound)
+		return
+	}
+
+	repoURL := ""
+	if repo.URL != nil {
+		repoURL = *repo.URL
+	}
+
+	// Get budget allocation for tokens
+	allocations, _ := s.db.GetBudgetAllocationsByHop(ctx, hop.ID)
+	availableBudget := 100000 // Default
+	for _, alloc := range allocations {
+		sources, _ := s.db.GetFundingSourcesByStrategy(ctx, strategy.ID)
+		for _, src := range sources {
+			if src.ID == alloc.FundingSourceID && src.ResourceType == domain.ResourceTypeClaudeTokens {
+				availableBudget = int(alloc.LimitAmount)
+				break
+			}
+		}
+	}
+
+	input := agent.VariationProposerInput{
+		Hop: agent.HopContext{
+			ID:         hop.ID.String(),
+			Name:       hop.Name,
+			Commentary: hop.Commentary,
+			Objectives: objectiveDescs,
+		},
+		RepositoryURL:   repoURL,
+		AvailableBudget: availableBudget,
+		NumVariations:   2,
+	}
+
+	// Generate new proposal
+	client, err := agent.NewClient("")
+	if err != nil {
+		http.Error(w, "error creating agent client", http.StatusInternalServerError)
+		return
+	}
+
+	proposer := agent.NewVariationProposer(client)
+	proposal, tokens, err := proposer.ProposeVariations(ctx, input)
+	if err != nil {
+		http.Error(w, "error generating variations: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to storage format
+	proposalData := struct {
+		HopID      uuid.UUID `json:"hop_id"`
+		Variations []struct {
+			Name            string `json:"name"`
+			Approach        string `json:"approach"`
+			Differentiation string `json:"differentiation"`
+			EstimatedTokens int    `json:"estimated_tokens"`
+		} `json:"variations"`
+	}{
+		HopID: hop.ID,
+	}
+	for _, v := range proposal.Variations {
+		proposalData.Variations = append(proposalData.Variations, struct {
+			Name            string `json:"name"`
+			Approach        string `json:"approach"`
+			Differentiation string `json:"differentiation"`
+			EstimatedTokens int    `json:"estimated_tokens"`
+		}{
+			Name:            v.Name,
+			Approach:        v.Approach,
+			Differentiation: v.Differentiation,
+			EstimatedTokens: v.EstimatedTokens,
+		})
+	}
+
+	// Update decision
+	proposalJSON, _ := json.MarshalIndent(proposalData, "", "  ")
+	proposalStr := string(proposalJSON)
+	decision.Details = &proposalStr
+	decision.UpdatedAt = time.Now()
+
+	if err := s.db.UpdateDecision(ctx, decision); err != nil {
+		http.Error(w, "error updating decision", http.StatusInternalServerError)
+		return
+	}
+
+	// Save system message
+	sysMsg := &domain.DecisionMessage{
+		ID:         uuid.New(),
+		DecisionID: decision.ID,
+		Role:       "system",
+		Content:    "Variations regenerated from scratch.",
+		CreatedAt:  time.Now(),
+	}
+	s.db.CreateDecisionMessage(ctx, sysMsg)
+
+	// Save agent message
+	agentMsg := &domain.DecisionMessage{
+		ID:         uuid.New(),
+		DecisionID: decision.ID,
+		Role:       "agent",
+		Content:    fmt.Sprintf("Generated new variation proposal with %d variations.\n\nRationale: %s", len(proposal.Variations), proposal.Rationale),
+		TokensUsed: &tokens,
+		CreatedAt:  time.Now(),
+	}
+	s.db.CreateDecisionMessage(ctx, agentMsg)
+
+	projectID := chi.URLParam(r, "projectID")
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decision.ID), http.StatusSeeOther)
 }
 
 func (s *Server) handleUpdateRoadmap(w http.ResponseWriter, r *http.Request) {
@@ -414,9 +811,23 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if decision.SubjectID == nil {
-		http.Error(w, "no strategy associated", http.StatusBadRequest)
+		http.Error(w, "no subject associated", http.StatusBadRequest)
 		return
 	}
+
+	// Handle based on decision kind
+	switch decision.Kind {
+	case domain.DecisionKindRoadmapReview:
+		s.approveRoadmap(w, r, decision, projectID)
+	case domain.DecisionKindVariationReview:
+		s.approveVariations(w, r, decision, projectID)
+	default:
+		http.Error(w, "unsupported decision kind", http.StatusBadRequest)
+	}
+}
+
+func (s *Server) approveRoadmap(w http.ResponseWriter, r *http.Request, decision *domain.Decision, projectID string) {
+	ctx := r.Context()
 
 	// Parse roadmap
 	var roadmap agent.ProposedRoadmap
@@ -502,7 +913,7 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 	// Save system message
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decisionID,
+		DecisionID: decision.ID,
 		Role:       "system",
 		Content:    fmt.Sprintf("Roadmap approved. Created %d hops.", len(roadmap.Hops)),
 		CreatedAt:  time.Now(),
@@ -511,6 +922,140 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 
 	// Redirect to strategy page
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/strategy", projectID), http.StatusSeeOther)
+}
+
+func (s *Server) approveVariations(w http.ResponseWriter, r *http.Request, decision *domain.Decision, projectID string) {
+	ctx := r.Context()
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	if decision.Details == nil {
+		http.Error(w, "no variations to approve", http.StatusBadRequest)
+		return
+	}
+
+	// Get selected variation indices
+	selectedIndices := make(map[int]bool)
+	for _, v := range r.Form["variations"] {
+		var idx int
+		if _, err := fmt.Sscanf(v, "%d", &idx); err == nil {
+			selectedIndices[idx] = true
+		}
+	}
+
+	if len(selectedIndices) == 0 {
+		http.Error(w, "no variations selected", http.StatusBadRequest)
+		return
+	}
+
+	// Parse variation proposal
+	var proposal struct {
+		HopID      uuid.UUID `json:"hop_id"`
+		Variations []struct {
+			Name            string `json:"name"`
+			Approach        string `json:"approach"`
+			Differentiation string `json:"differentiation"`
+			EstimatedTokens int    `json:"estimated_tokens"`
+		} `json:"variations"`
+	}
+	if err := json.Unmarshal([]byte(*decision.Details), &proposal); err != nil {
+		http.Error(w, "error parsing variations: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Filter to only selected variations
+	var selectedVariations []struct {
+		Name            string `json:"name"`
+		Approach        string `json:"approach"`
+		Differentiation string `json:"differentiation"`
+		EstimatedTokens int    `json:"estimated_tokens"`
+	}
+	var selectedNames []string
+	for i, v := range proposal.Variations {
+		if selectedIndices[i] {
+			selectedVariations = append(selectedVariations, v)
+			selectedNames = append(selectedNames, v.Name)
+		}
+	}
+
+	// Get hop and repository info
+	hop, err := s.db.GetHop(ctx, *decision.SubjectID)
+	if err != nil {
+		http.Error(w, "hop not found", http.StatusNotFound)
+		return
+	}
+
+	strategy, err := s.db.GetStrategy(ctx, hop.StrategyID)
+	if err != nil {
+		http.Error(w, "strategy not found", http.StatusNotFound)
+		return
+	}
+
+	repo, err := s.db.GetRepositoryByProject(ctx, strategy.ProjectID)
+	if err != nil {
+		http.Error(w, "repository not found", http.StatusNotFound)
+		return
+	}
+
+	// Create Variation records for selected variations
+	now := time.Now()
+	for _, v := range selectedVariations {
+		variation := &domain.Variation{
+			ID:           uuid.New(),
+			HopID:        hop.ID,
+			Name:         v.Name,
+			Approach:     v.Approach,
+			RepositoryID: &repo.ID,
+			Status:       domain.VariationStatusCreating,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+
+		if err := s.db.CreateVariation(ctx, variation); err != nil {
+			http.Error(w, "error creating variation: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Record initial state
+		s.db.CreateVariationStateTransition(ctx, variation.ID, "", string(domain.VariationStatusCreating), "variation created from approved proposal")
+	}
+
+	// Update hop status to active
+	if err := s.db.UpdateHopStatus(ctx, hop.ID, domain.HopStatusActive); err != nil {
+		http.Error(w, "error updating hop status", http.StatusInternalServerError)
+		return
+	}
+
+	// Update decision status
+	decision.Status = domain.DecisionStatusResolved
+	resolution := "approved"
+	decision.Resolution = &resolution
+	resolvedAt := time.Now()
+	decision.ResolvedAt = &resolvedAt
+	decision.UpdatedAt = resolvedAt
+
+	if err := s.db.UpdateDecision(ctx, decision); err != nil {
+		http.Error(w, "error updating decision", http.StatusInternalServerError)
+		return
+	}
+
+	// Save system message about approval
+	sysMsg := &domain.DecisionMessage{
+		ID:         uuid.New(),
+		DecisionID: decision.ID,
+		Role:       "system",
+		Content:    fmt.Sprintf("Approved %d variation(s): %s\n\nCode generation will start automatically.", len(selectedVariations), fmt.Sprintf("%v", selectedNames)),
+		CreatedAt:  time.Now(),
+	}
+	s.db.CreateDecisionMessage(ctx, sysMsg)
+
+	// Background worker will pick up variations in "creating" status
+
+	// Redirect to the hop detail page
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/hops/%s", projectID, decision.SubjectID.String()), http.StatusSeeOther)
 }
 
 func validateRoadmap(r *agent.ProposedRoadmap) error {

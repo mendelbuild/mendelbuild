@@ -1,0 +1,118 @@
+{{define "page-content"}}
+{{with .View}}
+<h1>Variation: {{.Variation.Name}}</h1>
+<p><a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">&larr; Back to Hop: {{.Hop.Name}}</a></p>
+
+<div style="display: flex; gap: 20px; align-items: flex-start;">
+    <div style="flex: 2;">
+        <div class="card">
+            <h2>Details</h2>
+            <table>
+                <tr>
+                    <th style="width: 120px;">Status</th>
+                    <td>
+                        <span class="status {{if eq .Variation.Status "pending"}}status-pending{{else if eq .Variation.Status "creating"}}status-active{{else if eq .Variation.Status "error"}}status-error{{else if eq .Variation.Status "terminated"}}status-resolved{{else}}status-{{.Variation.Status}}{{end}}">
+                            {{.Variation.Status}}
+                        </span>
+                    </td>
+                </tr>
+                <tr>
+                    <th>Approach</th>
+                    <td>{{.Variation.Approach}}</td>
+                </tr>
+                {{if .Variation.CommitRef}}
+                <tr>
+                    <th>Commit</th>
+                    <td><code>{{slice .Variation.CommitRef 0 8}}</code></td>
+                </tr>
+                {{end}}
+                <tr>
+                    <th>Created</th>
+                    <td>{{.Variation.CreatedAt.Format "2006-01-02 15:04:05"}}</td>
+                </tr>
+                <tr>
+                    <th>Updated</th>
+                    <td>{{.Variation.UpdatedAt.Format "2006-01-02 15:04:05"}}</td>
+                </tr>
+            </table>
+
+            {{if eq .Variation.Status "error"}}
+            <div style="margin-top: 15px;">
+                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry" style="display: inline;">
+                    <button type="submit" style="padding: 8px 16px; background: #ffc107; color: #212529; border: none; border-radius: 4px; cursor: pointer;">
+                        Retry
+                    </button>
+                </form>
+            </div>
+            {{end}}
+        </div>
+
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h2 style="margin: 0;">Logs</h2>
+                {{if eq .Variation.Status "creating"}}
+                <button onclick="refreshLogs()" style="padding: 4px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em;">
+                    Refresh
+                </button>
+                {{end}}
+            </div>
+
+            <div id="logs-container" style="margin-top: 15px; max-height: 500px; overflow-y: auto;">
+                {{if .Logs}}
+                <table style="font-family: monospace; font-size: 0.9em;">
+                    <tbody>
+                        {{range .Logs}}
+                        <tr>
+                            <td style="white-space: nowrap; color: #666; padding-right: 15px; vertical-align: top;">
+                                {{.LoggedAt.Format "15:04:05"}}
+                            </td>
+                            <td style="padding-right: 10px; vertical-align: top;">
+                                {{if eq .Level "milestone"}}
+                                <span style="color: #28a745; font-weight: bold;">[MILESTONE]</span>
+                                {{else if eq .Level "error"}}
+                                <span style="color: #dc3545; font-weight: bold;">[ERROR]</span>
+                                {{else if eq .Level "info"}}
+                                <span style="color: #007bff;">[INFO]</span>
+                                {{else}}
+                                <span style="color: #6c757d;">[{{.Level}}]</span>
+                                {{end}}
+                            </td>
+                            <td style="word-break: break-word;">{{.Message}}</td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+                {{else}}
+                <p class="empty">No logs yet.</p>
+                {{end}}
+            </div>
+        </div>
+    </div>
+
+    <div style="flex: 1;">
+        <div class="card">
+            <h2>Hop</h2>
+            <p><a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">{{.Hop.Name}}</a></p>
+            <p style="color: #666; font-size: 0.9em;">{{.Hop.Commentary}}</p>
+        </div>
+    </div>
+</div>
+
+{{if eq .Variation.Status "creating"}}
+<script>
+// Auto-refresh logs every 3 seconds while creating
+let refreshInterval = setInterval(function() {
+    refreshLogs();
+}, 3000);
+
+function refreshLogs() {
+    // Simple page refresh for now
+    // Could be improved with htmx or fetch API
+    location.reload();
+}
+
+// Stop refreshing when status changes (page will reload with new status)
+</script>
+{{end}}
+{{end}}
+{{end}}

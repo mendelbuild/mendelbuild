@@ -1,0 +1,84 @@
+{{define "page-content"}}
+<h1>Project Settings</h1>
+<p><a href="/p/{{.ProjectID}}/strategy">&larr; Back to Strategy</a></p>
+
+{{if .Success}}
+<div style="padding: 15px; background: #d4edda; border-radius: 4px; margin-bottom: 20px;">
+    Settings saved successfully.
+</div>
+{{end}}
+
+{{if .Error}}
+<div style="padding: 15px; background: #f8d7da; border-radius: 4px; margin-bottom: 20px;">
+    Error: {{.Error}}
+</div>
+{{end}}
+
+<form method="POST" action="/p/{{.ProjectID}}/settings">
+    <div class="card">
+        <h2>Repository</h2>
+
+        <div style="margin-bottom: 15px;">
+            <label for="repo_url" style="display: block; font-weight: bold; margin-bottom: 5px;">Repository URL</label>
+            <input type="text" id="repo_url" name="repo_url" value="{{.Settings.RepoURL}}"
+                   placeholder="https://github.com/user/repo"
+                   style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
+            <small style="color: #666;">HTTPS URL for the git repository</small>
+        </div>
+
+        <div style="margin-bottom: 15px;">
+            <label for="main_branch" style="display: block; font-weight: bold; margin-bottom: 5px;">Main Branch</label>
+            <input type="text" id="main_branch" name="main_branch" value="{{.Settings.MainBranch}}"
+                   placeholder="main"
+                   style="width: 300px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
+            <small style="color: #666;">Branch to base variations on (usually "main" or "master")</small>
+        </div>
+
+        <div style="margin-bottom: 15px;">
+            <label for="auth_token" style="display: block; font-weight: bold; margin-bottom: 5px;">GitHub Access Token</label>
+            <input type="password" id="auth_token" name="auth_token" value="{{.Settings.AuthToken}}"
+                   placeholder="github_pat_xxxxxxxxxxxx"
+                   style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
+            <details style="margin-top: 8px;">
+                <summary style="cursor: pointer; color: #007bff; font-size: 0.9em;">How to create a GitHub access token</summary>
+                <div style="margin-top: 10px; padding: 12px; background: #f8f9fa; border-radius: 4px; font-size: 0.9em;">
+                    <ol style="margin: 0; padding-left: 20px;">
+                        <li>Go to GitHub.com and click your profile picture (top right)</li>
+                        <li>Click <strong>Settings</strong></li>
+                        <li>Scroll down and click <strong>Developer settings</strong> (bottom of left sidebar)</li>
+                        <li>Click <strong>Personal access tokens</strong> &rarr; <strong>Fine-grained tokens</strong></li>
+                        <li>Click <strong>Generate new token</strong></li>
+                        <li>Give it a name like "MendelBuild"</li>
+                        <li>Under <strong>Repository access</strong>, select "Only select repositories" and choose your repo</li>
+                        <li>Under <strong>Permissions</strong>, set:
+                            <ul style="margin: 5px 0;">
+                                <li><strong>Contents</strong>: Read and write (for cloning, branching, pushing)</li>
+                                <li><strong>Pull requests</strong>: Read and write (for creating PRs)</li>
+                            </ul>
+                        </li>
+                        <li>Click <strong>Generate token</strong> and copy it here</li>
+                    </ol>
+                </div>
+            </details>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>AI Credentials</h2>
+
+        <div style="margin-bottom: 15px;">
+            <label for="anthropic_api_key" style="display: block; font-weight: bold; margin-bottom: 5px;">Anthropic API Key</label>
+            <input type="password" id="anthropic_api_key" name="anthropic_api_key" value="{{.Settings.AnthropicAPIKey}}"
+                   placeholder="sk-ant-xxxxxxxxxxxx"
+                   style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
+            <small style="color: #666;">API key for Claude (used for roadmap proposals and code generation)</small>
+        </div>
+    </div>
+
+    <div style="margin-top: 20px;">
+        <button type="submit" style="padding: 12px 24px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px;">
+            Save Settings
+        </button>
+    </div>
+</form>
+{{end}}

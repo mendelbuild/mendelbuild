@@ -90,3 +90,56 @@ type RevisionRequest struct {
 type ProposerResponse struct {
 	Roadmap ProposedRoadmap `json:"roadmap" desc:"The complete roadmap proposal"`
 }
+
+// ProposedVariation is a single variation approach within a hop.
+type ProposedVariation struct {
+	Name            string `json:"name" desc:"Short kebab-case identifier for this approach (e.g., 'redis-cache', 'in-memory-cache')"`
+	Approach        string `json:"approach" desc:"Detailed description of the implementation approach. Include key technical decisions, libraries to use, and architecture. 3-6 sentences."`
+	Differentiation string `json:"differentiation" desc:"Explains how this approach differs from the others and why someone might prefer it. 2-3 sentences."`
+	EstimatedTokens int    `json:"estimated_tokens" desc:"Estimated Claude tokens needed to implement this approach. Consider complexity and code volume."`
+}
+
+// VariationProposal is the output from the variation proposer.
+type VariationProposal struct {
+	HopID      string              `json:"hop_id" desc:"UUID of the hop these variations are for"`
+	Variations []ProposedVariation `json:"variations" desc:"2-4 differentiated implementation approaches"`
+	Rationale  string              `json:"rationale" desc:"Overall rationale for why these specific approaches were chosen. Explains the design space explored. 2-4 sentences."`
+}
+
+// HopContext provides hop information to the variation proposer.
+type HopContext struct {
+	ID         string   `json:"id" desc:"UUID of the hop"`
+	Name       string   `json:"name" desc:"Hop name (kebab-case identifier)"`
+	Commentary string   `json:"commentary" desc:"What this hop achieves and why it matters"`
+	Objectives []string `json:"objectives" desc:"Objective descriptions this hop advances"`
+}
+
+// VariationProposerInput is the input to the variation proposer.
+type VariationProposerInput struct {
+	Hop             HopContext `json:"hop" desc:"The hop to propose variations for"`
+	RepositoryURL   string     `json:"repository_url" desc:"URL of the code repository"`
+	RepositorySummary string   `json:"repository_summary,omitempty" desc:"Optional summary of the repository structure and tech stack"`
+	AvailableBudget int        `json:"available_budget" desc:"Available Claude tokens for this hop"`
+	NumVariations   int        `json:"num_variations" desc:"Number of variations to propose (typically 2-4)"`
+}
+
+// VariationProposerResponse is the structured output from the variation proposer.
+type VariationProposerResponse struct {
+	Proposal VariationProposal `json:"proposal" desc:"The variation proposal"`
+}
+
+// CurrentVariation represents an existing variation in a revision request.
+type CurrentVariation struct {
+	Name            string `json:"name" desc:"Current variation name"`
+	Approach        string `json:"approach" desc:"Current implementation approach"`
+	Differentiation string `json:"differentiation" desc:"Current differentiation rationale"`
+	EstimatedTokens int    `json:"estimated_tokens" desc:"Current token estimate"`
+}
+
+// VariationRevisionInput is the input for revising variations based on feedback.
+type VariationRevisionInput struct {
+	Hop               HopContext         `json:"hop" desc:"The hop context"`
+	RepositoryURL     string             `json:"repository_url" desc:"URL of the code repository"`
+	CurrentVariations []CurrentVariation `json:"current_variations" desc:"The current variation proposals to revise"`
+	Feedback          string             `json:"feedback" desc:"User feedback requesting changes"`
+}

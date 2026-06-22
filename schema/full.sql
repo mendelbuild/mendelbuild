@@ -17,6 +17,7 @@
 CREATE TABLE projects (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL,
+    config JSONB,  -- Project-wide credentials (anthropic_api_key, etc.)
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -224,6 +225,10 @@ CREATE TABLE variations (
     id UUID PRIMARY KEY,
     hop_id UUID NOT NULL REFERENCES hops(id),
 
+    -- Variation identity for code generation
+    name TEXT,           -- e.g., "cache-layer-approach"
+    approach TEXT,       -- Detailed implementation approach
+
     -- Repository location
     repository_id UUID,  -- FK added below after repositories table
     commit_ref TEXT,     -- Opaque reference; for git repos this is a SHA
@@ -296,11 +301,12 @@ CREATE TABLE decisions (
     id UUID PRIMARY KEY,
 
     -- What kind of decision?
-    --   'pass_fail'      - Binary yes/no decision
-    --   'choose_one'     - Select exactly one option (e.g., pick winning Variation)
-    --   'choose_many'    - Select zero or more options
-    --   'roadmap_review' - Conversational edit/approve cycle for Roadmap proposals
-    kind TEXT NOT NULL CHECK (kind IN ('pass_fail', 'choose_one', 'choose_many', 'roadmap_review')),
+    --   'pass_fail'        - Binary yes/no decision
+    --   'choose_one'       - Select exactly one option (e.g., pick winning Variation)
+    --   'choose_many'      - Select zero or more options
+    --   'roadmap_review'   - Conversational edit/approve cycle for Roadmap proposals
+    --   'variation_review' - Review/approve proposed Variations before code generation
+    kind TEXT NOT NULL CHECK (kind IN ('pass_fail', 'choose_one', 'choose_many', 'roadmap_review', 'variation_review')),
 
     -- Human- and agent-readable summary
     title TEXT NOT NULL,

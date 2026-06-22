@@ -93,3 +93,8 @@ func buildArraySchema(t reflect.Type) map[string]interface{} {
 func ProposerResponseSchema() json.RawMessage {
 	return SchemaFromType(reflect.TypeOf(ProposerResponse{}))
 }
+
+// VariationProposerResponseSchema returns the JSON schema for VariationProposerResponse.
+func VariationProposerResponseSchema() json.RawMessage {
+	return SchemaFromType(reflect.TypeOf(VariationProposerResponse{}))
+}
