@@ -94,10 +94,16 @@ func (s *Server) setupRoutes() {
 	r.Route("/p/{projectID}", func(r chi.Router) {
 		r.Get("/", s.handleProjectDashboard)
 		r.Get("/strategy", s.handleStrategy)
+		r.Get("/settings", s.handleProjectSettings)
+		r.Post("/settings", s.handleSaveProjectSettings)
 
 		// Hop routes
 		r.Get("/hops/{hopID}", s.handleHopDetail)
 		r.Post("/hops/{hopID}/propose-variations", s.handleProposeVariations)
+
+		// Variation routes
+		r.Get("/variations/{variationID}", s.handleVariationDetail)
+		r.Post("/variations/{variationID}/retry", s.handleRetryVariation)
 
 		// Decision routes
 		r.Get("/decisions", s.handleDecisions)

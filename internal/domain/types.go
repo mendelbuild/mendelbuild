@@ -124,7 +124,8 @@ const (
 	VariationStatusMigrating  VariationStatus = "migrating"
 	VariationStatusActive     VariationStatus = "active"
 	VariationStatusDraining   VariationStatus = "draining"
-	VariationStatusTerminated VariationStatus = "terminated"
+	VariationStatusError      VariationStatus = "error"      // Mendel infrastructure failure (retryable)
+	VariationStatusTerminated VariationStatus = "terminated" // Code/test failure (not retryable)
 	VariationStatusPruned     VariationStatus = "pruned"
 	VariationStatusSelected   VariationStatus = "selected"
 )
@@ -152,6 +153,25 @@ type VariationStateHistory struct {
 	ToStatus       string    `json:"to_status"`
 	TransitionedAt time.Time `json:"transitioned_at"`
 	Reason         *string   `json:"reason,omitempty"`
+}
+
+// LogLevel represents the severity/type of a variation log entry.
+type LogLevel string
+
+const (
+	LogLevelInfo      LogLevel = "info"
+	LogLevelMilestone LogLevel = "milestone"
+	LogLevelError     LogLevel = "error"
+	LogLevelHeartbeat LogLevel = "heartbeat"
+)
+
+// VariationLog is a log entry for a variation's code generation process.
+type VariationLog struct {
+	ID          uuid.UUID `json:"id"`
+	VariationID uuid.UUID `json:"variation_id"`
+	LoggedAt    time.Time `json:"logged_at"`
+	Level       LogLevel  `json:"level"`
+	Message     string    `json:"message"`
 }
 
 // BudgetAllocation is a slice of a FundingSource assigned to a specific Hop.

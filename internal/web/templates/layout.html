@@ -93,13 +93,15 @@
         .status-pending { background: #fff3cd; color: #856404; }
         .status-active { background: #cce5ff; color: #004085; }
         .status-resolved { background: #d4edda; color: #155724; }
+        .status-error { background: #f8d7da; color: #721c24; }
         .empty { color: #666; font-style: italic; }
     </style>
 </head>
 <body>
     <nav>
         {{if .ProjectID}}<a href="/p/{{.ProjectID}}/strategy">Strategy</a>
-        <a href="/p/{{.ProjectID}}/decisions">Decisions</a>{{end}}
+        <a href="/p/{{.ProjectID}}/decisions">Decisions</a>
+        <a href="/p/{{.ProjectID}}/settings">Settings</a>{{end}}
         <a class="right" href="/">All Projects</a>
     </nav>
     {{block "page-content" .}}{{end}}

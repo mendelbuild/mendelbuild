@@ -82,7 +82,7 @@
                 Approving will create variations and trigger code generation for each selected approach.
             </p>
             {{else}}
-            {{if eq .Decision.Resolution "approved"}}
+            {{if eq .Resolution "approved"}}
             <div style="padding: 15px; background: #d4edda; border-radius: 4px; text-align: center;">
                 <strong>Variations Approved</strong><br>
                 Code generation has been triggered.<br>
@@ -90,7 +90,7 @@
                 <a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">View Hop</a>
                 {{end}}
             </div>
-            {{else if eq .Decision.Resolution "rejected"}}
+            {{else if eq .Resolution "rejected"}}
             <div style="padding: 15px; background: #f8d7da; border-radius: 4px; text-align: center;">
                 <strong>Proposal Rejected</strong><br>
                 <a href="/p/{{$.ProjectID}}/decisions">Back to Decisions</a>

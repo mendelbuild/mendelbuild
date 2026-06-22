@@ -719,3 +719,73 @@ func (db *DB) GetBudgetSpendByAllocation(ctx context.Context, allocationID uuid.
 	`, allocationID).Scan(&total)
 	return total, err
 }
+
+// UpsertRepository creates or updates the repository for a project.
+func (db *DB) UpsertRepository(ctx context.Context, projectID uuid.UUID, url string, config json.RawMessage) error {
+	// Check if repository exists
+	var repoID uuid.UUID
+	err := db.Pool.QueryRow(ctx, `SELECT id FROM repositories WHERE project_id = $1 LIMIT 1`, projectID).Scan(&repoID)
+	if err != nil {
+		// Create new repository
+		repoID = uuid.New()
+		_, err = db.Pool.Exec(ctx, `
+			INSERT INTO repositories (id, project_id, name, repo_type, url, config, created_at, updated_at)
+			VALUES ($1, $2, 'main', 'git', $3, $4, NOW(), NOW())
+		`, repoID, projectID, url, config)
+	} else {
+		// Update existing repository
+		_, err = db.Pool.Exec(ctx, `
+			UPDATE repositories SET url = $1, config = $2, updated_at = NOW() WHERE id = $3
+		`, url, config, repoID)
+	}
+	return err
+}
+
+// UpdateProjectConfig updates the config JSONB field for a project.
+func (db *DB) UpdateProjectConfig(ctx context.Context, projectID uuid.UUID, config json.RawMessage) error {
+	_, err := db.Pool.Exec(ctx, `UPDATE projects SET config = $1, updated_at = NOW() WHERE id = $2`, config, projectID)
+	return err
+}
+
+// CreateVariationLog creates a new log entry for a variation.
+func (db *DB) CreateVariationLog(ctx context.Context, variationID uuid.UUID, level domain.LogLevel, message string) error {
+	id := uuid.New()
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO variation_logs (id, variation_id, logged_at, level, message)
+		VALUES ($1, $2, NOW(), $3, $4)
+	`, id, variationID, string(level), message)
+	return err
+}
+
+// GetVariationLogs retrieves logs for a variation, most recent first.
+func (db *DB) GetVariationLogs(ctx context.Context, variationID uuid.UUID, limit int) ([]domain.VariationLog, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, variation_id, logged_at, level, message
+		FROM variation_logs
+		WHERE variation_id = $1
+		ORDER BY logged_at DESC
+		LIMIT $2
+	`, variationID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []domain.VariationLog
+	for rows.Next() {
+		var l domain.VariationLog
+		if err := rows.Scan(&l.ID, &l.VariationID, &l.LoggedAt, &l.Level, &l.Message); err != nil {
+			return nil, err
+		}
+		logs = append(logs, l)
+	}
+	return logs, nil
+}
+
+// GetRecentVariationLogs retrieves the most recent N logs for a variation.
+func (db *DB) GetRecentVariationLogs(ctx context.Context, variationID uuid.UUID, limit int) ([]domain.VariationLog, error) {
+	return db.GetVariationLogs(ctx, variationID, limit)
+}

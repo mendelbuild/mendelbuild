@@ -20,7 +20,8 @@ type DecisionDetailView struct {
 	Strategy          *domain.Strategy
 	Hop               *domain.Hop
 	VariationProposal *VariationProposalView
-	HopBudget         int // Total token budget for the hop
+	HopBudget         int    // Total token budget for the hop
+	Resolution        string // Dereferenced resolution for template comparison
 }
 
 // VariationProposalView holds parsed variation proposal data.
@@ -60,9 +61,15 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resolution := ""
+	if decision.Resolution != nil {
+		resolution = *decision.Resolution
+	}
+
 	view := &DecisionDetailView{
-		Decision: decision,
-		Messages: messages,
+		Decision:   decision,
+		Messages:   messages,
+		Resolution: resolution,
 	}
 
 	templateName := "decision_roadmap.html"

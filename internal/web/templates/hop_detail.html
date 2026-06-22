@@ -51,39 +51,44 @@
         <div class="card">
             <h2>Variations</h2>
             {{if .Variations}}
-            <table>
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Status</th>
-                        <th>Branch</th>
-                        <th>Created</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {{range .Variations}}
-                    <tr>
-                        <td>
-                            <strong>{{.Name}}</strong>
-                            {{if .Approach}}<br><small style="color: #666;">{{.Approach}}</small>{{end}}
-                        </td>
-                        <td>
-                            <span class="status {{if eq .Status "pending"}}status-pending{{else if eq .Status "creating"}}status-active{{else if eq .Status "terminated"}}status-resolved{{else}}status-{{.Status}}{{end}}">
-                                {{.Status}}
-                            </span>
-                        </td>
-                        <td>
-                            {{if .CommitRef}}
-                            <code style="font-size: 0.85em;">{{slice .CommitRef 0 7}}</code>
-                            {{else}}
-                            <span class="empty">-</span>
-                            {{end}}
-                        </td>
-                        <td>{{.CreatedAt.Format "2006-01-02"}}</td>
-                    </tr>
+            {{range .Variations}}
+            <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; {{if eq .Variation.Status "creating"}}border-color: #007bff;{{else if eq .Variation.Status "error"}}border-color: #dc3545;{{else if eq .Variation.Status "pending"}}border-color: #28a745;{{end}}">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+                    <div>
+                        <a href="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}" style="font-weight: bold; font-size: 1.1em; color: #007bff; text-decoration: none;">{{.Variation.Name}}</a>
+                        <span class="status {{if eq .Variation.Status "pending"}}status-pending{{else if eq .Variation.Status "creating"}}status-active{{else if eq .Variation.Status "error"}}status-error{{else if eq .Variation.Status "terminated"}}status-resolved{{else}}status-{{.Variation.Status}}{{end}}" style="margin-left: 10px;">
+                            {{.Variation.Status}}
+                        </span>
+                        {{if .Variation.CommitRef}}
+                        <code style="font-size: 0.85em; margin-left: 10px;">{{slice .Variation.CommitRef 0 7}}</code>
+                        {{end}}
+                    </div>
+                    <div>
+                        {{if eq .Variation.Status "error"}}
+                        <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry" style="display: inline;">
+                            <button type="submit" style="padding: 4px 8px; background: #ffc107; color: #212529; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
+                                Retry
+                            </button>
+                        </form>
+                        {{end}}
+                    </div>
+                </div>
+                {{if .Variation.Approach}}
+                <p style="color: #666; margin: 0 0 10px 0; font-size: 0.9em;">{{.Variation.Approach}}</p>
+                {{end}}
+                {{if .RecentLogs}}
+                <div style="background: #f8f9fa; border-radius: 4px; padding: 10px; font-family: monospace; font-size: 0.85em;">
+                    {{range .RecentLogs}}
+                    <div style="margin-bottom: 3px;">
+                        <span style="color: #666;">{{.LoggedAt.Format "15:04:05"}}</span>
+                        {{if eq .Level "milestone"}}<span style="color: #28a745;">[M]</span>{{else if eq .Level "error"}}<span style="color: #dc3545;">[E]</span>{{else}}<span style="color: #007bff;">[I]</span>{{end}}
+                        {{.Message}}
+                    </div>
                     {{end}}
-                </tbody>
-            </table>
+                </div>
+                {{end}}
+            </div>
+            {{end}}
             {{else}}
             <p class="empty">No variations yet.</p>
             {{end}}
