@@ -234,6 +234,26 @@ func (s *Server) handleProposeVariations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Generate evaluation criteria if the hop doesn't have them yet
+	if len(hop.EvaluationCriteria) == 0 {
+		criteriaInput := agent.EvaluationCriteriaInput{
+			HopName:       hop.Name,
+			HopCommentary: hop.Commentary,
+			Objectives:    objectiveDescs,
+		}
+
+		criteriaGenerator := agent.NewEvaluationCriteriaGenerator(client)
+		criteria, _, err := criteriaGenerator.GenerateCriteria(ctx, criteriaInput)
+		if err == nil && criteria != nil {
+			criteriaJSON, err := json.Marshal(criteria)
+			if err == nil {
+				if err := s.db.UpdateHopEvaluationCriteria(ctx, hopID, criteriaJSON); err != nil {
+					fmt.Printf("Warning: failed to save evaluation criteria: %v\n", err)
+				}
+			}
+		}
+	}
+
 	// Convert to VariationProposalData for storage
 	proposalData := codegen.VariationProposalData{
 		HopID: hopID,

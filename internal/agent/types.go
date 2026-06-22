@@ -143,3 +143,30 @@ type VariationRevisionInput struct {
 	CurrentVariations []CurrentVariation `json:"current_variations" desc:"The current variation proposals to revise"`
 	Feedback          string             `json:"feedback" desc:"User feedback requesting changes"`
 }
+
+// EvaluationCriterion is a single criterion for comparing Variations.
+type EvaluationCriterion struct {
+	Name        string `json:"name" desc:"Short descriptive name for this criterion (e.g., 'Code Clarity', 'Test Coverage', 'Performance')"`
+	Description string `json:"description" desc:"What this criterion measures and why it matters for this hop. 1-2 sentences."`
+	Measurable  bool   `json:"measurable" desc:"True if this criterion can be objectively measured (e.g., test count), false if subjective (e.g., code elegance)"`
+	Weight      int    `json:"weight" desc:"Relative importance from 1-5, where 5 is most important"`
+}
+
+// EvaluationCriteria is the set of criteria for comparing Variations within a Hop.
+type EvaluationCriteria struct {
+	Criteria   []EvaluationCriterion `json:"criteria" desc:"3-6 criteria for comparing Variations, ordered by importance"`
+	Rationale  string                `json:"rationale" desc:"Why these specific criteria matter for this hop. 2-3 sentences."`
+	Tradeoffs  string                `json:"tradeoffs" desc:"Expected tradeoffs between criteria that the human should consider. 2-3 sentences."`
+}
+
+// EvaluationCriteriaInput is the input to the evaluation criteria generator.
+type EvaluationCriteriaInput struct {
+	HopName       string   `json:"hop_name" desc:"The hop name (kebab-case identifier)"`
+	HopCommentary string   `json:"hop_commentary" desc:"What this hop achieves and why it matters"`
+	Objectives    []string `json:"objectives" desc:"Objective descriptions this hop advances"`
+}
+
+// EvaluationCriteriaResponse is the structured output from the criteria generator.
+type EvaluationCriteriaResponse struct {
+	Criteria EvaluationCriteria `json:"criteria" desc:"The evaluation criteria for this hop"`
+}

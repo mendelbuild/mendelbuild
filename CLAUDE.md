@@ -122,3 +122,11 @@ ALTER TABLE hops ALTER COLUMN commentary DROP NOT NULL;
 ## Development Plans
 
 Final implementation plans for each phase are stored in `dev/claude_plans/` for future reference. These documents capture architectural decisions and implementation details.
+
+**At the end of each development phase**, write the plan to `dev/claude_plans/phase_XX.md` before moving on. The plan should include:
+- Overview of what was built
+- Key design decisions and rationale
+- New/modified files
+- Database schema changes
+- Workflow states and transitions
+- Verification steps
