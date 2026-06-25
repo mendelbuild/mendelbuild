@@ -108,23 +108,43 @@
                 </div>
             </div>
             {{else if eq .Hop.Status "pending"}}
-            <p style="color: #666; margin-bottom: 15px;">
-                Propose implementation approaches (variations) for this hop. Each variation will be implemented in parallel.
-            </p>
-            <form method="POST" action="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}/propose-variations">
-                <button type="submit" style="width: 100%; padding: 10px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                    Propose Variations
-                </button>
-            </form>
+            <div style="padding: 15px; background: #f8f9fa; border-radius: 4px;">
+                <strong>Waiting for Dependencies</strong><br>
+                <span style="color: #666;">This hop will activate when its dependencies are completed.</span>
+            </div>
             {{else if eq .Hop.Status "active"}}
-            <div style="padding: 15px; background: #cce5ff; border-radius: 4px;">
-                <strong>Code Generation In Progress</strong><br>
-                <span style="color: #666;">Claude is implementing the approved variations. Refresh to see status updates.</span>
+                {{if .Variations}}
+                    {{if .HasCreatingVariations}}
+                    <div style="padding: 15px; background: #cce5ff; border-radius: 4px;">
+                        <strong>Code Generation In Progress</strong><br>
+                        <span style="color: #666;">Claude is implementing the approved variations. Refresh to see status updates.</span>
+                    </div>
+                    {{else}}
+                    <div style="padding: 15px; background: #fff3cd; border-radius: 4px;">
+                        <strong>Awaiting Selection</strong><br>
+                        <span style="color: #666;">Variations are ready. A selection decision will appear in the queue.</span>
+                    </div>
+                    {{end}}
+                {{else}}
+                <div style="padding: 15px; background: #e2e3e5; border-radius: 4px;">
+                    <strong>Proposing Variations...</strong><br>
+                    <span style="color: #666;">AI is generating variation proposals. A review decision will appear in the queue.</span>
+                </div>
+                {{end}}
+            {{else if eq .Hop.Status "selecting"}}
+            <div style="padding: 15px; background: #fff3cd; border-radius: 4px;">
+                <strong>Selecting Winner</strong><br>
+                <span style="color: #666;">All variations complete. Select a winner in the Decisions queue.</span>
             </div>
             {{else if eq .Hop.Status "completed"}}
             <div style="padding: 15px; background: #d4edda; border-radius: 4px;">
                 <strong>Completed</strong><br>
                 <span style="color: #666;">A variation was selected and merged.</span>
+            </div>
+            {{else if eq .Hop.Status "rejected"}}
+            <div style="padding: 15px; background: #f8d7da; border-radius: 4px;">
+                <strong>Rejected</strong><br>
+                <span style="color: #666;">All variations were rejected.</span>
             </div>
             {{else if eq .Hop.Status "abandoned"}}
             <div style="padding: 15px; background: #f8d7da; border-radius: 4px;">

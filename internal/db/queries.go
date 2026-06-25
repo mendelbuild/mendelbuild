@@ -953,6 +953,64 @@ func (db *DB) GetHopDependsOn(ctx context.Context, hopID uuid.UUID) ([]uuid.UUID
 	return deps, nil
 }
 
+// GetHopsNeedingVariationProposal returns active hops that have no variations
+// and no existing variation_review Decision (pending or resolved).
+func (db *DB) GetHopsNeedingVariationProposal(ctx context.Context) ([]domain.Hop, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria, h.status, h.created_at, h.updated_at
+		FROM hops h
+		WHERE h.status = 'active'
+		  AND NOT EXISTS (
+			SELECT 1 FROM variations v WHERE v.hop_id = h.id
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM decisions d
+			WHERE d.subject_type = 'hop'
+			  AND d.subject_id = h.id
+			  AND d.kind = 'variation_review'
+		  )
+		ORDER BY h.created_at ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var hops []domain.Hop
+	for rows.Next() {
+		var h domain.Hop
+		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+			return nil, err
+		}
+		hops = append(hops, h)
+	}
+	return hops, nil
+}
+
+// GetHopDependenciesByStrategy retrieves all hop dependencies for hops in a strategy.
+func (db *DB) GetHopDependenciesByStrategy(ctx context.Context, strategyID uuid.UUID) ([]domain.HopDependency, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT hd.hop_id, hd.depends_on_hop_id
+		FROM hop_dependencies hd
+		JOIN hops h ON hd.hop_id = h.id
+		WHERE h.strategy_id = $1
+	`, strategyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var deps []domain.HopDependency
+	for rows.Next() {
+		var d domain.HopDependency
+		if err := rows.Scan(&d.HopID, &d.DependsOnHopID); err != nil {
+			return nil, err
+		}
+		deps = append(deps, d)
+	}
+	return deps, nil
+}
+
 // ActivateDependentHops marks hops that depend on completedHopID as active
 // if all their dependencies are now completed.
 func (db *DB) ActivateDependentHops(ctx context.Context, completedHopID uuid.UUID) (int, error) {

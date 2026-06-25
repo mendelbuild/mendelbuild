@@ -1,0 +1,236 @@
+{{define "page-content"}}
+<h1>Roadmap: {{.Strategy.Name}}</h1>
+
+<div class="card" style="overflow-x: auto;">
+    <div id="roadmap-container" style="min-height: 400px; position: relative;">
+        <div id="roadmap-loading" style="text-align: center; padding: 50px; color: #666;">
+            Loading roadmap...
+        </div>
+    </div>
+</div>
+
+<script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+<script>
+(function() {
+    const projectID = "{{.ProjectID}}";
+    const hops = {{.HopsJSON}} || [];
+    const edges = {{.EdgesJSON}} || [];
+
+    // Node dimensions
+    const NODE_WIDTH = 200;
+    const NODE_PADDING = 15;
+    const VARIATION_HEIGHT = 24;
+    const HEADER_HEIGHT = 40;
+
+    // Status colors
+    const statusColors = {
+        // Hop statuses
+        'pending': '#fff3cd',
+        'active': '#cce5ff',
+        'selecting': '#fff3cd',
+        'completed': '#d4edda',
+        'rejected': '#f8d7da',
+        'abandoned': '#e2e3e5',
+        // Variation statuses
+        'proposed': '#e2e3e5',
+        'creating': '#cce5ff',
+        'error': '#f8d7da',
+        'terminated': '#e2e3e5',
+        'merged': '#d4edda',
+    };
+
+    const statusTextColors = {
+        'pending': '#856404',
+        'active': '#004085',
+        'selecting': '#856404',
+        'completed': '#155724',
+        'rejected': '#721c24',
+        'abandoned': '#383d41',
+        'proposed': '#383d41',
+        'creating': '#004085',
+        'error': '#721c24',
+        'terminated': '#383d41',
+        'merged': '#155724',
+    };
+
+    function calculateNodeHeight(hop) {
+        const variationCount = hop.Variations ? hop.Variations.length : 0;
+        return HEADER_HEIGHT + (variationCount * VARIATION_HEIGHT) + NODE_PADDING * 2;
+    }
+
+    function render() {
+        const container = document.getElementById('roadmap-container');
+        container.innerHTML = '';
+
+        if (!hops || hops.length === 0) {
+            container.innerHTML = '<p class="empty" style="text-align: center; padding: 50px;">No hops in roadmap yet.</p>';
+            return;
+        }
+
+        // Create dagre graph
+        const g = new dagre.graphlib.Graph();
+        g.setGraph({
+            rankdir: 'LR',
+            nodesep: 50,
+            ranksep: 80,
+            marginx: 20,
+            marginy: 20
+        });
+        g.setDefaultEdgeLabel(() => ({}));
+
+        // Add nodes
+        hops.forEach(hop => {
+            const height = calculateNodeHeight(hop);
+            g.setNode(hop.ID, {
+                width: NODE_WIDTH,
+                height: height,
+                hop: hop
+            });
+        });
+
+        // Add edges
+        if (edges) {
+            edges.forEach(edge => {
+                g.setEdge(edge.from, edge.to);
+            });
+        }
+
+        // Run layout
+        dagre.layout(g);
+
+        // Get graph dimensions
+        const graphWidth = g.graph().width + 40;
+        const graphHeight = g.graph().height + 40;
+
+        // Create SVG
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('width', Math.max(graphWidth, container.clientWidth));
+        svg.setAttribute('height', graphHeight);
+        svg.style.display = 'block';
+
+        // Draw edges first (so they appear behind nodes)
+        g.edges().forEach(e => {
+            const edge = g.edge(e);
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+
+            // Build path from edge points
+            let d = `M ${edge.points[0].x} ${edge.points[0].y}`;
+            for (let i = 1; i < edge.points.length; i++) {
+                d += ` L ${edge.points[i].x} ${edge.points[i].y}`;
+            }
+
+            path.setAttribute('d', d);
+            path.setAttribute('fill', 'none');
+            path.setAttribute('stroke', '#999');
+            path.setAttribute('stroke-width', '2');
+            path.setAttribute('marker-end', 'url(#arrowhead)');
+
+            svg.appendChild(path);
+        });
+
+        // Add arrowhead marker
+        const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+        defs.innerHTML = `
+            <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                <polygon points="0 0, 10 3.5, 0 7" fill="#999"/>
+            </marker>
+        `;
+        svg.insertBefore(defs, svg.firstChild);
+
+        // Draw nodes
+        g.nodes().forEach(nodeId => {
+            const node = g.node(nodeId);
+            const hop = node.hop;
+
+            const x = node.x - node.width / 2;
+            const y = node.y - node.height / 2;
+
+            // Create foreignObject for HTML content
+            const fo = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+            fo.setAttribute('x', x);
+            fo.setAttribute('y', y);
+            fo.setAttribute('width', node.width);
+            fo.setAttribute('height', node.height);
+
+            const bgColor = statusColors[hop.Status] || '#fff';
+
+            let html = `
+                <div xmlns="http://www.w3.org/1999/xhtml" style="
+                    width: ${node.width}px;
+                    height: ${node.height}px;
+                    background: ${bgColor};
+                    border: 2px solid #ccc;
+                    border-radius: 8px;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    font-size: 13px;
+                    overflow: hidden;
+                ">
+                    <a href="/p/${projectID}/hops/${hop.ID}" style="
+                        display: block;
+                        padding: 10px;
+                        font-weight: bold;
+                        color: #333;
+                        text-decoration: none;
+                        border-bottom: 1px solid rgba(0,0,0,0.1);
+                        white-space: nowrap;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                    " title="${hop.Name}">
+                        ${hop.Name}
+                        <span style="
+                            font-size: 10px;
+                            font-weight: normal;
+                            color: ${statusTextColors[hop.Status] || '#666'};
+                            margin-left: 5px;
+                        ">${hop.Status}</span>
+                    </a>
+            `;
+
+            if (hop.Variations && hop.Variations.length > 0) {
+                html += `<div style="padding: 5px 10px;">`;
+                hop.Variations.forEach(v => {
+                    const vColor = statusColors[v.Status] || '#e9ecef';
+                    const vTextColor = statusTextColors[v.Status] || '#666';
+                    const isProposed = !v.ID;
+                    const tag = isProposed ? 'span' : 'a';
+                    const href = isProposed ? '' : `href="/p/${projectID}/variations/${v.ID}"`;
+                    html += `
+                        <${tag} ${href} style="
+                            display: block;
+                            padding: 3px 6px;
+                            margin: 2px 0;
+                            background: ${vColor};
+                            border-radius: 4px;
+                            color: ${vTextColor};
+                            text-decoration: none;
+                            font-size: 11px;
+                            font-style: ${isProposed ? 'italic' : 'normal'};
+                            white-space: nowrap;
+                            overflow: hidden;
+                            text-overflow: ellipsis;
+                        " title="${v.Name} (${v.Status})">
+                            ${v.Name}${isProposed ? ' (proposed)' : ''}
+                        </${tag}>
+                    `;
+                });
+                html += `</div>`;
+            }
+
+            html += `</div>`;
+
+            fo.innerHTML = html;
+            svg.appendChild(fo);
+        });
+
+        container.appendChild(svg);
+    }
+
+    // Render on load
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', render);
+    } else {
+        render();
+    }
+})();
+</script>
+{{end}}

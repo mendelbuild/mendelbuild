@@ -23,7 +23,7 @@ type DecisionDetailView struct {
 	Hop                *domain.Hop
 	VariationProposal  *VariationProposalView
 	SelectionData      *SelectionDataView
-	EvaluationCriteria string
+	EvaluationCriteria *agent.EvaluationCriteria
 	CanSelect          bool // True if all variations are done and user can pick winner
 	PendingCount       int
 	FailedCount        int
@@ -50,9 +50,11 @@ type ProposedVariationView struct {
 
 // SelectionDataView holds data for variation selection.
 type SelectionDataView struct {
-	HopID      string
-	HopName    string
-	Variations []SelectionVariationView
+	HopID        string
+	HopName      string
+	Variations   []SelectionVariationView
+	Criteria     []string           // Criterion names for table headers
+	Summary      string             // AI summary comparing variations
 }
 
 // SelectionVariationView holds a single variation for selection.
@@ -62,6 +64,14 @@ type SelectionVariationView struct {
 	Approach  string
 	Status    string
 	CommitRef string
+	BranchURL string             // GitHub branch URL
+	Grades    map[string]float64 // Criterion name -> score (0.0-1.0)
+}
+
+// VariationGrade holds a score with rationale for display.
+type VariationGrade struct {
+	Score     float64
+	Rationale string
 }
 
 func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
@@ -171,10 +181,21 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 		if decision.SubjectType != nil && *decision.SubjectType == "hop" && decision.SubjectID != nil {
 			view.Hop, _ = s.db.GetHop(ctx, *decision.SubjectID)
 			if view.Hop != nil {
+				// Parse evaluation criteria
+				var criteria agent.EvaluationCriteria
 				if len(view.Hop.EvaluationCriteria) > 0 {
-					var criteria agent.EvaluationCriteria
 					if err := json.Unmarshal(view.Hop.EvaluationCriteria, &criteria); err == nil {
-						view.EvaluationCriteria = agent.FormatCriteriaAsText(&criteria)
+						view.EvaluationCriteria = &criteria
+					}
+				}
+
+				// Get strategy and repository for branch URLs
+				strategy, _ := s.db.GetStrategy(ctx, view.Hop.StrategyID)
+				var repoURL string
+				if strategy != nil {
+					repo, _ := s.db.GetRepositoryByProject(ctx, strategy.ProjectID)
+					if repo != nil && repo.URL != nil {
+						repoURL = *repo.URL
 					}
 				}
 
@@ -184,6 +205,11 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 				selectionData := &SelectionDataView{
 					HopID:   view.Hop.ID.String(),
 					HopName: view.Hop.Name,
+				}
+
+				// Extract criterion names for table headers
+				for _, c := range criteria.Criteria {
+					selectionData.Criteria = append(selectionData.Criteria, c.Name)
 				}
 
 				pendingCount := 0
@@ -196,10 +222,18 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 						Name:     v.Name,
 						Approach: v.Approach,
 						Status:   string(v.Status),
+						Grades:   make(map[string]float64),
 					}
 					if v.CommitRef != nil {
 						sv.CommitRef = *v.CommitRef
 					}
+
+					// Construct branch URL
+					if repoURL != "" {
+						branchName := fmt.Sprintf("mendel/%s/%s", sanitizeBranchName(view.Hop.Name), sanitizeBranchName(v.Name))
+						sv.BranchURL = constructGitHubBranchURL(repoURL, branchName)
+					}
+
 					selectionData.Variations = append(selectionData.Variations, sv)
 
 					switch v.Status {
@@ -211,6 +245,9 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 						creatingCount++
 					}
 				}
+
+				// Note: Evaluation is done via AJAX to avoid blocking page load
+				// See apiEvaluateVariations handler and decision_selection.html
 
 				view.SelectionData = selectionData
 				view.PendingCount = pendingCount
@@ -1595,4 +1632,130 @@ func (s *Server) mergeWinnerToMain(ctx context.Context, hop *domain.Hop, winner 
 	}
 
 	return nil
+}
+
+// apiEvaluateVariations evaluates variations for a hop and returns JSON.
+func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	hopID, err := uuid.Parse(chi.URLParam(r, "hopID"))
+	if err != nil {
+		http.Error(w, "invalid hop ID", http.StatusBadRequest)
+		return
+	}
+
+	hop, err := s.db.GetHop(ctx, hopID)
+	if err != nil {
+		http.Error(w, "hop not found", http.StatusNotFound)
+		return
+	}
+
+	// Parse evaluation criteria
+	var criteria agent.EvaluationCriteria
+	if len(hop.EvaluationCriteria) > 0 {
+		if err := json.Unmarshal(hop.EvaluationCriteria, &criteria); err != nil {
+			http.Error(w, "invalid evaluation criteria", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if len(criteria.Criteria) == 0 {
+		// No criteria to evaluate against
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"evaluations": []interface{}{},
+			"summary":     "",
+		})
+		return
+	}
+
+	// Get variations
+	variations, err := s.db.GetVariationsByHop(ctx, hopID)
+	if err != nil {
+		http.Error(w, "failed to get variations", http.StatusInternalServerError)
+		return
+	}
+
+	// Build list for evaluation (only pending variations)
+	var variationsForEval []agent.VariationForEvaluation
+	for _, v := range variations {
+		if v.Status == domain.VariationStatusPending {
+			variationsForEval = append(variationsForEval, agent.VariationForEvaluation{
+				ID:       v.ID.String(),
+				Name:     v.Name,
+				Approach: v.Approach,
+			})
+		}
+	}
+
+	if len(variationsForEval) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"evaluations": []interface{}{},
+			"summary":     "",
+		})
+		return
+	}
+
+	// Evaluate
+	evalInput := agent.VariationEvaluationInput{
+		HopName:    hop.Name,
+		Criteria:   criteria.Criteria,
+		Variations: variationsForEval,
+	}
+
+	client, err := agent.NewClient("")
+	if err != nil {
+		http.Error(w, "failed to create agent client", http.StatusInternalServerError)
+		return
+	}
+
+	evaluator := agent.NewVariationEvaluator(client)
+	evalResult, _, err := evaluator.Evaluate(ctx, evalInput)
+	if err != nil {
+		http.Error(w, "evaluation failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(evalResult)
+}
+
+// sanitizeBranchName converts a name to a git-safe branch name component.
+func sanitizeBranchName(name string) string {
+	result := ""
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' {
+			result += string(c)
+		} else if c == ' ' {
+			result += "-"
+		}
+	}
+	return result
+}
+
+// constructGitHubBranchURL constructs a GitHub URL to view a branch.
+func constructGitHubBranchURL(repoURL, branchName string) string {
+	// Handle various GitHub URL formats
+	// https://github.com/user/repo.git -> https://github.com/user/repo/tree/branch
+	// https://github.com/user/repo -> https://github.com/user/repo/tree/branch
+	// git@github.com:user/repo.git -> https://github.com/user/repo/tree/branch
+
+	url := repoURL
+
+	// Remove .git suffix
+	if len(url) > 4 && url[len(url)-4:] == ".git" {
+		url = url[:len(url)-4]
+	}
+
+	// Convert SSH URLs to HTTPS
+	if len(url) > 15 && url[:15] == "git@github.com:" {
+		url = "https://github.com/" + url[15:]
+	}
+
+	// Ensure HTTPS
+	if len(url) > 4 && url[:4] != "http" {
+		return "" // Unsupported format
+	}
+
+	return url + "/tree/" + branchName
 }
