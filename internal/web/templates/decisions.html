@@ -2,34 +2,83 @@
 <h1>Decisions</h1>
 
 <div class="card">
-    <h2>All Decisions</h2>
-    {{if .Decisions}}
-    <table>
-        <thead>
-            <tr>
-                <th>Title</th>
-                <th>Kind</th>
-                <th>Status</th>
-                <th>Importance</th>
-                <th>Created</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            {{range .Decisions}}
-            <tr>
-                <td>{{.Title}}</td>
-                <td>{{.Kind}}</td>
-                <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
-                <td>{{printf "%.2f" .ImportanceScore}}</td>
-                <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
-                <td><a href="/p/{{$.ProjectID}}/decisions/{{.ID}}">Review</a></td>
-            </tr>
-            {{end}}
-        </tbody>
-    </table>
+    <div class="tabs">
+        <a href="?tab=open" class="tab {{if eq .ActiveTab "open"}}active{{end}}">
+            Open
+            {{if .OpenDecisions}}<span class="tab-count">{{len .OpenDecisions}}</span>{{end}}
+        </a>
+        <a href="?tab=resolved" class="tab {{if eq .ActiveTab "resolved"}}active{{end}}">
+            Resolved
+            {{if .ResolvedDecisions}}<span class="tab-count">{{len .ResolvedDecisions}}</span>{{end}}
+        </a>
+    </div>
+
+    {{if eq .ActiveTab "open"}}
+        {{if .OpenDecisions}}
+        <table>
+            <thead>
+                <tr>
+                    <th>Title</th>
+                    <th>Kind</th>
+                    <th>Status</th>
+                    <th>Importance</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .OpenDecisions}}
+                <tr>
+                    <td>{{.Title}}</td>
+                    <td>{{.Kind}}</td>
+                    <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
+                    <td>{{printf "%.2f" .ImportanceScore}}</td>
+                    <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                    <td><a href="/p/{{$.ProjectID}}/decisions/{{.ID}}">Review</a></td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        {{else}}
+        <p class="empty">No open decisions. All caught up!</p>
+        {{end}}
     {{else}}
-    <p class="empty">No decisions yet. Use <code>mendel propose-roadmap -strategy &lt;uuid&gt;</code> to create one.</p>
+        {{if .ResolvedDecisions}}
+        <table>
+            <thead>
+                <tr>
+                    <th>Title</th>
+                    <th>Kind</th>
+                    <th>Resolution</th>
+                    <th>Created</th>
+                    <th>Resolved</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .ResolvedDecisions}}
+                <tr>
+                    <td>{{.Title}}</td>
+                    <td>{{.Kind}}</td>
+                    <td>
+                        {{if .ResolutionStr}}
+                        <span class="status {{if eq .ResolutionStr "approved"}}status-resolved{{else if eq .ResolutionStr "rejected"}}status-error{{else}}status-pending{{end}}">
+                            {{.ResolutionStr}}
+                        </span>
+                        {{else}}
+                        <span class="status status-resolved">resolved</span>
+                        {{end}}
+                    </td>
+                    <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                    <td>{{if .ResolvedAt}}{{.ResolvedAt.Format "2006-01-02 15:04"}}{{else}}-{{end}}</td>
+                    <td><a href="/p/{{$.ProjectID}}/decisions/{{.ID}}">View</a></td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        {{else}}
+        <p class="empty">No resolved decisions yet.</p>
+        {{end}}
     {{end}}
 </div>
 {{end}}

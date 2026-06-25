@@ -389,7 +389,8 @@ func (db *DB) GetDecisionsBySubject(ctx context.Context, subjectType string, sub
 	return decisions, nil
 }
 
-// GetDecisionsByProject retrieves all decisions related to a project (via strategies).
+// GetDecisionsByProject retrieves all decisions related to a project.
+// Includes decisions for strategies, hops, and variations belonging to the project.
 func (db *DB) GetDecisionsByProject(ctx context.Context, projectID uuid.UUID) ([]domain.Decision, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT d.id, d.kind, d.title, d.details, d.objectivity_score, d.importance_score, d.status,
@@ -397,8 +398,26 @@ func (db *DB) GetDecisionsByProject(ctx context.Context, projectID uuid.UUID) ([
 			   d.resolved_by, d.resolved_at, d.resolution, d.rationale,
 			   d.subject_type, d.subject_id, d.created_at, d.updated_at
 		FROM decisions d
-		JOIN strategies s ON d.subject_type = 'strategy' AND d.subject_id = s.id
-		WHERE s.project_id = $1
+		WHERE
+			-- Decisions about strategies in this project
+			(d.subject_type = 'strategy' AND d.subject_id IN (
+				SELECT id FROM strategies WHERE project_id = $1
+			))
+			OR
+			-- Decisions about hops in strategies in this project
+			(d.subject_type = 'hop' AND d.subject_id IN (
+				SELECT h.id FROM hops h
+				JOIN strategies s ON h.strategy_id = s.id
+				WHERE s.project_id = $1
+			))
+			OR
+			-- Decisions about variations in hops in strategies in this project
+			(d.subject_type = 'variation' AND d.subject_id IN (
+				SELECT v.id FROM variations v
+				JOIN hops h ON v.hop_id = h.id
+				JOIN strategies s ON h.strategy_id = s.id
+				WHERE s.project_id = $1
+			))
 		ORDER BY d.created_at DESC
 	`, projectID)
 	if err != nil {
@@ -477,9 +496,9 @@ func (db *DB) GetDecisionMessages(ctx context.Context, decisionID uuid.UUID) ([]
 // CreateHop creates a new hop.
 func (db *DB) CreateHop(ctx context.Context, h *domain.Hop) error {
 	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO hops (id, strategy_id, name, commentary, params, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
-	`, h.ID, h.StrategyID, h.Name, h.Commentary, h.Params, h.Status, h.CreatedAt)
+		INSERT INTO hops (id, strategy_id, name, commentary, params, evaluation_criteria, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+	`, h.ID, h.StrategyID, h.Name, h.Commentary, h.Params, h.EvaluationCriteria, h.Status, h.CreatedAt)
 	return err
 }
 
@@ -519,7 +538,7 @@ func (db *DB) GetFundingSourceByType(ctx context.Context, strategyID uuid.UUID, 
 // GetHopsByStrategy retrieves all hops for a strategy.
 func (db *DB) GetHopsByStrategy(ctx context.Context, strategyID uuid.UUID) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, strategy_id, name, commentary, params, status, created_at, updated_at
+		SELECT id, strategy_id, name, commentary, params, evaluation_criteria, status, created_at, updated_at
 		FROM hops
 		WHERE strategy_id = $1
 		ORDER BY created_at ASC
@@ -532,7 +551,7 @@ func (db *DB) GetHopsByStrategy(ctx context.Context, strategyID uuid.UUID) ([]do
 	var hops []domain.Hop
 	for rows.Next() {
 		var h domain.Hop
-		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 		hops = append(hops, h)
@@ -544,9 +563,9 @@ func (db *DB) GetHopsByStrategy(ctx context.Context, strategyID uuid.UUID) ([]do
 func (db *DB) GetHop(ctx context.Context, id uuid.UUID) (*domain.Hop, error) {
 	var h domain.Hop
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, strategy_id, name, commentary, params, status, created_at, updated_at
+		SELECT id, strategy_id, name, commentary, params, evaluation_criteria, status, created_at, updated_at
 		FROM hops WHERE id = $1
-	`, id).Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.Status, &h.CreatedAt, &h.UpdatedAt)
+	`, id).Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria, &h.Status, &h.CreatedAt, &h.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -558,6 +577,14 @@ func (db *DB) UpdateHopStatus(ctx context.Context, hopID uuid.UUID, status domai
 	_, err := db.Pool.Exec(ctx, `
 		UPDATE hops SET status = $1, updated_at = NOW() WHERE id = $2
 	`, status, hopID)
+	return err
+}
+
+// UpdateHopEvaluationCriteria updates the evaluation criteria for a hop.
+func (db *DB) UpdateHopEvaluationCriteria(ctx context.Context, hopID uuid.UUID, criteria json.RawMessage) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE hops SET evaluation_criteria = $1, updated_at = NOW() WHERE id = $2
+	`, criteria, hopID)
 	return err
 }
 
@@ -621,7 +648,7 @@ func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain
 // GetHopsWithCreatingVariations returns hops that have variations in "creating" status.
 func (db *DB) GetHopsWithCreatingVariations(ctx context.Context) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT DISTINCT h.id, h.strategy_id, h.name, h.commentary, h.params, h.status, h.created_at, h.updated_at
+		SELECT DISTINCT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria, h.status, h.created_at, h.updated_at
 		FROM hops h
 		JOIN variations v ON v.hop_id = h.id
 		WHERE v.status = 'creating'
@@ -635,7 +662,7 @@ func (db *DB) GetHopsWithCreatingVariations(ctx context.Context) ([]domain.Hop, 
 	var hops []domain.Hop
 	for rows.Next() {
 		var h domain.Hop
-		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 		hops = append(hops, h)
@@ -788,4 +815,224 @@ func (db *DB) GetVariationLogs(ctx context.Context, variationID uuid.UUID, limit
 // GetRecentVariationLogs retrieves the most recent N logs for a variation.
 func (db *DB) GetRecentVariationLogs(ctx context.Context, variationID uuid.UUID, limit int) ([]domain.VariationLog, error) {
 	return db.GetVariationLogs(ctx, variationID, limit)
+}
+
+// GetDecisionBySubjectAndKind retrieves a decision by subject and kind.
+func (db *DB) GetDecisionBySubjectAndKind(ctx context.Context, subjectType string, subjectID uuid.UUID, kind domain.DecisionKind) (*domain.Decision, error) {
+	var d domain.Decision
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, kind, title, details, objectivity_score, importance_score, status,
+			   assigned_to, assigned_at, accepted_by, accepted_at,
+			   resolved_by, resolved_at, resolution, rationale,
+			   subject_type, subject_id, created_at, updated_at
+		FROM decisions
+		WHERE subject_type = $1 AND subject_id = $2 AND kind = $3
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, subjectType, subjectID, kind).Scan(
+		&d.ID, &d.Kind, &d.Title, &d.Details, &d.ObjectivityScore, &d.ImportanceScore, &d.Status,
+		&d.AssignedTo, &d.AssignedAt, &d.AcceptedBy, &d.AcceptedAt,
+		&d.ResolvedBy, &d.ResolvedAt, &d.Resolution, &d.Rationale,
+		&d.SubjectType, &d.SubjectID, &d.CreatedAt, &d.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// GetHopsNeedingSelectionDecision returns hops with at least one pending variation
+// but no unresolved variation_selection Decision. Includes both 'active' and 'selecting'
+// hops to handle cases where status was updated but Decision wasn't created.
+func (db *DB) GetHopsNeedingSelectionDecision(ctx context.Context) ([]domain.Hop, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT DISTINCT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria, h.status, h.created_at, h.updated_at
+		FROM hops h
+		JOIN variations v ON v.hop_id = h.id
+		WHERE h.status IN ('active', 'selecting')
+		  AND v.status = 'pending'
+		  AND NOT EXISTS (
+			SELECT 1 FROM decisions d
+			WHERE d.subject_type = 'hop'
+			  AND d.subject_id = h.id
+			  AND d.kind = 'variation_selection'
+			  AND d.status != 'resolved'
+		  )
+		ORDER BY h.created_at ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var hops []domain.Hop
+	for rows.Next() {
+		var h domain.Hop
+		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+			return nil, err
+		}
+		hops = append(hops, h)
+	}
+	return hops, nil
+}
+
+// GetHopsReadyForSelection returns active hops where all variations are done
+// (no variations in 'creating' status) and at least one is 'pending'.
+func (db *DB) GetHopsReadyForSelection(ctx context.Context) ([]domain.Hop, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria, h.status, h.created_at, h.updated_at
+		FROM hops h
+		WHERE h.status = 'active'
+		  AND EXISTS (
+			SELECT 1 FROM variations v WHERE v.hop_id = h.id AND v.status = 'pending'
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM variations v WHERE v.hop_id = h.id AND v.status = 'creating'
+		  )
+		ORDER BY h.created_at ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var hops []domain.Hop
+	for rows.Next() {
+		var h domain.Hop
+		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+			return nil, err
+		}
+		hops = append(hops, h)
+	}
+	return hops, nil
+}
+
+// GetHopDependencies retrieves all hops that depend on the given hop.
+func (db *DB) GetHopDependencies(ctx context.Context, hopID uuid.UUID) ([]domain.HopDependency, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT hop_id, depends_on_hop_id
+		FROM hop_dependencies
+		WHERE depends_on_hop_id = $1
+	`, hopID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var deps []domain.HopDependency
+	for rows.Next() {
+		var d domain.HopDependency
+		if err := rows.Scan(&d.HopID, &d.DependsOnHopID); err != nil {
+			return nil, err
+		}
+		deps = append(deps, d)
+	}
+	return deps, nil
+}
+
+// GetHopDependsOn retrieves all hops that the given hop depends on.
+func (db *DB) GetHopDependsOn(ctx context.Context, hopID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT depends_on_hop_id
+		FROM hop_dependencies
+		WHERE hop_id = $1
+	`, hopID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var deps []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		deps = append(deps, id)
+	}
+	return deps, nil
+}
+
+// GetHopsNeedingVariationProposal returns active hops that have no variations
+// and no existing variation_review Decision (pending or resolved).
+func (db *DB) GetHopsNeedingVariationProposal(ctx context.Context) ([]domain.Hop, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria, h.status, h.created_at, h.updated_at
+		FROM hops h
+		WHERE h.status = 'active'
+		  AND NOT EXISTS (
+			SELECT 1 FROM variations v WHERE v.hop_id = h.id
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM decisions d
+			WHERE d.subject_type = 'hop'
+			  AND d.subject_id = h.id
+			  AND d.kind = 'variation_review'
+		  )
+		ORDER BY h.created_at ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var hops []domain.Hop
+	for rows.Next() {
+		var h domain.Hop
+		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+			return nil, err
+		}
+		hops = append(hops, h)
+	}
+	return hops, nil
+}
+
+// GetHopDependenciesByStrategy retrieves all hop dependencies for hops in a strategy.
+func (db *DB) GetHopDependenciesByStrategy(ctx context.Context, strategyID uuid.UUID) ([]domain.HopDependency, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT hd.hop_id, hd.depends_on_hop_id
+		FROM hop_dependencies hd
+		JOIN hops h ON hd.hop_id = h.id
+		WHERE h.strategy_id = $1
+	`, strategyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var deps []domain.HopDependency
+	for rows.Next() {
+		var d domain.HopDependency
+		if err := rows.Scan(&d.HopID, &d.DependsOnHopID); err != nil {
+			return nil, err
+		}
+		deps = append(deps, d)
+	}
+	return deps, nil
+}
+
+// ActivateDependentHops marks hops that depend on completedHopID as active
+// if all their dependencies are now completed.
+func (db *DB) ActivateDependentHops(ctx context.Context, completedHopID uuid.UUID) (int, error) {
+	result, err := db.Pool.Exec(ctx, `
+		UPDATE hops
+		SET status = 'active', updated_at = NOW()
+		WHERE status = 'pending'
+		  AND id IN (
+			SELECT hd.hop_id
+			FROM hop_dependencies hd
+			WHERE hd.depends_on_hop_id = $1
+		  )
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM hop_dependencies hd2
+			JOIN hops dep ON dep.id = hd2.depends_on_hop_id
+			WHERE hd2.hop_id = hops.id
+			  AND dep.status != 'completed'
+		  )
+	`, completedHopID)
+	if err != nil {
+		return 0, err
+	}
+	return int(result.RowsAffected()), nil
 }

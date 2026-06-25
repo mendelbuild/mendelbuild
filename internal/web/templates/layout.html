@@ -94,12 +94,50 @@
         .status-active { background: #cce5ff; color: #004085; }
         .status-resolved { background: #d4edda; color: #155724; }
         .status-error { background: #f8d7da; color: #721c24; }
+        .status-needs_assignment { background: #e2e3e5; color: #383d41; }
+        .status-selecting { background: #fff3cd; color: #856404; }
         .empty { color: #666; font-style: italic; }
+        .tabs {
+            display: flex;
+            gap: 0;
+            border-bottom: 1px solid #ddd;
+            margin-bottom: 20px;
+        }
+        .tab {
+            padding: 10px 20px;
+            text-decoration: none;
+            color: #666;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -1px;
+        }
+        .tab:hover {
+            color: #333;
+            background: #f8f9fa;
+        }
+        .tab.active {
+            color: #007bff;
+            border-bottom-color: #007bff;
+            font-weight: 500;
+        }
+        .tab-count {
+            display: inline-block;
+            background: #e9ecef;
+            color: #666;
+            font-size: 0.8em;
+            padding: 1px 6px;
+            border-radius: 10px;
+            margin-left: 5px;
+        }
+        .tab.active .tab-count {
+            background: #cce5ff;
+            color: #004085;
+        }
     </style>
 </head>
 <body>
     <nav>
         {{if .ProjectID}}<a href="/p/{{.ProjectID}}/strategy">Strategy</a>
+        <a href="/p/{{.ProjectID}}/roadmap">Roadmap</a>
         <a href="/p/{{.ProjectID}}/decisions">Decisions</a>
         <a href="/p/{{.ProjectID}}/settings">Settings</a>{{end}}
         <a class="right" href="/">All Projects</a>

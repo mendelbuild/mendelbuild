@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,20 +9,27 @@ import (
 
 	"github.com/bhs/mendelbuild/internal/agent"
 	"github.com/bhs/mendelbuild/internal/domain"
+	"github.com/bhs/mendelbuild/internal/git"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
 // DecisionDetailView holds data for rendering a decision detail page.
 type DecisionDetailView struct {
-	Decision          *domain.Decision
-	Messages          []domain.DecisionMessage
-	Roadmap           *agent.ProposedRoadmap
-	Strategy          *domain.Strategy
-	Hop               *domain.Hop
-	VariationProposal *VariationProposalView
-	HopBudget         int    // Total token budget for the hop
-	Resolution        string // Dereferenced resolution for template comparison
+	Decision           *domain.Decision
+	Messages           []domain.DecisionMessage
+	Roadmap            *agent.ProposedRoadmap
+	Strategy           *domain.Strategy
+	Hop                *domain.Hop
+	VariationProposal  *VariationProposalView
+	SelectionData      *SelectionDataView
+	EvaluationCriteria *agent.EvaluationCriteria
+	CanSelect          bool // True if all variations are done and user can pick winner
+	PendingCount       int
+	FailedCount        int
+	TotalCount         int
+	HopBudget          int    // Total token budget for the hop
+	Resolution         string // Dereferenced resolution for template comparison
 }
 
 // VariationProposalView holds parsed variation proposal data.
@@ -38,6 +46,32 @@ type ProposedVariationView struct {
 	Approach        string
 	Differentiation string
 	EstimatedTokens int
+}
+
+// SelectionDataView holds data for variation selection.
+type SelectionDataView struct {
+	HopID        string
+	HopName      string
+	Variations   []SelectionVariationView
+	Criteria     []string           // Criterion names for table headers
+	Summary      string             // AI summary comparing variations
+}
+
+// SelectionVariationView holds a single variation for selection.
+type SelectionVariationView struct {
+	ID        string
+	Name      string
+	Approach  string
+	Status    string
+	CommitRef string
+	BranchURL string             // GitHub branch URL
+	Grades    map[string]float64 // Criterion name -> score (0.0-1.0)
+}
+
+// VariationGrade holds a score with rationale for display.
+type VariationGrade struct {
+	Score     float64
+	Rationale string
 }
 
 func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +172,89 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 				}
+			}
+		}
+
+	case domain.DecisionKindVariationSelection:
+		templateName = "decision_selection.html"
+		// Load hop and variations
+		if decision.SubjectType != nil && *decision.SubjectType == "hop" && decision.SubjectID != nil {
+			view.Hop, _ = s.db.GetHop(ctx, *decision.SubjectID)
+			if view.Hop != nil {
+				// Parse evaluation criteria
+				var criteria agent.EvaluationCriteria
+				if len(view.Hop.EvaluationCriteria) > 0 {
+					if err := json.Unmarshal(view.Hop.EvaluationCriteria, &criteria); err == nil {
+						view.EvaluationCriteria = &criteria
+					}
+				}
+
+				// Get strategy and repository for branch URLs
+				strategy, _ := s.db.GetStrategy(ctx, view.Hop.StrategyID)
+				var repoURL string
+				if strategy != nil {
+					repo, _ := s.db.GetRepositoryByProject(ctx, strategy.ProjectID)
+					if repo != nil && repo.URL != nil {
+						repoURL = *repo.URL
+					}
+				}
+
+				// Get variations
+				variations, _ := s.db.GetVariationsByHop(ctx, view.Hop.ID)
+
+				selectionData := &SelectionDataView{
+					HopID:   view.Hop.ID.String(),
+					HopName: view.Hop.Name,
+				}
+
+				// Extract criterion names for table headers
+				for _, c := range criteria.Criteria {
+					selectionData.Criteria = append(selectionData.Criteria, c.Name)
+				}
+
+				pendingCount := 0
+				failedCount := 0
+				creatingCount := 0
+
+				for _, v := range variations {
+					sv := SelectionVariationView{
+						ID:       v.ID.String(),
+						Name:     v.Name,
+						Approach: v.Approach,
+						Status:   string(v.Status),
+						Grades:   make(map[string]float64),
+					}
+					if v.CommitRef != nil {
+						sv.CommitRef = *v.CommitRef
+					}
+
+					// Construct branch URL
+					if repoURL != "" {
+						branchName := fmt.Sprintf("mendel/%s/%s", sanitizeBranchName(view.Hop.Name), sanitizeBranchName(v.Name))
+						sv.BranchURL = constructGitHubBranchURL(repoURL, branchName)
+					}
+
+					selectionData.Variations = append(selectionData.Variations, sv)
+
+					switch v.Status {
+					case domain.VariationStatusPending:
+						pendingCount++
+					case domain.VariationStatusError, domain.VariationStatusTerminated:
+						failedCount++
+					case domain.VariationStatusCreating:
+						creatingCount++
+					}
+				}
+
+				// Note: Evaluation is done via AJAX to avoid blocking page load
+				// See apiEvaluateVariations handler and decision_selection.html
+
+				view.SelectionData = selectionData
+				view.PendingCount = pendingCount
+				view.FailedCount = failedCount
+				view.TotalCount = len(variations)
+				// Can select if all variations are done (none creating) and at least one is pending
+				view.CanSelect = creatingCount == 0 && pendingCount > 0 && decision.Status != domain.DecisionStatusResolved
 			}
 		}
 	}
@@ -859,6 +976,7 @@ func (s *Server) approveRoadmap(w http.ResponseWriter, r *http.Request, decision
 			"objective_ids": ph.ObjectiveIDs,
 		})
 
+		// Evaluation criteria will be generated later during variation proposal
 		hop := &domain.Hop{
 			ID:         hopID,
 			StrategyID: *decision.SubjectID,
@@ -1283,4 +1401,361 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request) {
 
 	// Redirect to decisions list
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions", projectID), http.StatusSeeOther)
+}
+
+func (s *Server) handleSelectWinner(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID := chi.URLParam(r, "projectID")
+	decisionID, err := uuid.Parse(chi.URLParam(r, "decisionID"))
+	if err != nil {
+		http.Error(w, "invalid decision ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	winnerID, err := uuid.Parse(r.FormValue("winner"))
+	if err != nil {
+		http.Error(w, "no winner selected", http.StatusBadRequest)
+		return
+	}
+
+	decision, err := s.db.GetDecision(ctx, decisionID)
+	if err != nil {
+		http.Error(w, "decision not found", http.StatusNotFound)
+		return
+	}
+
+	if decision.SubjectID == nil {
+		http.Error(w, "no hop associated", http.StatusBadRequest)
+		return
+	}
+
+	// Get hop
+	hop, err := s.db.GetHop(ctx, *decision.SubjectID)
+	if err != nil {
+		http.Error(w, "hop not found", http.StatusNotFound)
+		return
+	}
+
+	// Get winning variation
+	winner, err := s.db.GetVariation(ctx, winnerID)
+	if err != nil {
+		http.Error(w, "winning variation not found", http.StatusNotFound)
+		return
+	}
+
+	// Get all variations to update losers
+	variations, err := s.db.GetVariationsByHop(ctx, hop.ID)
+	if err != nil {
+		http.Error(w, "error getting variations", http.StatusInternalServerError)
+		return
+	}
+
+	// Merge winner branch to main
+	if err := s.mergeWinnerToMain(ctx, hop, winner); err != nil {
+		http.Error(w, "error merging winner: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Update variation statuses
+	for _, v := range variations {
+		if v.ID == winnerID {
+			v.Status = domain.VariationStatusMerged
+		} else if v.Status == domain.VariationStatusPending {
+			v.Status = domain.VariationStatusRejected
+		}
+		// Leave error/terminated variations as-is
+		s.db.UpdateVariation(ctx, &v)
+	}
+
+	// Update hop status to completed
+	if err := s.db.UpdateHopStatus(ctx, hop.ID, domain.HopStatusCompleted); err != nil {
+		http.Error(w, "error updating hop status", http.StatusInternalServerError)
+		return
+	}
+
+	// Activate dependent hops
+	activated, err := s.db.ActivateDependentHops(ctx, hop.ID)
+	if err != nil {
+		fmt.Printf("Error activating dependent hops: %v\n", err)
+	} else if activated > 0 {
+		fmt.Printf("Activated %d dependent hops\n", activated)
+	}
+
+	// Update decision status
+	decision.Status = domain.DecisionStatusResolved
+	resolution := "approved"
+	decision.Resolution = &resolution
+	resolvedAt := time.Now()
+	decision.ResolvedAt = &resolvedAt
+	decision.UpdatedAt = resolvedAt
+
+	if err := s.db.UpdateDecision(ctx, decision); err != nil {
+		http.Error(w, "error updating decision", http.StatusInternalServerError)
+		return
+	}
+
+	// Save system message
+	sysMsg := &domain.DecisionMessage{
+		ID:         uuid.New(),
+		DecisionID: decisionID,
+		Role:       "system",
+		Content:    fmt.Sprintf("Winner selected: %s\nBranch merged to main.", winner.Name),
+		CreatedAt:  time.Now(),
+	}
+	s.db.CreateDecisionMessage(ctx, sysMsg)
+
+	// Redirect to strategy page
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/strategy", projectID), http.StatusSeeOther)
+}
+
+func (s *Server) handleRejectAllVariations(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID := chi.URLParam(r, "projectID")
+	decisionID, err := uuid.Parse(chi.URLParam(r, "decisionID"))
+	if err != nil {
+		http.Error(w, "invalid decision ID", http.StatusBadRequest)
+		return
+	}
+
+	decision, err := s.db.GetDecision(ctx, decisionID)
+	if err != nil {
+		http.Error(w, "decision not found", http.StatusNotFound)
+		return
+	}
+
+	if decision.SubjectID == nil {
+		http.Error(w, "no hop associated", http.StatusBadRequest)
+		return
+	}
+
+	// Get hop
+	hop, err := s.db.GetHop(ctx, *decision.SubjectID)
+	if err != nil {
+		http.Error(w, "hop not found", http.StatusNotFound)
+		return
+	}
+
+	// Mark all pending variations as rejected
+	variations, _ := s.db.GetVariationsByHop(ctx, hop.ID)
+	for _, v := range variations {
+		if v.Status == domain.VariationStatusPending {
+			v.Status = domain.VariationStatusRejected
+			s.db.UpdateVariation(ctx, &v)
+		}
+	}
+
+	// Return hop to active status (can propose new variations)
+	if err := s.db.UpdateHopStatus(ctx, hop.ID, domain.HopStatusActive); err != nil {
+		http.Error(w, "error updating hop status", http.StatusInternalServerError)
+		return
+	}
+
+	// Update decision status
+	decision.Status = domain.DecisionStatusResolved
+	resolution := "rejected"
+	decision.Resolution = &resolution
+	resolvedAt := time.Now()
+	decision.ResolvedAt = &resolvedAt
+	decision.UpdatedAt = resolvedAt
+
+	if err := s.db.UpdateDecision(ctx, decision); err != nil {
+		http.Error(w, "error updating decision", http.StatusInternalServerError)
+		return
+	}
+
+	// Save system message
+	sysMsg := &domain.DecisionMessage{
+		ID:         uuid.New(),
+		DecisionID: decisionID,
+		Role:       "system",
+		Content:    "All variations rejected. Hop returned to active status for new variation proposals.",
+		CreatedAt:  time.Now(),
+	}
+	s.db.CreateDecisionMessage(ctx, sysMsg)
+
+	// Redirect to hop page
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/hops/%s", projectID, hop.ID), http.StatusSeeOther)
+}
+
+// mergeWinnerToMain merges the winning variation's branch into main.
+func (s *Server) mergeWinnerToMain(ctx context.Context, hop *domain.Hop, winner *domain.Variation) error {
+	// Get strategy and repository info
+	strategy, err := s.db.GetStrategy(ctx, hop.StrategyID)
+	if err != nil {
+		return fmt.Errorf("get strategy: %w", err)
+	}
+
+	repo, err := s.db.GetRepositoryByProject(ctx, strategy.ProjectID)
+	if err != nil {
+		return fmt.Errorf("get repository: %w", err)
+	}
+
+	// Parse repository config
+	var repoConfig struct {
+		MainBranch string `json:"main_branch"`
+		AuthToken  string `json:"auth_token"`
+	}
+	if repo.Config != nil {
+		json.Unmarshal(repo.Config, &repoConfig)
+	}
+	if repoConfig.MainBranch == "" {
+		repoConfig.MainBranch = "main"
+	}
+
+	// Clone repository
+	workDir := git.WorkDirForVariation("merge-" + winner.ID.String())
+	gitClient := git.NewClient(workDir)
+	defer gitClient.Cleanup()
+
+	if repo.URL == nil {
+		return fmt.Errorf("repository has no URL")
+	}
+
+	if err := gitClient.Clone(ctx, *repo.URL, repoConfig.MainBranch, repoConfig.AuthToken); err != nil {
+		return fmt.Errorf("clone: %w", err)
+	}
+
+	// Merge the winner's branch
+	branchName := fmt.Sprintf("mendel/%s/%s", hop.Name, winner.Name)
+	if err := gitClient.MergeRemoteBranch(ctx, branchName, repoConfig.AuthToken); err != nil {
+		return fmt.Errorf("merge: %w", err)
+	}
+
+	// Push to main
+	if err := gitClient.Push(ctx, repoConfig.AuthToken); err != nil {
+		return fmt.Errorf("push: %w", err)
+	}
+
+	return nil
+}
+
+// apiEvaluateVariations evaluates variations for a hop and returns JSON.
+func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	hopID, err := uuid.Parse(chi.URLParam(r, "hopID"))
+	if err != nil {
+		http.Error(w, "invalid hop ID", http.StatusBadRequest)
+		return
+	}
+
+	hop, err := s.db.GetHop(ctx, hopID)
+	if err != nil {
+		http.Error(w, "hop not found", http.StatusNotFound)
+		return
+	}
+
+	// Parse evaluation criteria
+	var criteria agent.EvaluationCriteria
+	if len(hop.EvaluationCriteria) > 0 {
+		if err := json.Unmarshal(hop.EvaluationCriteria, &criteria); err != nil {
+			http.Error(w, "invalid evaluation criteria", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if len(criteria.Criteria) == 0 {
+		// No criteria to evaluate against
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"evaluations": []interface{}{},
+			"summary":     "",
+		})
+		return
+	}
+
+	// Get variations
+	variations, err := s.db.GetVariationsByHop(ctx, hopID)
+	if err != nil {
+		http.Error(w, "failed to get variations", http.StatusInternalServerError)
+		return
+	}
+
+	// Build list for evaluation (only pending variations)
+	var variationsForEval []agent.VariationForEvaluation
+	for _, v := range variations {
+		if v.Status == domain.VariationStatusPending {
+			variationsForEval = append(variationsForEval, agent.VariationForEvaluation{
+				ID:       v.ID.String(),
+				Name:     v.Name,
+				Approach: v.Approach,
+			})
+		}
+	}
+
+	if len(variationsForEval) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"evaluations": []interface{}{},
+			"summary":     "",
+		})
+		return
+	}
+
+	// Evaluate
+	evalInput := agent.VariationEvaluationInput{
+		HopName:    hop.Name,
+		Criteria:   criteria.Criteria,
+		Variations: variationsForEval,
+	}
+
+	client, err := agent.NewClient("")
+	if err != nil {
+		http.Error(w, "failed to create agent client", http.StatusInternalServerError)
+		return
+	}
+
+	evaluator := agent.NewVariationEvaluator(client)
+	evalResult, _, err := evaluator.Evaluate(ctx, evalInput)
+	if err != nil {
+		http.Error(w, "evaluation failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(evalResult)
+}
+
+// sanitizeBranchName converts a name to a git-safe branch name component.
+func sanitizeBranchName(name string) string {
+	result := ""
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' {
+			result += string(c)
+		} else if c == ' ' {
+			result += "-"
+		}
+	}
+	return result
+}
+
+// constructGitHubBranchURL constructs a GitHub URL to view a branch.
+func constructGitHubBranchURL(repoURL, branchName string) string {
+	// Handle various GitHub URL formats
+	// https://github.com/user/repo.git -> https://github.com/user/repo/tree/branch
+	// https://github.com/user/repo -> https://github.com/user/repo/tree/branch
+	// git@github.com:user/repo.git -> https://github.com/user/repo/tree/branch
+
+	url := repoURL
+
+	// Remove .git suffix
+	if len(url) > 4 && url[len(url)-4:] == ".git" {
+		url = url[:len(url)-4]
+	}
+
+	// Convert SSH URLs to HTTPS
+	if len(url) > 15 && url[:15] == "git@github.com:" {
+		url = "https://github.com/" + url[15:]
+	}
+
+	// Ensure HTTPS
+	if len(url) > 4 && url[:4] != "http" {
+		return "" // Unsupported format
+	}
+
+	return url + "/tree/" + branchName
 }

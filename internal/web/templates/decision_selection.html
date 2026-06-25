@@ -1,0 +1,373 @@
+{{define "page-content"}}
+{{with .View}}
+<h1>{{.Decision.Title}}</h1>
+<p><a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">&larr; Back to Hop: {{.Hop.Name}}</a></p>
+
+<div style="display: flex; gap: 20px; align-items: flex-start;">
+    {{/* Left column: Variations */}}
+    <div style="flex: 2; min-width: 0; overflow: hidden;">
+        <div class="card" style="overflow: hidden;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h2 style="margin: 0;">Variation Comparison</h2>
+                {{if not .CanSelect}}
+                <span style="background: #fff3cd; padding: 8px 12px; border-radius: 4px; font-size: 0.9em;">
+                    Waiting for all variations to complete...
+                </span>
+                {{end}}
+            </div>
+
+            {{if .SelectionData}}
+            <form id="select-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/select">
+            <div class="table-scroll-container">
+                <table id="variations-table" class="variations-table">
+                    <thead>
+                        <tr>
+                            {{if $.View.CanSelect}}<th style="width: 40px;"></th>{{end}}
+                            <th>Variation</th>
+                            <th>Status</th>
+                            <th>Code</th>
+                            {{range $.View.SelectionData.Criteria}}
+                            <th class="grade-header">{{.}}</th>
+                            {{end}}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range $i, $v := .SelectionData.Variations}}
+                        {{/* Row 1: Name, status, code, grades */}}
+                        <tr class="variation-row-main" data-variation-id="{{$v.ID}}" style="border-bottom: none; {{if eq $v.Status "merged"}}background: #d4edda;{{else if eq $v.Status "rejected"}}background: #f8f9fa;{{end}}">
+                            {{if $.View.CanSelect}}
+                            <td style="border-bottom: none; padding-bottom: 4px;">
+                                {{if eq $v.Status "pending"}}
+                                <input type="radio" name="winner" value="{{$v.ID}}" class="winner-radio" style="width: 18px; height: 18px;">
+                                {{end}}
+                            </td>
+                            {{end}}
+                            <td style="border-bottom: none; padding-bottom: 4px;">
+                                <a href="/p/{{$.ProjectID}}/variations/{{$v.ID}}" style="font-weight: bold; color: #007bff;">{{$v.Name}}</a>
+                            </td>
+                            <td style="border-bottom: none; padding-bottom: 4px;">
+                                <span class="status {{if eq $v.Status "pending"}}status-pending{{else if eq $v.Status "merged"}}status-resolved{{else if eq $v.Status "rejected"}}status-resolved{{else}}status-error{{end}}">
+                                    {{$v.Status}}
+                                </span>
+                            </td>
+                            <td style="border-bottom: none; padding-bottom: 4px;">
+                                {{if $v.BranchURL}}
+                                <a href="{{$v.BranchURL}}" target="_blank" style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; background: #24292e; color: white; text-decoration: none; border-radius: 4px; font-size: 0.8em;">
+                                    <span>View Branch</span>
+                                </a>
+                                {{else if $v.CommitRef}}
+                                <code style="font-size: 0.8em;">{{slice $v.CommitRef 0 7}}</code>
+                                {{else}}
+                                <span style="color: #999;">-</span>
+                                {{end}}
+                            </td>
+                            {{range $criterion := $.View.SelectionData.Criteria}}
+                            <td class="grade-cell" data-criterion="{{$criterion}}" style="text-align: center; border-bottom: none; padding-bottom: 4px;">
+                                <div class="grade-loading cell-spinner"></div>
+                            </td>
+                            {{end}}
+                        </tr>
+                        {{/* Row 2: Description spanning full width */}}
+                        <tr class="variation-row-desc" style="{{if eq $v.Status "merged"}}background: #d4edda;{{else if eq $v.Status "rejected"}}background: #f8f9fa;{{end}}">
+                            <td colspan="100" style="padding-top: 0; padding-bottom: 12px; border-bottom: 2px solid #dee2e6;">
+                                <div style="font-size: 0.85em; color: #555; padding-left: {{if $.View.CanSelect}}40px{{else}}0{{end}};">
+                                    {{$v.Approach}}
+                                </div>
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+
+            </form>
+            {{else}}
+            <p class="empty">No variations found.</p>
+            {{end}}
+        </div>
+
+        {{if .EvaluationCriteria}}
+        <div class="card">
+            <h2>Evaluation Criteria</h2>
+            <ol style="margin: 0; padding-left: 1.5em;">
+                {{range .EvaluationCriteria.Criteria}}
+                <li style="margin-bottom: 12px;">
+                    <strong>{{.Name}}</strong>
+                    <span style="color: #666; font-size: 0.85em;">(weight: {{.Weight}}/5{{if .Measurable}}, measurable{{end}})</span>
+                    <div style="color: #555; margin-top: 4px;">{{.Description}}</div>
+                </li>
+                {{end}}
+            </ol>
+            {{if .EvaluationCriteria.Rationale}}
+            <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #eee;">
+                <strong style="font-size: 0.9em;">Rationale:</strong>
+                <span style="color: #555;">{{.EvaluationCriteria.Rationale}}</span>
+            </div>
+            {{end}}
+            {{if .EvaluationCriteria.Tradeoffs}}
+            <div style="margin-top: 8px;">
+                <strong style="font-size: 0.9em;">Expected Tradeoffs:</strong>
+                <span style="color: #555;">{{.EvaluationCriteria.Tradeoffs}}</span>
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+    </div>
+
+    {{/* Right column: Actions */}}
+    <div style="flex: 1;">
+        <div class="card">
+            <h2>Selection</h2>
+
+            {{if ne .Decision.Status "resolved"}}
+                {{if .CanSelect}}
+                <button id="select-button" type="submit" form="select-form" disabled style="width: 100%; padding: 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: not-allowed; font-weight: bold;">
+                    Select a winner
+                </button>
+                <p style="font-size: 0.85em; color: #666; margin-top: 15px;">
+                    Selecting a winner will merge the variation's branch into main and mark the hop as completed.
+                </p>
+
+                <div style="margin-top: 15px; border-top: 1px solid #ddd; padding-top: 15px;">
+                    <button type="button" onclick="document.getElementById('reject-all-form').submit()" style="width: 100%; padding: 10px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Reject All &amp; Request New Variations
+                    </button>
+                    <p style="font-size: 0.8em; color: #999; margin-top: 8px;">
+                        This will return the hop to active status for new variation proposals.
+                    </p>
+                </div>
+                <form id="reject-all-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/reject-all" style="display: none;"></form>
+                {{else}}
+                <div style="padding: 15px; background: #fff3cd; border-radius: 4px; text-align: center;">
+                    <strong>Waiting for variations...</strong><br>
+                    Selection will be available once all variations complete code generation.
+                </div>
+                {{end}}
+            {{else}}
+            {{if eq .Resolution "approved"}}
+            <div style="padding: 15px; background: #d4edda; border-radius: 4px; text-align: center;">
+                <strong>Winner Selected!</strong><br>
+                The winning variation has been merged to main.<br>
+                <a href="/p/{{$.ProjectID}}/strategy">View Strategy</a>
+            </div>
+            {{else if eq .Resolution "rejected"}}
+            <div style="padding: 15px; background: #f8d7da; border-radius: 4px; text-align: center;">
+                <strong>All Variations Rejected</strong><br>
+                <a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">Back to Hop</a>
+            </div>
+            {{else}}
+            <div style="padding: 15px; background: #e2e3e5; border-radius: 4px; text-align: center;">
+                <strong>Decision Resolved</strong>
+            </div>
+            {{end}}
+            {{end}}
+        </div>
+
+        <div class="card">
+            <h2>Hop Info</h2>
+            <table>
+                <tr>
+                    <th style="width: 80px;">Status</th>
+                    <td><span class="status status-{{.Hop.Status}}">{{.Hop.Status}}</span></td>
+                </tr>
+                <tr>
+                    <th>Name</th>
+                    <td><a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">{{.Hop.Name}}</a></td>
+                </tr>
+                <tr>
+                    <th>Created</th>
+                    <td>{{.Decision.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                </tr>
+                {{if .Decision.ResolvedAt}}
+                <tr>
+                    <th>Resolved</th>
+                    <td>{{.Decision.ResolvedAt.Format "2006-01-02 15:04"}}</td>
+                </tr>
+                {{end}}
+            </table>
+        </div>
+
+        {{if .PendingCount}}
+        <div class="card">
+            <h2>Summary</h2>
+            <table>
+                <tr>
+                    <th>Pending</th>
+                    <td>{{.PendingCount}}</td>
+                </tr>
+                <tr>
+                    <th>Failed</th>
+                    <td>{{.FailedCount}}</td>
+                </tr>
+                <tr>
+                    <th>Total</th>
+                    <td>{{.TotalCount}}</td>
+                </tr>
+            </table>
+        </div>
+        {{end}}
+    </div>
+</div>
+
+<style>
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+.cell-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid #dee2e6;
+    border-top-color: #007bff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    display: inline-block;
+}
+.table-scroll-container {
+    overflow-x: auto;
+    overflow-y: visible;
+}
+.variations-table {
+    border-collapse: collapse;
+}
+.grade-header {
+    min-width: 120px;
+    white-space: nowrap;
+    text-align: center;
+}
+</style>
+
+{{if .CanSelect}}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const radios = document.querySelectorAll('.winner-radio');
+    const button = document.getElementById('select-button');
+
+    radios.forEach(function(radio) {
+        radio.addEventListener('change', function() {
+            if (document.querySelector('.winner-radio:checked')) {
+                button.disabled = false;
+                button.style.background = '#28a745';
+                button.style.cursor = 'pointer';
+                button.textContent = 'Select Winner & Merge';
+            }
+        });
+    });
+
+    // Fetch grades via AJAX
+    loadGrades();
+});
+
+function loadGrades() {
+    const hopID = '{{.Hop.ID}}';
+    const projectID = '{{$.ProjectID}}';
+
+    // Check if there are any grade columns
+    if (document.querySelectorAll('.grade-cell').length === 0) {
+        return;
+    }
+
+    fetch('/api/projects/' + projectID + '/hops/' + hopID + '/evaluate')
+        .then(response => response.json())
+        .then(data => {
+            // Populate grades
+            if (data.evaluations) {
+                data.evaluations.forEach(function(evalItem) {
+                    const row = document.querySelector('tr[data-variation-id="' + evalItem.variation_id + '"]');
+                    if (!row) return;
+
+                    evalItem.scores.forEach(function(score) {
+                        const cell = row.querySelector('.grade-cell[data-criterion="' + score.criterion_name + '"]');
+                        if (!cell) return;
+
+                        const gradeValue = score.score;
+                        let bgColor, textColor;
+                        if (gradeValue >= 0.8) {
+                            bgColor = '#d4edda'; textColor = '#155724';
+                        } else if (gradeValue >= 0.6) {
+                            bgColor = '#d1ecf1'; textColor = '#0c5460';
+                        } else if (gradeValue >= 0.4) {
+                            bgColor = '#fff3cd'; textColor = '#856404';
+                        } else {
+                            bgColor = '#f8d7da'; textColor = '#721c24';
+                        }
+
+                        cell.innerHTML = '<span style="display: inline-block; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 0.85em; background: ' + bgColor + '; color: ' + textColor + ';" title="' + (score.rationale || '') + '">' + gradeValue.toFixed(1) + '</span>';
+                    });
+                });
+            }
+
+            // Clear any remaining loading indicators
+            document.querySelectorAll('.grade-loading').forEach(function(el) {
+                el.outerHTML = '<span style="color: #999;">-</span>';
+            });
+        })
+        .catch(function(err) {
+            console.error('Failed to load grades:', err);
+            document.querySelectorAll('.grade-loading').forEach(function(el) {
+                el.outerHTML = '<span style="color: #dc3545;">!</span>';
+            });
+        });
+}
+</script>
+{{else}}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Load grades even if not selectable (for viewing)
+    loadGrades();
+});
+
+function loadGrades() {
+    const hopID = '{{.Hop.ID}}';
+    const projectID = '{{$.ProjectID}}';
+
+    // Check if there are any grade columns
+    if (document.querySelectorAll('.grade-cell').length === 0) {
+        return;
+    }
+
+    fetch('/api/projects/' + projectID + '/hops/' + hopID + '/evaluate')
+        .then(response => response.json())
+        .then(data => {
+            // Populate grades
+            if (data.evaluations) {
+                data.evaluations.forEach(function(evalItem) {
+                    const row = document.querySelector('tr[data-variation-id="' + evalItem.variation_id + '"]');
+                    if (!row) return;
+
+                    evalItem.scores.forEach(function(score) {
+                        const cell = row.querySelector('.grade-cell[data-criterion="' + score.criterion_name + '"]');
+                        if (!cell) return;
+
+                        const gradeValue = score.score;
+                        let bgColor, textColor;
+                        if (gradeValue >= 0.8) {
+                            bgColor = '#d4edda'; textColor = '#155724';
+                        } else if (gradeValue >= 0.6) {
+                            bgColor = '#d1ecf1'; textColor = '#0c5460';
+                        } else if (gradeValue >= 0.4) {
+                            bgColor = '#fff3cd'; textColor = '#856404';
+                        } else {
+                            bgColor = '#f8d7da'; textColor = '#721c24';
+                        }
+
+                        cell.innerHTML = '<span style="display: inline-block; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 0.85em; background: ' + bgColor + '; color: ' + textColor + ';" title="' + (score.rationale || '') + '">' + gradeValue.toFixed(1) + '</span>';
+                    });
+                });
+            }
+
+            // Clear any remaining loading indicators
+            document.querySelectorAll('.grade-loading').forEach(function(el) {
+                el.outerHTML = '<span style="color: #999;">-</span>';
+            });
+        })
+        .catch(function(err) {
+            console.error('Failed to load grades:', err);
+            document.querySelectorAll('.grade-loading').forEach(function(el) {
+                el.outerHTML = '<span style="color: #dc3545;">!</span>';
+            });
+        });
+}
+</script>
+{{end}}
+{{end}}
+{{end}}

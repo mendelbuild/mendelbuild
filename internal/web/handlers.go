@@ -115,6 +115,12 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// DecisionView is a template-friendly view of a Decision with dereferenced pointer fields.
+type DecisionView struct {
+	domain.Decision
+	ResolutionStr string
+}
+
 func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
@@ -129,13 +135,163 @@ func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Separate open and resolved decisions, converting to view types
+	var openDecisions, resolvedDecisions []DecisionView
+	for _, d := range decisions {
+		view := DecisionView{Decision: d}
+		if d.Resolution != nil {
+			view.ResolutionStr = *d.Resolution
+		}
+		if d.Status == domain.DecisionStatusResolved {
+			resolvedDecisions = append(resolvedDecisions, view)
+		} else {
+			openDecisions = append(openDecisions, view)
+		}
+	}
+
+	// Get active tab from query param, default to "open"
+	activeTab := r.URL.Query().Get("tab")
+	if activeTab != "resolved" {
+		activeTab = "open"
+	}
+
 	data := map[string]interface{}{
-		"Title":     "Decisions",
-		"ProjectID": projectID,
-		"Decisions": decisions,
+		"Title":             "Decisions",
+		"ProjectID":         projectID,
+		"OpenDecisions":     openDecisions,
+		"ResolvedDecisions": resolvedDecisions,
+		"ActiveTab":         activeTab,
 	}
 
 	if err := renderPage(w, "decisions.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// RoadmapHopView holds hop data for the roadmap DAG visualization.
+type RoadmapHopView struct {
+	ID         string
+	Name       string
+	Status     string
+	Variations []RoadmapVariationView
+}
+
+// RoadmapVariationView holds variation data for the roadmap DAG.
+type RoadmapVariationView struct {
+	ID     string
+	Name   string
+	Status string
+}
+
+// RoadmapEdge represents a dependency edge in the DAG.
+type RoadmapEdge struct {
+	From string `json:"from"` // depends_on_hop_id (the dependency)
+	To   string `json:"to"`   // hop_id (the dependent)
+}
+
+func (s *Server) handleRoadmap(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	project, err := s.db.GetProject(ctx, projectID)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	// Get strategy for this project
+	strategies, err := s.db.GetStrategiesByProject(ctx, projectID)
+	if err != nil || len(strategies) == 0 {
+		http.Error(w, "no strategy found", http.StatusNotFound)
+		return
+	}
+	strategy := strategies[0]
+
+	// Get all hops for the strategy
+	hops, err := s.db.GetHopsByStrategy(ctx, strategy.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get variations for each hop (including proposed ones from pending decisions)
+	hopViews := make([]RoadmapHopView, 0, len(hops))
+	for _, hop := range hops {
+		variations, _ := s.db.GetVariationsByHop(ctx, hop.ID)
+		varViews := make([]RoadmapVariationView, 0)
+
+		if len(variations) > 0 {
+			// Show actual variations
+			for _, v := range variations {
+				varViews = append(varViews, RoadmapVariationView{
+					ID:     v.ID.String(),
+					Name:   v.Name,
+					Status: string(v.Status),
+				})
+			}
+		} else {
+			// Check for pending variation_review decision with proposed variations
+			decision, err := s.db.GetDecisionBySubjectAndKind(ctx, "hop", hop.ID, domain.DecisionKindVariationReview)
+			if err == nil && decision != nil && decision.Status != domain.DecisionStatusResolved && decision.Details != nil {
+				// Parse proposed variations from decision details
+				var proposal struct {
+					Variations []struct {
+						Name string `json:"name"`
+					} `json:"variations"`
+				}
+				if json.Unmarshal([]byte(*decision.Details), &proposal) == nil {
+					for _, v := range proposal.Variations {
+						varViews = append(varViews, RoadmapVariationView{
+							ID:     "", // No ID yet - not clickable
+							Name:   v.Name,
+							Status: "proposed",
+						})
+					}
+				}
+			}
+		}
+
+		hopViews = append(hopViews, RoadmapHopView{
+			ID:         hop.ID.String(),
+			Name:       hop.Name,
+			Status:     string(hop.Status),
+			Variations: varViews,
+		})
+	}
+
+	// Get all dependencies
+	deps, err := s.db.GetHopDependenciesByStrategy(ctx, strategy.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	edges := make([]RoadmapEdge, 0, len(deps))
+	for _, d := range deps {
+		edges = append(edges, RoadmapEdge{
+			From: d.DependsOnHopID.String(),
+			To:   d.HopID.String(),
+		})
+	}
+
+	// Convert to JSON for JavaScript
+	hopsJSON, _ := json.Marshal(hopViews)
+	edgesJSON, _ := json.Marshal(edges)
+
+	data := map[string]interface{}{
+		"Title":     "Roadmap",
+		"ProjectID": projectID,
+		"Project":   project,
+		"Strategy":  strategy,
+		"HopsJSON":  template.JS(hopsJSON),
+		"EdgesJSON": template.JS(edgesJSON),
+	}
+
+	if err := renderPage(w, "roadmap.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

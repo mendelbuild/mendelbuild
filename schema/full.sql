@@ -1,7 +1,7 @@
 -- MendelBuild Core Schema
--- Migration: 001_initial
+-- This file represents the complete schema after all migrations (001-006).
+-- It should be kept in sync with migrations for reference.
 --
--- This schema represents the core data model for MendelBuild.
 -- See DESIGN.md Section 2 for conceptual overview.
 --
 -- Note on TEXT vs VARCHAR: In Postgres, TEXT and VARCHAR are functionally
@@ -17,7 +17,7 @@
 CREATE TABLE projects (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL,
-    config JSONB,  -- Project-wide credentials (anthropic_api_key, etc.)
+    config JSONB,  -- Project-wide credentials (anthropic_api_key, etc.) [added in 004]
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -151,7 +151,9 @@ CREATE TABLE funding_success_criteria (
 -- Hop lifecycle states (see DESIGN.md Section 5 for Variation states):
 --   'pending'   - Not yet started (blocked on dependencies or not scheduled)
 --   'active'    - Currently running, Variations being generated/evaluated
+--   'selecting' - All Variations done, awaiting human selection [added in 006]
 --   'completed' - A Variation was selected and merged
+--   'rejected'  - Human rejected all Variations [added in 006]
 --   'abandoned' - Hop was cancelled without selecting a winner
 
 CREATE TABLE hops (
@@ -161,12 +163,17 @@ CREATE TABLE hops (
     name TEXT NOT NULL,
 
     -- Context about the Hop: what it achieves, why it matters, expected impact
-    commentary TEXT NOT NULL,
+    commentary TEXT NOT NULL,  -- Made NOT NULL in 003
 
     -- JSON blob with hop metadata (e.g., objective_ids linking to OKRs)
-    params JSONB,
+    params JSONB,  -- Renamed from kind_params in 003
 
-    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'completed', 'abandoned')),
+    -- AI-generated structured criteria for comparing Variations [added in 006]
+    -- JSONB structure: { "criteria": [...], "rationale": "...", "tradeoffs": "..." }
+    evaluation_criteria JSONB,
+
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'active', 'selecting', 'completed', 'rejected', 'abandoned')),
 
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -219,13 +226,14 @@ CREATE INDEX idx_spend_log_allocation ON budget_spend_log(budget_allocation_id, 
 --
 -- Lifecycle states (see DESIGN.md Section 5):
 --   'creating', 'pending', 'migrating', 'active',
---   'draining', 'terminated', 'pruned', 'selected'
+--   'draining', 'error', 'terminated', 'pruned', 'selected',
+--   'merged', 'rejected' [merged/rejected added in 006]
 
 CREATE TABLE variations (
     id UUID PRIMARY KEY,
     hop_id UUID NOT NULL REFERENCES hops(id),
 
-    -- Variation identity for code generation
+    -- Variation identity for code generation [added in 004]
     name TEXT,           -- e.g., "cache-layer-approach"
     approach TEXT,       -- Detailed implementation approach
 
@@ -237,7 +245,9 @@ CREATE TABLE variations (
     ecosystem_id UUID,   -- FK added below after ecosystems table
     deployment_ref TEXT, -- e.g., pod name, URL, etc.
 
-    status TEXT NOT NULL DEFAULT 'creating',
+    status TEXT NOT NULL DEFAULT 'creating'
+        CHECK (status IN ('creating', 'pending', 'migrating', 'active', 'draining',
+                          'error', 'terminated', 'pruned', 'selected', 'merged', 'rejected')),
 
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -257,6 +267,22 @@ CREATE TABLE variation_state_history (
 );
 
 CREATE INDEX idx_variation_history ON variation_state_history(variation_id, transitioned_at);
+
+--------------------------------------------------------------------------------
+-- VARIATION LOGS
+--------------------------------------------------------------------------------
+-- Log entries for variation code generation process [added in 005]
+
+CREATE TABLE variation_logs (
+    id UUID PRIMARY KEY,
+    variation_id UUID NOT NULL REFERENCES variations(id) ON DELETE CASCADE,
+    logged_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    level TEXT NOT NULL CHECK (level IN ('info', 'milestone', 'error', 'heartbeat')),
+    message TEXT NOT NULL
+);
+
+CREATE INDEX idx_variation_logs_variation_id ON variation_logs(variation_id);
+CREATE INDEX idx_variation_logs_logged_at ON variation_logs(variation_id, logged_at DESC);
 
 --------------------------------------------------------------------------------
 -- VARIATION MIGRATIONS
@@ -297,16 +323,19 @@ CREATE INDEX idx_var_migrations ON variation_migrations(variation_id, sequence_n
 -- A Decision is a choice point in the system. Every Decision has objectivity
 -- and importance scores that can be used, in conjunction with "details", to
 -- determine which human or agent should review.
+
 CREATE TABLE decisions (
     id UUID PRIMARY KEY,
 
     -- What kind of decision?
-    --   'pass_fail'        - Binary yes/no decision
-    --   'choose_one'       - Select exactly one option (e.g., pick winning Variation)
-    --   'choose_many'      - Select zero or more options
-    --   'roadmap_review'   - Conversational edit/approve cycle for Roadmap proposals
-    --   'variation_review' - Review/approve proposed Variations before code generation
-    kind TEXT NOT NULL CHECK (kind IN ('pass_fail', 'choose_one', 'choose_many', 'roadmap_review', 'variation_review')),
+    --   'pass_fail'           - Binary yes/no decision
+    --   'choose_one'          - Select exactly one option (e.g., pick winning Variation)
+    --   'choose_many'         - Select zero or more options
+    --   'roadmap_review'      - Conversational edit/approve cycle for Roadmap proposals
+    --   'variation_review'    - Review/approve proposed Variations before code generation [added in 004]
+    --   'variation_selection' - Pick winning Variation for a Hop [added in 006]
+    kind TEXT NOT NULL CHECK (kind IN ('pass_fail', 'choose_one', 'choose_many', 'roadmap_review',
+                                        'variation_review', 'variation_selection')),
 
     -- Human- and agent-readable summary
     title TEXT NOT NULL,
@@ -348,6 +377,31 @@ CREATE TABLE decisions (
 
 CREATE INDEX idx_decisions_status ON decisions(status);
 CREATE INDEX idx_decisions_subject ON decisions(subject_type, subject_id);
+
+--------------------------------------------------------------------------------
+-- DECISION MESSAGES
+--------------------------------------------------------------------------------
+-- Conversation history for Decision review cycles [added in 002]
+
+CREATE TABLE decision_messages (
+    id UUID PRIMARY KEY,
+    decision_id UUID NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+
+    -- Who sent this message?
+    --   'user'  - Human reviewer
+    --   'agent' - AI agent (proposer, reviser, etc.)
+    --   'system' - System-generated messages (status changes, etc.)
+    role TEXT NOT NULL CHECK (role IN ('user', 'agent', 'system')),
+
+    content TEXT NOT NULL,
+
+    -- Token usage for agent messages (for budget tracking)
+    tokens_used INTEGER,
+
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_decision_messages_decision ON decision_messages(decision_id, created_at);
 
 --------------------------------------------------------------------------------
 -- REPOSITORIES

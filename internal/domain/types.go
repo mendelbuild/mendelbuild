@@ -91,22 +91,25 @@ type FundingSuccessCriteria struct {
 type HopStatus string
 
 const (
-	HopStatusPending   HopStatus = "pending"
-	HopStatusActive    HopStatus = "active"
-	HopStatusCompleted HopStatus = "completed"
-	HopStatusAbandoned HopStatus = "abandoned"
+	HopStatusPending   HopStatus = "pending"   // Blocked on dependencies or not scheduled
+	HopStatusActive    HopStatus = "active"    // Ready for work, can propose Variations
+	HopStatusSelecting HopStatus = "selecting" // All Variations done, awaiting human selection
+	HopStatusCompleted HopStatus = "completed" // Winner merged to main
+	HopStatusRejected  HopStatus = "rejected"  // Human rejected the Hop entirely
+	HopStatusAbandoned HopStatus = "abandoned" // Cancelled without selecting a winner
 )
 
 // Hop is the fundamental unit of evolutionary experimentation.
 type Hop struct {
-	ID         uuid.UUID       `json:"id"`
-	StrategyID uuid.UUID       `json:"strategy_id"`
-	Name       string          `json:"name"`
-	Commentary string          `json:"commentary"`
-	Params     json.RawMessage `json:"params,omitempty"` // Stores objective_ids and other hop metadata
-	Status     HopStatus       `json:"status"`
-	CreatedAt  time.Time       `json:"created_at"`
-	UpdatedAt  time.Time       `json:"updated_at"`
+	ID                 uuid.UUID       `json:"id"`
+	StrategyID         uuid.UUID       `json:"strategy_id"`
+	Name               string          `json:"name"`
+	Commentary         string          `json:"commentary"`
+	Params             json.RawMessage `json:"params,omitempty"`              // Stores objective_ids and other hop metadata
+	EvaluationCriteria json.RawMessage `json:"evaluation_criteria,omitempty"` // AI-generated structured criteria for comparing Variations (JSONB)
+	Status             HopStatus       `json:"status"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
 }
 
 // HopDependency represents a DAG edge between Hops.
@@ -119,15 +122,17 @@ type HopDependency struct {
 type VariationStatus string
 
 const (
-	VariationStatusCreating   VariationStatus = "creating"
-	VariationStatusPending    VariationStatus = "pending"
-	VariationStatusMigrating  VariationStatus = "migrating"
-	VariationStatusActive     VariationStatus = "active"
-	VariationStatusDraining   VariationStatus = "draining"
+	VariationStatusCreating   VariationStatus = "creating"   // Code being generated
+	VariationStatusPending    VariationStatus = "pending"    // Code generated, awaiting selection
+	VariationStatusMigrating  VariationStatus = "migrating"  // Data migrations in progress
+	VariationStatusActive     VariationStatus = "active"     // Live and receiving traffic
+	VariationStatusDraining   VariationStatus = "draining"   // Traffic being drained
 	VariationStatusError      VariationStatus = "error"      // Mendel infrastructure failure (retryable)
 	VariationStatusTerminated VariationStatus = "terminated" // Code/test failure (not retryable)
-	VariationStatusPruned     VariationStatus = "pruned"
-	VariationStatusSelected   VariationStatus = "selected"
+	VariationStatusPruned     VariationStatus = "pruned"     // Eliminated during evaluation
+	VariationStatusSelected   VariationStatus = "selected"   // Legacy: use merged instead
+	VariationStatusMerged     VariationStatus = "merged"     // Winner, code merged to main
+	VariationStatusRejected   VariationStatus = "rejected"   // Loser, another Variation was selected
 )
 
 // Variation is a concrete implementation attempt within a Hop.
@@ -197,11 +202,12 @@ type BudgetSpendLog struct {
 type DecisionKind string
 
 const (
-	DecisionKindPassFail        DecisionKind = "pass_fail"
-	DecisionKindChooseOne       DecisionKind = "choose_one"
-	DecisionKindChooseMany      DecisionKind = "choose_many"
-	DecisionKindRoadmapReview   DecisionKind = "roadmap_review"
-	DecisionKindVariationReview DecisionKind = "variation_review"
+	DecisionKindPassFail           DecisionKind = "pass_fail"
+	DecisionKindChooseOne          DecisionKind = "choose_one"
+	DecisionKindChooseMany         DecisionKind = "choose_many"
+	DecisionKindRoadmapReview      DecisionKind = "roadmap_review"
+	DecisionKindVariationReview    DecisionKind = "variation_review"
+	DecisionKindVariationSelection DecisionKind = "variation_selection" // Pick winning Variation for a Hop
 )
 
 // DecisionStatus represents the lifecycle state of a Decision.

@@ -166,6 +166,124 @@ func (c *Client) GetCurrentCommit(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+// Fetch fetches remote branches.
+func (c *Client) Fetch(ctx context.Context, authToken string) error {
+	// Get remote URL
+	remoteCmd := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
+	remoteCmd.Dir = c.workDir
+	remoteOutput, err := remoteCmd.Output()
+	if err != nil {
+		return fmt.Errorf("get remote url: %w", err)
+	}
+	remoteURL := strings.TrimSpace(string(remoteOutput))
+
+	// If auth token provided, update remote URL temporarily
+	if authToken != "" {
+		authURL := embedAuthToken(remoteURL, authToken)
+		setURLCmd := exec.CommandContext(ctx, "git", "remote", "set-url", "origin", authURL)
+		setURLCmd.Dir = c.workDir
+		if err := setURLCmd.Run(); err != nil {
+			return fmt.Errorf("set remote url: %w", err)
+		}
+		defer func() {
+			restoreCmd := exec.CommandContext(context.Background(), "git", "remote", "set-url", "origin", remoteURL)
+			restoreCmd.Dir = c.workDir
+			restoreCmd.Run()
+		}()
+	}
+
+	cmd := exec.CommandContext(ctx, "git", "fetch", "origin")
+	cmd.Dir = c.workDir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git fetch: %w: %s", err, stderr.String())
+	}
+	return nil
+}
+
+// MergeBranch merges a branch into the current branch.
+func (c *Client) MergeBranch(ctx context.Context, branchName string) error {
+	// Use --no-ff to create a merge commit even if fast-forward is possible
+	cmd := exec.CommandContext(ctx, "git", "merge", "--no-ff", "-m",
+		fmt.Sprintf("Merge branch '%s'", branchName), branchName)
+	cmd.Dir = c.workDir
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git merge: %w: %s", err, stderr.String())
+	}
+	return nil
+}
+
+// MergeRemoteBranch fetches a specific remote branch and merges it into the current branch.
+func (c *Client) MergeRemoteBranch(ctx context.Context, branchName, authToken string) error {
+	// Fetch the specific branch (needed because we clone with --single-branch)
+	if err := c.FetchBranch(ctx, branchName, authToken); err != nil {
+		return fmt.Errorf("fetch branch: %w", err)
+	}
+
+	// Merge the remote tracking branch
+	remoteBranch := fmt.Sprintf("origin/%s", branchName)
+	cmd := exec.CommandContext(ctx, "git", "merge", "--no-ff", "-m",
+		fmt.Sprintf("Merge branch '%s' [MendelBuild]", branchName), remoteBranch)
+	cmd.Dir = c.workDir
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git merge: %w: %s", err, stderr.String())
+	}
+	return nil
+}
+
+// FetchBranch fetches a specific branch from origin.
+func (c *Client) FetchBranch(ctx context.Context, branchName, authToken string) error {
+	// Get remote URL
+	remoteCmd := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
+	remoteCmd.Dir = c.workDir
+	remoteOutput, err := remoteCmd.Output()
+	if err != nil {
+		return fmt.Errorf("get remote url: %w", err)
+	}
+	remoteURL := strings.TrimSpace(string(remoteOutput))
+
+	// If auth token provided, update remote URL temporarily
+	if authToken != "" {
+		authURL := embedAuthToken(remoteURL, authToken)
+		setURLCmd := exec.CommandContext(ctx, "git", "remote", "set-url", "origin", authURL)
+		setURLCmd.Dir = c.workDir
+		if err := setURLCmd.Run(); err != nil {
+			return fmt.Errorf("set remote url: %w", err)
+		}
+		defer func() {
+			restoreCmd := exec.CommandContext(context.Background(), "git", "remote", "set-url", "origin", remoteURL)
+			restoreCmd.Dir = c.workDir
+			restoreCmd.Run()
+		}()
+	}
+
+	// Fetch the specific branch: git fetch origin <branch>:<remote-tracking-branch>
+	refspec := fmt.Sprintf("%s:refs/remotes/origin/%s", branchName, branchName)
+	cmd := exec.CommandContext(ctx, "git", "fetch", "origin", refspec)
+	cmd.Dir = c.workDir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git fetch origin %s: %w: %s", branchName, err, stderr.String())
+	}
+	return nil
+}
+
 // GetWorkDir returns the working directory for this client.
 func (c *Client) GetWorkDir() string {
 	return c.workDir
