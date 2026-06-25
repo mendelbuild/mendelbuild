@@ -1,8 +1,11 @@
 {{define "page-content"}}
 <h1>Roadmap: {{.Strategy.Name}}</h1>
 
-<div class="card" style="overflow-x: auto;">
-    <div id="roadmap-container" style="min-height: 400px; position: relative;">
+<div class="card" style="overflow: hidden; position: relative;">
+    <div style="position: absolute; top: 8px; right: 12px; font-size: 11px; color: #999; z-index: 10;">
+        Scroll or drag to pan, pinch or shift-scroll to zoom
+    </div>
+    <div id="roadmap-container" style="min-height: 400px; position: relative; cursor: grab;">
         <div id="roadmap-loading" style="text-align: center; padding: 50px; color: #666;">
             Loading roadmap...
         </div>
@@ -55,6 +58,10 @@
 
     function calculateNodeHeight(hop) {
         const variationCount = hop.Variations ? hop.Variations.length : 0;
+        if (hop.Status === 'pending') {
+            // Pending hops show "Hop pending" text instead of variations
+            return HEADER_HEIGHT + VARIATION_HEIGHT + NODE_PADDING * 2;
+        }
         return HEADER_HEIGHT + (variationCount * VARIATION_HEIGHT) + NODE_PADDING * 2;
     }
 
@@ -177,23 +184,38 @@
                         text-overflow: ellipsis;
                     " title="${hop.Name}">
                         ${hop.Name}
-                        <span style="
+                        ${hop.Status !== 'pending' ? `<span style="
                             font-size: 10px;
                             font-weight: normal;
                             color: ${statusTextColors[hop.Status] || '#666'};
                             margin-left: 5px;
-                        ">${hop.Status}</span>
+                        ">${hop.Status}</span>` : ''}
                     </a>
             `;
 
-            if (hop.Variations && hop.Variations.length > 0) {
+            if (hop.Status === 'pending') {
+                // Pending hops show italic placeholder
+                html += `<div style="padding: 12px 10px; font-style: italic; color: #666; font-size: 11px;">Hop pending</div>`;
+            } else if (hop.Variations && hop.Variations.length > 0) {
                 html += `<div style="padding: 5px 10px;">`;
                 hop.Variations.forEach(v => {
-                    const vColor = statusColors[v.Status] || '#e9ecef';
-                    const vTextColor = statusTextColors[v.Status] || '#666';
                     const isProposed = !v.ID;
+                    const isMerged = v.Status === 'merged';
+                    const isRejected = v.Status === 'rejected';
                     const tag = isProposed ? 'span' : 'a';
                     const href = isProposed ? '' : `href="/p/${projectID}/variations/${v.ID}"`;
+
+                    // Merged and rejected both use green; rejected has semi-transparent text
+                    const fontWeight = isMerged ? 'bold' : 'normal';
+                    let vColor, vTextColor;
+                    if (isMerged || isRejected) {
+                        vColor = statusColors['merged']; // Green for both
+                        vTextColor = isRejected ? 'rgba(21, 87, 36, 0.5)' : statusTextColors['merged'];
+                    } else {
+                        vColor = statusColors[v.Status] || '#e9ecef';
+                        vTextColor = statusTextColors[v.Status] || '#666';
+                    }
+
                     html += `
                         <${tag} ${href} style="
                             display: block;
@@ -205,6 +227,7 @@
                             text-decoration: none;
                             font-size: 11px;
                             font-style: ${isProposed ? 'italic' : 'normal'};
+                            font-weight: ${fontWeight};
                             white-space: nowrap;
                             overflow: hidden;
                             text-overflow: ellipsis;
@@ -223,6 +246,69 @@
         });
 
         container.appendChild(svg);
+
+        // Add pan and zoom support
+        setupPanZoom(container, svg);
+    }
+
+    function setupPanZoom(container, svg) {
+        let scale = 1;
+        let panX = 0;
+        let panY = 0;
+        let isPanning = false;
+        let startX, startY;
+
+        function updateTransform() {
+            svg.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+            svg.style.transformOrigin = '0 0';
+        }
+
+        // Scroll to pan, shift+scroll or pinch to zoom
+        container.addEventListener('wheel', (e) => {
+            e.preventDefault();
+
+            if (e.ctrlKey || e.shiftKey) {
+                // Zoom with shift+scroll or pinch (ctrlKey is set for pinch-to-zoom)
+                const delta = e.deltaY > 0 ? 0.95 : 1.05;
+                const newScale = Math.min(Math.max(scale * delta, 0.25), 3);
+
+                // Zoom toward cursor position
+                const rect = container.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+
+                panX = x - (x - panX) * (newScale / scale);
+                panY = y - (y - panY) * (newScale / scale);
+                scale = newScale;
+            } else {
+                // Pan with regular scroll
+                panX -= e.deltaX;
+                panY -= e.deltaY;
+            }
+
+            updateTransform();
+        }, { passive: false });
+
+        // Pan with mouse drag
+        container.addEventListener('mousedown', (e) => {
+            if (e.target.tagName === 'A') return; // Don't pan when clicking links
+            isPanning = true;
+            startX = e.clientX - panX;
+            startY = e.clientY - panY;
+            container.style.cursor = 'grabbing';
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isPanning) return;
+            panX = e.clientX - startX;
+            panY = e.clientY - startY;
+            updateTransform();
+        });
+
+        document.addEventListener('mouseup', () => {
+            isPanning = false;
+            container.style.cursor = 'grab';
+        });
     }
 
     // Render on load
