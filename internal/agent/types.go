@@ -170,3 +170,39 @@ type EvaluationCriteriaInput struct {
 type EvaluationCriteriaResponse struct {
 	Criteria EvaluationCriteria `json:"criteria" desc:"The evaluation criteria for this hop"`
 }
+
+// =====================================================
+// OKR Tuner Types (for quality feedback on O's and KR's)
+// =====================================================
+
+// ObjectiveForTuning is an objective to be evaluated for quality.
+type ObjectiveForTuning struct {
+	ID          string `json:"id" desc:"UUID of the objective"`
+	Description string `json:"description" desc:"The objective description to evaluate"`
+}
+
+// KeyResultForTuning is a key result to be evaluated for quality.
+type KeyResultForTuning struct {
+	ID          string `json:"id" desc:"UUID of the key result"`
+	Description string `json:"description" desc:"What this key result measures"`
+	TargetUnits string `json:"target_units" desc:"Target value with units (e.g., '100 users', '99.9%')"`
+}
+
+// OKRTuneInput is the input to the OKR tuner.
+type OKRTuneInput struct {
+	Objectives []ObjectiveForTuning `json:"objectives" desc:"Objectives to evaluate for quality"`
+	KeyResults []KeyResultForTuning `json:"key_results" desc:"Key results to evaluate for quality"`
+}
+
+// ItemTuning is the quality feedback for a single item.
+type ItemTuning struct {
+	ID       string  `json:"id" desc:"UUID of the objective or key result"`
+	Score    float64 `json:"score" desc:"Quality score 0.0-1.0: How well-written, specific, and measurable is this?"`
+	Feedback string  `json:"feedback" desc:"Brief feedback (1-2 sentences) on clarity, specificity, and actionability"`
+}
+
+// OKRTuneResponse is the output from the OKR tuner.
+type OKRTuneResponse struct {
+	ObjectiveScores []ItemTuning `json:"objective_scores" desc:"Quality feedback for each objective"`
+	KeyResultScores []ItemTuning `json:"key_result_scores" desc:"Quality feedback for each key result"`
+}

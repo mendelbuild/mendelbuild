@@ -383,6 +383,18 @@ func (s *Server) setupRoutes() {
 		r.Get("/settings", s.handleProjectSettings)
 		r.Post("/settings", s.handleSaveProjectSettings)
 
+		// OKR Editor routes
+		r.Get("/okr", s.handleOKREditor)
+		r.Get("/okr/objectives/{objectiveID}", s.handleObjectiveDetail)
+		r.Post("/okr/objectives", s.handleCreateObjective)
+		r.Post("/okr/objectives/{objectiveID}", s.handleUpdateObjective)
+		r.Post("/okr/objectives/{objectiveID}/delete", s.handleDeleteObjective)
+		r.Post("/okr/key-results", s.handleCreateKeyResult)
+		r.Post("/okr/key-results/{keyResultID}", s.handleUpdateKeyResult)
+		r.Post("/okr/key-results/{keyResultID}/delete", s.handleDeleteKeyResult)
+		r.Post("/okr/objectives/{objectiveID}/link-kr", s.handleLinkKeyResult)
+		r.Post("/okr/objectives/{objectiveID}/unlink-kr/{keyResultID}", s.handleUnlinkKeyResult)
+
 		// Hop routes
 		r.Get("/hops/{hopID}", s.handleHopDetail)
 		r.Post("/hops/{hopID}/propose-variations", s.handleProposeVariations)
@@ -409,6 +421,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/projects", s.apiListProjects)
 		r.Get("/projects/{projectID}/strategy", s.apiGetStrategy)
 		r.Get("/projects/{projectID}/hops/{hopID}/evaluate", s.apiEvaluateVariations)
+		r.Post("/projects/{projectID}/okr/tune", s.apiTuneOKRs)
 	})
 
 	s.router = r

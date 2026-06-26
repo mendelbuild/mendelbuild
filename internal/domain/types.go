@@ -31,24 +31,32 @@ type Strategy struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
-// Objective is the "O" in OKR.
+// Objective is the "O" in OKR. Objectives can be hierarchical via ParentID.
 type Objective struct {
-	ID          uuid.UUID `json:"id"`
-	StrategyID  uuid.UUID `json:"strategy_id"`
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           uuid.UUID  `json:"id"`
+	StrategyID   uuid.UUID  `json:"strategy_id"`
+	ParentID     *uuid.UUID `json:"parent_id,omitempty"`
+	Description  string     `json:"description"`
+	TuneScore    *float64   `json:"tune_score,omitempty"`
+	TuneFeedback *string    `json:"tune_feedback,omitempty"`
+	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
-// KeyResult is a quantitative target attached to an Objective.
+// KeyResult is a quantitative target that can be linked to multiple Objectives
+// via the objective_key_result_pairs junction table.
 type KeyResult struct {
-	ID          uuid.UUID  `json:"id"`
-	ObjectiveID uuid.UUID  `json:"objective_id"`
-	Description string     `json:"description"`
-	TargetUnits string     `json:"target_units"`
-	TargetDate  *time.Time `json:"target_date,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID           uuid.UUID  `json:"id"`
+	StrategyID   uuid.UUID  `json:"strategy_id"`
+	Description  string     `json:"description"`
+	TargetUnits  string     `json:"target_units"`
+	TargetDate   *time.Time `json:"target_date,omitempty"`
+	TuneScore    *float64   `json:"tune_score,omitempty"`
+	TuneFeedback *string    `json:"tune_feedback,omitempty"`
+	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 // KeyResultHistory is a single measurement for a KeyResult.

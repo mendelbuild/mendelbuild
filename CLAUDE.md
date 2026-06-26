@@ -76,6 +76,22 @@ type ProposedHop struct {
 - **Roadmap Proposer** (`internal/agent/proposer.go`)
   - Types: `ProposerResponse`, `ProposedRoadmap`, `ProposedHop`
   - Schema: `ProposerResponseSchema()` - generated from `desc` tags
+- **OKR Tuner** (`internal/agent/okr_tuner.go`)
+  - Uses Haiku for cost-effective quality feedback on objectives and key results
+  - Types: `OKRTuneInput`, `OKRTuneResponse`, `ItemTuning`
+
+### Model Names
+
+**IMPORTANT:** Always verify model names from up-to-date online sources before using them. Model names in training data become outdated quickly.
+
+Current models (as of June 2026):
+- `claude-opus-4-5` - Most capable, highest quality
+- `claude-sonnet-4-6` - Balanced speed and intelligence (default)
+- `claude-haiku-4-5` - Fastest, most cost-effective
+
+To verify current model names, check:
+- https://docs.anthropic.com/en/docs/about-claude/models
+- https://console.anthropic.com (model selector in playground)
 
 ## Project Structure
 
