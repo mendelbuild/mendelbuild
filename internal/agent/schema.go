@@ -108,3 +108,8 @@ func EvaluationCriteriaResponseSchema() json.RawMessage {
 func VariationEvaluationResponseSchema() json.RawMessage {
 	return SchemaFromType(reflect.TypeOf(VariationEvaluationResponse{}))
 }
+
+// OKRTuneResponseSchema returns the JSON schema for OKRTuneResponse.
+func OKRTuneResponseSchema() json.RawMessage {
+	return SchemaFromType(reflect.TypeOf(OKRTuneResponse{}))
+}

@@ -1,0 +1,532 @@
+{{define "page-content"}}
+<style>
+    .breadcrumbs {
+        margin-bottom: 15px;
+        font-size: 0.9em;
+    }
+    .breadcrumbs a {
+        color: #007bff;
+        text-decoration: none;
+    }
+    .breadcrumbs a:hover {
+        text-decoration: underline;
+    }
+    .breadcrumbs .separator {
+        color: #999;
+        margin: 0 8px;
+    }
+    .okr-item {
+        background: white;
+        border-radius: 8px;
+        padding: 15px 20px;
+        margin-bottom: 15px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        position: relative;
+    }
+    .okr-item.objective {
+        border-left: 4px solid #007bff;
+    }
+    .okr-item.key-result {
+        border-left: 4px solid #28a745;
+        margin-left: 20px;
+    }
+    .okr-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    .okr-content {
+        flex: 1;
+    }
+    .okr-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-shrink: 0;
+    }
+    .action-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.9em;
+    }
+    .action-btn.edit { color: #007bff; }
+    .action-btn.edit:hover { background: #e7f1ff; }
+    .action-btn.remove { color: #dc3545; }
+    .action-btn.remove:hover { background: #f8d7da; }
+    .edit-form {
+        display: none;
+        margin-top: 10px;
+    }
+    .edit-form.active {
+        display: block;
+    }
+    .edit-form input, .edit-form textarea {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        margin-bottom: 8px;
+        font-family: inherit;
+        font-size: inherit;
+    }
+    .edit-form textarea {
+        min-height: 80px;
+        resize: vertical;
+    }
+    .edit-form .btn-group {
+        display: flex;
+        gap: 8px;
+    }
+    .btn {
+        padding: 8px 16px;
+        border-radius: 4px;
+        border: none;
+        cursor: pointer;
+        font-size: 0.9em;
+        white-space: nowrap;
+    }
+    .btn-primary {
+        background: #007bff;
+        color: white;
+    }
+    .btn-primary:hover { background: #0056b3; }
+    .btn-secondary {
+        background: #6c757d;
+        color: white;
+    }
+    .btn-secondary:hover { background: #545b62; }
+    .btn-success {
+        background: #28a745;
+        color: white;
+    }
+    .btn-success:hover { background: #1e7e34; }
+    .quality-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.8em;
+        cursor: help;
+        white-space: nowrap;
+    }
+    .quality-badge.high { background: #d4edda; color: #155724; }
+    .quality-badge.medium { background: #fff3cd; color: #856404; }
+    .quality-badge.low { background: #f8d7da; color: #721c24; }
+    .quality-spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid #f3f3f3;
+        border-top: 2px solid #007bff;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        vertical-align: middle;
+    }
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    .child-count {
+        color: #666;
+        font-size: 0.85em;
+        margin-left: 10px;
+    }
+    .add-form {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        margin-top: 15px;
+    }
+    .add-form h4 {
+        margin-top: 0;
+        margin-bottom: 10px;
+    }
+    .add-form-row {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+    }
+    .add-form-row input[type="text"],
+    .add-form-row textarea {
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-family: inherit;
+        font-size: inherit;
+    }
+    .add-form-row .description-field {
+        flex: 1;
+        min-width: 0;
+    }
+    .add-form-row .target-field {
+        width: 150px;
+        flex-shrink: 0;
+    }
+    .add-form-row .date-field {
+        width: 140px;
+        flex-shrink: 0;
+    }
+    .add-form-row textarea.description-field {
+        min-height: 60px;
+        resize: vertical;
+    }
+    .target-info {
+        font-family: monospace;
+        background: #e9ecef;
+        padding: 2px 6px;
+        border-radius: 3px;
+        margin-left: 10px;
+    }
+    .kr-meta {
+        font-size: 0.85em;
+        color: #666;
+        margin-top: 5px;
+    }
+</style>
+
+{{with .OKR}}
+<h1>Edit OKRs</h1>
+<h2>{{.Strategy.Name}}</h2>
+
+<!-- Breadcrumbs -->
+<div class="breadcrumbs">
+    <a href="/p/{{$.ProjectID}}/okr">OKRs</a>
+    {{range .Breadcrumbs}}
+    <span class="separator">/</span>
+    <a href="/p/{{$.ProjectID}}/okr/objectives/{{.ID}}">{{.Description}}</a>
+    {{end}}
+    {{if $.CurrentObjective}}
+    <span class="separator">/</span>
+    <span>{{$.CurrentObjective.Objective.Description}}</span>
+    {{end}}
+</div>
+
+<!-- Tuning Status (shown when tuning is in progress) -->
+<div id="tune-status" style="margin-bottom: 20px; display: none;">
+    <span class="quality-spinner"></span>
+    <span id="tune-status-text">Analyzing OKR quality...</span>
+</div>
+
+<!-- Current Objective Details (when viewing a specific objective) -->
+{{if $.CurrentObjective}}
+<div class="card">
+    <div class="okr-header">
+        <div class="okr-content">
+            <h3 style="margin: 0;">
+                <span class="objective-text-{{$.CurrentObjective.Objective.ID}}">{{$.CurrentObjective.Objective.Description}}</span>
+            </h3>
+        </div>
+        <div class="okr-actions">
+            <span class="quality-badge-wrapper" data-id="{{$.CurrentObjective.Objective.ID}}" data-type="objective">
+            {{if $.CurrentObjective.Objective.TuneScore}}
+                {{if ge (derefFloat $.CurrentObjective.Objective.TuneScore) 0.7}}
+                <span class="quality-badge high" title="{{derefString $.CurrentObjective.Objective.TuneFeedback}}">high quality</span>
+                {{else if ge (derefFloat $.CurrentObjective.Objective.TuneScore) 0.4}}
+                <span class="quality-badge medium" title="{{derefString $.CurrentObjective.Objective.TuneFeedback}}">med quality</span>
+                {{else}}
+                <span class="quality-badge low" title="{{derefString $.CurrentObjective.Objective.TuneFeedback}}">low quality</span>
+                {{end}}
+            {{else}}
+            <span class="quality-spinner"></span>
+            {{end}}
+            </span>
+            <button class="action-btn edit" onclick="toggleEdit('obj-{{$.CurrentObjective.Objective.ID}}')">Edit</button>
+            <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives/{{$.CurrentObjective.Objective.ID}}/delete" style="display:inline;" onsubmit="return confirm('Remove this objective and all its children?');">
+                <button type="submit" class="action-btn remove">Remove</button>
+            </form>
+        </div>
+    </div>
+    <div id="edit-obj-{{$.CurrentObjective.Objective.ID}}" class="edit-form">
+        <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives/{{$.CurrentObjective.Objective.ID}}">
+            <textarea name="description" required>{{$.CurrentObjective.Objective.Description}}</textarea>
+            <div class="btn-group">
+                <button type="submit" class="btn btn-primary">Save</button>
+                <button type="button" class="btn btn-secondary" onclick="toggleEdit('obj-{{$.CurrentObjective.Objective.ID}}')">Cancel</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Key Results for current objective -->
+    <h4 style="margin-top: 20px;">Key Results</h4>
+    {{range $.CurrentObjective.KeyResults}}
+    <div class="okr-item key-result">
+        <div class="okr-header">
+            <div class="okr-content">
+                <strong class="kr-text-{{.ID}}">{{.Description}}</strong>
+                <span class="target-info">{{.TargetUnits}}</span>
+                {{if .TargetDate}}
+                <div class="kr-meta">Target: {{.TargetDate.Format "Jan 2, 2006"}}</div>
+                {{end}}
+            </div>
+            <div class="okr-actions">
+                <span class="quality-badge-wrapper" data-id="{{.ID}}" data-type="keyresult">
+                {{if .TuneScore}}
+                    {{if ge (derefFloat .TuneScore) 0.7}}
+                    <span class="quality-badge high" title="{{derefString .TuneFeedback}}">high quality</span>
+                    {{else if ge (derefFloat .TuneScore) 0.4}}
+                    <span class="quality-badge medium" title="{{derefString .TuneFeedback}}">med quality</span>
+                    {{else}}
+                    <span class="quality-badge low" title="{{derefString .TuneFeedback}}">low quality</span>
+                    {{end}}
+                {{else}}
+                <span class="quality-spinner"></span>
+                {{end}}
+                </span>
+                <button class="action-btn edit" onclick="toggleEdit('kr-{{.ID}}')">Edit</button>
+                <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives/{{$.CurrentObjective.Objective.ID}}/unlink-kr/{{.ID}}" style="display:inline;" onsubmit="return confirm('Remove this key result?');">
+                    <button type="submit" class="action-btn remove">Remove</button>
+                </form>
+            </div>
+        </div>
+        <div id="edit-kr-{{.ID}}" class="edit-form">
+            <form method="POST" action="/p/{{$.ProjectID}}/okr/key-results/{{.ID}}">
+                <input type="hidden" name="redirect" value="/p/{{$.ProjectID}}/okr/objectives/{{$.CurrentObjective.Objective.ID}}">
+                <input type="text" name="description" value="{{.Description}}" required placeholder="Description">
+                <input type="text" name="target_units" value="{{.TargetUnits}}" required placeholder="Target (e.g., '100 users', '99.9%')">
+                <input type="date" name="target_date" value="{{if .TargetDate}}{{.TargetDate.Format "2006-01-02"}}{{end}}" placeholder="Target Date">
+                <div class="btn-group">
+                    <button type="submit" class="btn btn-primary">Save</button>
+                    <button type="button" class="btn btn-secondary" onclick="toggleEdit('kr-{{.ID}}')">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    {{else}}
+    <p class="empty">No key results linked to this objective.</p>
+    {{end}}
+
+    <!-- Add Key Result Form -->
+    <div class="add-form">
+        <h4>Add Key Result</h4>
+        <form method="POST" action="/p/{{$.ProjectID}}/okr/key-results">
+            <input type="hidden" name="objective_id" value="{{$.CurrentObjective.Objective.ID}}">
+            <div class="add-form-row">
+                <input type="text" name="description" class="description-field" required placeholder="What will you measure?">
+                <input type="text" name="target_units" class="target-field" required placeholder="Target">
+                <input type="date" name="target_date" class="date-field">
+                <button type="submit" class="btn btn-success">Add Key Result</button>
+            </div>
+        </form>
+        {{if $.OKR.AvailableKRs}}
+        <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
+            <h4 style="margin-top: 0;">Or Link Existing Key Result</h4>
+            <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives/{{$.CurrentObjective.Objective.ID}}/link-kr">
+                <div class="add-form-row">
+                    <select name="key_result_id" class="description-field" required style="padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                        <option value="">Select a key result...</option>
+                        {{range $.OKR.AvailableKRs}}
+                        <option value="{{.ID}}">{{.Description}} ({{.TargetUnits}})</option>
+                        {{end}}
+                    </select>
+                    <button type="submit" class="btn btn-primary">Link Key Result</button>
+                </div>
+            </form>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}
+
+<!-- Child Objectives / Root Objectives -->
+<div class="card">
+    {{if $.CurrentObjective}}
+    <h3>Sub-Objectives</h3>
+    {{else}}
+    <h3>Objectives</h3>
+    {{end}}
+
+    {{range .Objectives}}
+    <div class="okr-item objective">
+        <div class="okr-header">
+            <div class="okr-content">
+                <strong>
+                    <a href="/p/{{$.ProjectID}}/okr/objectives/{{.Objective.ID}}" style="color: inherit; text-decoration: none;">
+                        <span class="objective-text-{{.Objective.ID}}">{{.Objective.Description}}</span>
+                    </a>
+                    {{if gt .ChildCount 0}}
+                    <span class="child-count">({{.ChildCount}} sub-objectives)</span>
+                    {{end}}
+                </strong>
+            </div>
+            <div class="okr-actions">
+                <span class="quality-badge-wrapper" data-id="{{.Objective.ID}}" data-type="objective">
+                {{if .Objective.TuneScore}}
+                    {{if ge (derefFloat .Objective.TuneScore) 0.7}}
+                    <span class="quality-badge high" title="{{derefString .Objective.TuneFeedback}}">high quality</span>
+                    {{else if ge (derefFloat .Objective.TuneScore) 0.4}}
+                    <span class="quality-badge medium" title="{{derefString .Objective.TuneFeedback}}">med quality</span>
+                    {{else}}
+                    <span class="quality-badge low" title="{{derefString .Objective.TuneFeedback}}">low quality</span>
+                    {{end}}
+                {{else}}
+                <span class="quality-spinner"></span>
+                {{end}}
+                </span>
+                <button class="action-btn edit" onclick="toggleEdit('obj-{{.Objective.ID}}')">Edit</button>
+                <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives/{{.Objective.ID}}/delete" style="display:inline;" onsubmit="return confirm('Remove this objective?');">
+                    <button type="submit" class="action-btn remove">Remove</button>
+                </form>
+            </div>
+        </div>
+        <div id="edit-obj-{{.Objective.ID}}" class="edit-form">
+            <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives/{{.Objective.ID}}">
+                <textarea name="description" required>{{.Objective.Description}}</textarea>
+                <div class="btn-group">
+                    <button type="submit" class="btn btn-primary">Save</button>
+                    <button type="button" class="btn btn-secondary" onclick="toggleEdit('obj-{{.Objective.ID}}')">Cancel</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Key Results -->
+        {{$objView := .}}
+        {{range .KeyResults}}
+        <div class="okr-item key-result">
+            <div class="okr-header">
+                <div class="okr-content">
+                    <span class="kr-text-{{.ID}}">{{.Description}}</span>
+                    <span class="target-info">{{.TargetUnits}}</span>
+                </div>
+                <div class="okr-actions">
+                    <span class="quality-badge-wrapper" data-id="{{.ID}}" data-type="keyresult">
+                    {{if .TuneScore}}
+                        {{if ge (derefFloat .TuneScore) 0.7}}
+                        <span class="quality-badge high" title="{{derefString .TuneFeedback}}">high quality</span>
+                        {{else if ge (derefFloat .TuneScore) 0.4}}
+                        <span class="quality-badge medium" title="{{derefString .TuneFeedback}}">med quality</span>
+                        {{else}}
+                        <span class="quality-badge low" title="{{derefString .TuneFeedback}}">low quality</span>
+                        {{end}}
+                    {{else}}
+                    <span class="quality-spinner"></span>
+                    {{end}}
+                    </span>
+                    <button class="action-btn edit" onclick="toggleEdit('kr-{{.ID}}')">Edit</button>
+                    <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives/{{$objView.Objective.ID}}/unlink-kr/{{.ID}}" style="display:inline;" onsubmit="return confirm('Remove this key result?');">
+                        <button type="submit" class="action-btn remove">Remove</button>
+                    </form>
+                </div>
+            </div>
+            <div id="edit-kr-{{.ID}}" class="edit-form">
+                <form method="POST" action="/p/{{$.ProjectID}}/okr/key-results/{{.ID}}">
+                    <input type="hidden" name="redirect" value="{{if $.CurrentObjective}}/p/{{$.ProjectID}}/okr/objectives/{{$.CurrentObjective.Objective.ID}}{{else}}/p/{{$.ProjectID}}/okr{{end}}">
+                    <input type="text" name="description" value="{{.Description}}" required placeholder="Description">
+                    <input type="text" name="target_units" value="{{.TargetUnits}}" required placeholder="Target">
+                    <input type="date" name="target_date" value="{{if .TargetDate}}{{.TargetDate.Format "2006-01-02"}}{{end}}">
+                    <div class="btn-group">
+                        <button type="submit" class="btn btn-primary">Save</button>
+                        <button type="button" class="btn btn-secondary" onclick="toggleEdit('kr-{{.ID}}')">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        {{end}}
+    </div>
+    {{else}}
+    <p class="empty">No {{if $.CurrentObjective}}sub-objectives{{else}}objectives{{end}} defined yet.</p>
+    {{end}}
+
+    <!-- Add Objective Form -->
+    <div class="add-form">
+        <h4>Add {{if $.CurrentObjective}}Sub-Objective{{else}}Objective{{end}}</h4>
+        <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives">
+            {{if $.CurrentObjective}}
+            <input type="hidden" name="parent_id" value="{{$.CurrentObjective.Objective.ID}}">
+            {{end}}
+            <div class="add-form-row">
+                <textarea name="description" class="description-field" required placeholder="What do you want to achieve?"></textarea>
+                <button type="submit" class="btn btn-success">Add {{if $.CurrentObjective}}Sub-Objective{{else}}Objective{{end}}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div style="margin-top: 20px;">
+    <a href="/p/{{$.ProjectID}}/strategy" class="btn btn-secondary">Back to Strategy</a>
+</div>
+{{end}}
+
+<script>
+function toggleEdit(id) {
+    const form = document.getElementById('edit-' + id);
+    if (form) {
+        form.classList.toggle('active');
+    }
+}
+
+function getQualityLabel(score) {
+    if (score >= 0.7) return { label: 'high quality', cls: 'high' };
+    if (score >= 0.4) return { label: 'med quality', cls: 'medium' };
+    return { label: 'low quality', cls: 'low' };
+}
+
+function updateQualityBadge(id, type, score, feedback) {
+    const wrappers = document.querySelectorAll(`.quality-badge-wrapper[data-id="${id}"][data-type="${type}"]`);
+    const quality = getQualityLabel(score);
+    wrappers.forEach(wrapper => {
+        wrapper.innerHTML = `<span class="quality-badge ${quality.cls}" title="${feedback}">${quality.label}</span>`;
+    });
+}
+
+function tuneAllOKRs() {
+    // Check if there are any spinners (untuned items)
+    const spinners = document.querySelectorAll('.quality-badge-wrapper .quality-spinner');
+    if (spinners.length === 0) {
+        return; // Nothing to tune
+    }
+
+    const status = document.getElementById('tune-status');
+    status.style.display = 'block';
+    document.getElementById('tune-status-text').textContent =
+        `Analyzing ${spinners.length} item${spinners.length > 1 ? 's' : ''}...`;
+
+    fetch('/api/projects/{{$.ProjectID}}/okr/tune', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    })
+    .then(response => response.json())
+    .then(data => {
+        status.style.display = 'none';
+
+        if (data.error) {
+            console.error('Tuning error:', data.error);
+            // Replace spinners with error indicator
+            spinners.forEach(s => {
+                s.outerHTML = '<span class="quality-badge low" title="Tuning failed">?</span>';
+            });
+            return;
+        }
+
+        // Update objective badges
+        if (data.results && data.results.objective_scores) {
+            data.results.objective_scores.forEach(item => {
+                updateQualityBadge(item.id, 'objective', item.score, item.feedback);
+            });
+        }
+
+        // Update key result badges
+        if (data.results && data.results.key_result_scores) {
+            data.results.key_result_scores.forEach(item => {
+                updateQualityBadge(item.id, 'keyresult', item.score, item.feedback);
+            });
+        }
+    })
+    .catch(error => {
+        status.style.display = 'none';
+        console.error('Tuning error:', error);
+        // Replace spinners with error indicator
+        spinners.forEach(s => {
+            s.outerHTML = '<span class="quality-badge low" title="Tuning failed">?</span>';
+        });
+    });
+}
+
+// Auto-trigger tuning on page load if there are untuned items
+document.addEventListener('DOMContentLoaded', function() {
+    tuneAllOKRs();
+});
+</script>
+{{end}}

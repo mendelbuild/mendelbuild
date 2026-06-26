@@ -15,10 +15,46 @@ import (
 //go:embed templates/*.html
 var templatesFS embed.FS
 
+// templateFuncs provides custom functions for templates.
+var templateFuncs = template.FuncMap{
+	"tuneScoreClass": func(score *float64) string {
+		if score == nil {
+			return ""
+		}
+		s := *score
+		if s >= 0.8 {
+			return "excellent"
+		} else if s >= 0.6 {
+			return "good"
+		} else if s >= 0.4 {
+			return "needs-work"
+		}
+		return "poor"
+	},
+	"mul100": func(score *float64) float64 {
+		if score == nil {
+			return 0
+		}
+		return *score * 100
+	},
+	"derefString": func(s *string) string {
+		if s == nil {
+			return ""
+		}
+		return *s
+	},
+	"derefFloat": func(f *float64) float64 {
+		if f == nil {
+			return 0
+		}
+		return *f
+	},
+}
+
 // parsePageTemplate creates a template from layout + a specific page template.
 // This avoids conflicts when multiple pages define the same block name.
 func parsePageTemplate(pageName string) *template.Template {
-	return template.Must(template.ParseFS(templatesFS, "templates/layout.html", "templates/"+pageName))
+	return template.Must(template.New("").Funcs(templateFuncs).ParseFS(templatesFS, "templates/layout.html", "templates/"+pageName))
 }
 
 // renderPage renders a page template with the layout.

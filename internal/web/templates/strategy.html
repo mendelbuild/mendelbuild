@@ -24,7 +24,10 @@
         </div>
 
         <div class="card">
-            <h2>Objectives &amp; Key Results</h2>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h2 style="margin: 0;">Objectives &amp; Key Results</h2>
+                <a href="/p/{{$.ProjectID}}/okr" style="color: #007bff; text-decoration: none; font-size: 0.9em;">Edit OKRs</a>
+            </div>
             {{if .Objectives}}
                 {{range .Objectives}}
                 <div class="objective">

@@ -126,17 +126,28 @@ func (db *DB) LoadStrategy(ctx context.Context, input *domain.StrategyInput) (uu
 				}
 			}
 
+			// Insert key_result with strategy_id (new schema)
 			_, err = tx.Exec(ctx, `
-				INSERT INTO key_results (id, objective_id, description, target_units, target_date, created_at, updated_at)
+				INSERT INTO key_results (id, strategy_id, description, target_units, target_date, created_at, updated_at)
 				VALUES ($1, $2, $3, $4, $5, $6, $6)
 				ON CONFLICT (id) DO UPDATE SET
 					description = EXCLUDED.description,
 					target_units = EXCLUDED.target_units,
 					target_date = EXCLUDED.target_date,
 					updated_at = $6
-			`, krID, objID, kr.Description, kr.TargetUnits, targetDate, now)
+			`, krID, strategyID, kr.Description, kr.TargetUnits, targetDate, now)
 			if err != nil {
 				return uuid.Nil, fmt.Errorf("upsert key result %s: %w", kr.ID, err)
+			}
+
+			// Link key_result to objective via junction table
+			_, err = tx.Exec(ctx, `
+				INSERT INTO objective_key_result_pairs (objective_id, key_result_id, created_at)
+				VALUES ($1, $2, $3)
+				ON CONFLICT (objective_id, key_result_id) DO NOTHING
+			`, objID, krID, now)
+			if err != nil {
+				return uuid.Nil, fmt.Errorf("link key result %s to objective: %w", kr.ID, err)
 			}
 		}
 	}
@@ -245,11 +256,11 @@ func (db *DB) GetStrategiesByProject(ctx context.Context, projectID uuid.UUID) (
 	return strategies, nil
 }
 
-// GetObjectivesByStrategy retrieves all objectives for a strategy.
+// GetObjectivesByStrategy retrieves all non-deleted objectives for a strategy.
 func (db *DB) GetObjectivesByStrategy(ctx context.Context, strategyID uuid.UUID) ([]domain.Objective, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, strategy_id, description, created_at, updated_at
-		FROM objectives WHERE strategy_id = $1
+		SELECT id, strategy_id, parent_id, description, tune_score, tune_feedback, deleted_at, created_at, updated_at
+		FROM objectives WHERE strategy_id = $1 AND deleted_at IS NULL
 		ORDER BY created_at
 	`, strategyID)
 	if err != nil {
@@ -260,7 +271,7 @@ func (db *DB) GetObjectivesByStrategy(ctx context.Context, strategyID uuid.UUID)
 	var objectives []domain.Objective
 	for rows.Next() {
 		var o domain.Objective
-		if err := rows.Scan(&o.ID, &o.StrategyID, &o.Description, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		if err := rows.Scan(&o.ID, &o.StrategyID, &o.ParentID, &o.Description, &o.TuneScore, &o.TuneFeedback, &o.DeletedAt, &o.CreatedAt, &o.UpdatedAt); err != nil {
 			return nil, err
 		}
 		objectives = append(objectives, o)
@@ -268,12 +279,15 @@ func (db *DB) GetObjectivesByStrategy(ctx context.Context, strategyID uuid.UUID)
 	return objectives, nil
 }
 
-// GetKeyResultsByObjective retrieves all key results for an objective.
+// GetKeyResultsByObjective retrieves all non-deleted key results linked to an objective via junction table.
 func (db *DB) GetKeyResultsByObjective(ctx context.Context, objectiveID uuid.UUID) ([]domain.KeyResult, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, objective_id, description, target_units, target_date, created_at, updated_at
-		FROM key_results WHERE objective_id = $1
-		ORDER BY created_at
+		SELECT kr.id, kr.strategy_id, kr.description, kr.target_units, kr.target_date,
+		       kr.tune_score, kr.tune_feedback, kr.deleted_at, kr.created_at, kr.updated_at
+		FROM key_results kr
+		JOIN objective_key_result_pairs okrp ON okrp.key_result_id = kr.id
+		WHERE okrp.objective_id = $1 AND kr.deleted_at IS NULL
+		ORDER BY kr.created_at
 	`, objectiveID)
 	if err != nil {
 		return nil, err
@@ -283,7 +297,8 @@ func (db *DB) GetKeyResultsByObjective(ctx context.Context, objectiveID uuid.UUI
 	var keyResults []domain.KeyResult
 	for rows.Next() {
 		var kr domain.KeyResult
-		if err := rows.Scan(&kr.ID, &kr.ObjectiveID, &kr.Description, &kr.TargetUnits, &kr.TargetDate, &kr.CreatedAt, &kr.UpdatedAt); err != nil {
+		if err := rows.Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetUnits, &kr.TargetDate,
+			&kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt); err != nil {
 			return nil, err
 		}
 		keyResults = append(keyResults, kr)
@@ -1009,6 +1024,413 @@ func (db *DB) GetHopDependenciesByStrategy(ctx context.Context, strategyID uuid.
 		deps = append(deps, d)
 	}
 	return deps, nil
+}
+
+// =====================================================
+// OKR Management Queries (added in 007)
+// =====================================================
+
+// GetObjective retrieves an objective by ID.
+func (db *DB) GetObjective(ctx context.Context, id uuid.UUID) (*domain.Objective, error) {
+	var o domain.Objective
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, strategy_id, parent_id, description, tune_score, tune_feedback, deleted_at, created_at, updated_at
+		FROM objectives WHERE id = $1
+	`, id).Scan(&o.ID, &o.StrategyID, &o.ParentID, &o.Description, &o.TuneScore, &o.TuneFeedback, &o.DeletedAt, &o.CreatedAt, &o.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &o, nil
+}
+
+// GetRootObjectives retrieves top-level (no parent) non-deleted objectives for a strategy.
+func (db *DB) GetRootObjectives(ctx context.Context, strategyID uuid.UUID) ([]domain.Objective, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, strategy_id, parent_id, description, tune_score, tune_feedback, deleted_at, created_at, updated_at
+		FROM objectives WHERE strategy_id = $1 AND parent_id IS NULL AND deleted_at IS NULL
+		ORDER BY created_at
+	`, strategyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var objectives []domain.Objective
+	for rows.Next() {
+		var o domain.Objective
+		if err := rows.Scan(&o.ID, &o.StrategyID, &o.ParentID, &o.Description, &o.TuneScore, &o.TuneFeedback, &o.DeletedAt, &o.CreatedAt, &o.UpdatedAt); err != nil {
+			return nil, err
+		}
+		objectives = append(objectives, o)
+	}
+	return objectives, nil
+}
+
+// GetObjectivesByParent retrieves non-deleted child objectives for a parent objective.
+func (db *DB) GetObjectivesByParent(ctx context.Context, parentID uuid.UUID) ([]domain.Objective, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, strategy_id, parent_id, description, tune_score, tune_feedback, deleted_at, created_at, updated_at
+		FROM objectives WHERE parent_id = $1 AND deleted_at IS NULL
+		ORDER BY created_at
+	`, parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var objectives []domain.Objective
+	for rows.Next() {
+		var o domain.Objective
+		if err := rows.Scan(&o.ID, &o.StrategyID, &o.ParentID, &o.Description, &o.TuneScore, &o.TuneFeedback, &o.DeletedAt, &o.CreatedAt, &o.UpdatedAt); err != nil {
+			return nil, err
+		}
+		objectives = append(objectives, o)
+	}
+	return objectives, nil
+}
+
+// CreateObjective creates a new objective.
+func (db *DB) CreateObjective(ctx context.Context, obj *domain.Objective) error {
+	now := time.Now()
+	if obj.ID == uuid.Nil {
+		obj.ID = uuid.New()
+	}
+	obj.CreatedAt = now
+	obj.UpdatedAt = now
+
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO objectives (id, strategy_id, parent_id, description, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $5)
+	`, obj.ID, obj.StrategyID, obj.ParentID, obj.Description, now)
+	return err
+}
+
+// UpdateObjective updates an objective's description and clears tuning.
+func (db *DB) UpdateObjective(ctx context.Context, obj *domain.Objective) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE objectives SET
+			description = $2,
+			parent_id = $3,
+			tune_score = NULL,
+			tune_feedback = NULL,
+			updated_at = NOW()
+		WHERE id = $1
+	`, obj.ID, obj.Description, obj.ParentID)
+	return err
+}
+
+// SoftDeleteObjective soft-deletes an objective by setting deleted_at.
+func (db *DB) SoftDeleteObjective(ctx context.Context, id uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE objectives SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1
+	`, id)
+	return err
+}
+
+// GetKeyResult retrieves a key result by ID.
+func (db *DB) GetKeyResult(ctx context.Context, id uuid.UUID) (*domain.KeyResult, error) {
+	var kr domain.KeyResult
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, strategy_id, description, target_units, target_date, tune_score, tune_feedback, deleted_at, created_at, updated_at
+		FROM key_results WHERE id = $1
+	`, id).Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetUnits, &kr.TargetDate, &kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &kr, nil
+}
+
+// GetAllKeyResultsForStrategy retrieves all non-deleted key results for a strategy.
+func (db *DB) GetAllKeyResultsForStrategy(ctx context.Context, strategyID uuid.UUID) ([]domain.KeyResult, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, strategy_id, description, target_units, target_date, tune_score, tune_feedback, deleted_at, created_at, updated_at
+		FROM key_results WHERE strategy_id = $1 AND deleted_at IS NULL
+		ORDER BY created_at
+	`, strategyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var keyResults []domain.KeyResult
+	for rows.Next() {
+		var kr domain.KeyResult
+		if err := rows.Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetUnits, &kr.TargetDate, &kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt); err != nil {
+			return nil, err
+		}
+		keyResults = append(keyResults, kr)
+	}
+	return keyResults, nil
+}
+
+// GetUnlinkedKeyResults retrieves key results not linked to any objective.
+func (db *DB) GetUnlinkedKeyResults(ctx context.Context, strategyID uuid.UUID) ([]domain.KeyResult, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT kr.id, kr.strategy_id, kr.description, kr.target_units, kr.target_date,
+		       kr.tune_score, kr.tune_feedback, kr.deleted_at, kr.created_at, kr.updated_at
+		FROM key_results kr
+		WHERE kr.strategy_id = $1 AND kr.deleted_at IS NULL
+		  AND NOT EXISTS (
+			SELECT 1 FROM objective_key_result_pairs okrp WHERE okrp.key_result_id = kr.id
+		  )
+		ORDER BY kr.created_at
+	`, strategyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var keyResults []domain.KeyResult
+	for rows.Next() {
+		var kr domain.KeyResult
+		if err := rows.Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetUnits, &kr.TargetDate, &kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt); err != nil {
+			return nil, err
+		}
+		keyResults = append(keyResults, kr)
+	}
+	return keyResults, nil
+}
+
+// CreateKeyResult creates a new key result.
+func (db *DB) CreateKeyResult(ctx context.Context, kr *domain.KeyResult) error {
+	now := time.Now()
+	if kr.ID == uuid.Nil {
+		kr.ID = uuid.New()
+	}
+	kr.CreatedAt = now
+	kr.UpdatedAt = now
+
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO key_results (id, strategy_id, description, target_units, target_date, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $6)
+	`, kr.ID, kr.StrategyID, kr.Description, kr.TargetUnits, kr.TargetDate, now)
+	return err
+}
+
+// UpdateKeyResult updates a key result and clears tuning.
+func (db *DB) UpdateKeyResult(ctx context.Context, kr *domain.KeyResult) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE key_results SET
+			description = $2,
+			target_units = $3,
+			target_date = $4,
+			tune_score = NULL,
+			tune_feedback = NULL,
+			updated_at = NOW()
+		WHERE id = $1
+	`, kr.ID, kr.Description, kr.TargetUnits, kr.TargetDate)
+	return err
+}
+
+// SoftDeleteKeyResult soft-deletes a key result by setting deleted_at.
+func (db *DB) SoftDeleteKeyResult(ctx context.Context, id uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE key_results SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1
+	`, id)
+	return err
+}
+
+// LinkKeyResultToObjective creates a junction table entry linking a KR to an objective.
+func (db *DB) LinkKeyResultToObjective(ctx context.Context, objectiveID, keyResultID uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO objective_key_result_pairs (objective_id, key_result_id, created_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (objective_id, key_result_id) DO NOTHING
+	`, objectiveID, keyResultID)
+	return err
+}
+
+// UnlinkKeyResultFromObjective removes a junction table entry. If the KR becomes orphaned, it is soft-deleted.
+func (db *DB) UnlinkKeyResultFromObjective(ctx context.Context, objectiveID, keyResultID uuid.UUID) error {
+	// Delete the link
+	_, err := db.Pool.Exec(ctx, `
+		DELETE FROM objective_key_result_pairs
+		WHERE objective_id = $1 AND key_result_id = $2
+	`, objectiveID, keyResultID)
+	if err != nil {
+		return err
+	}
+
+	// Check if KR is now orphaned and soft-delete it if so
+	var count int
+	err = db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM objective_key_result_pairs WHERE key_result_id = $1
+	`, keyResultID).Scan(&count)
+	if err != nil {
+		return err
+	}
+
+	if count == 0 {
+		return db.SoftDeleteKeyResult(ctx, keyResultID)
+	}
+	return nil
+}
+
+// GetObjectiveIDsForKeyResult retrieves all objective IDs linked to a key result.
+func (db *DB) GetObjectiveIDsForKeyResult(ctx context.Context, keyResultID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT objective_id FROM objective_key_result_pairs WHERE key_result_id = $1
+	`, keyResultID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+// GetAvailableKeyResultsForObjective returns KRs that can be linked to an objective
+// (same strategy, not already linked, not deleted).
+func (db *DB) GetAvailableKeyResultsForObjective(ctx context.Context, objectiveID uuid.UUID) ([]domain.KeyResult, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT kr.id, kr.strategy_id, kr.description, kr.target_units, kr.target_date,
+		       kr.tune_score, kr.tune_feedback, kr.deleted_at, kr.created_at, kr.updated_at
+		FROM key_results kr
+		JOIN objectives o ON o.strategy_id = kr.strategy_id
+		WHERE o.id = $1 AND kr.deleted_at IS NULL
+		  AND NOT EXISTS (
+			SELECT 1 FROM objective_key_result_pairs okrp
+			WHERE okrp.objective_id = $1 AND okrp.key_result_id = kr.id
+		  )
+		ORDER BY kr.created_at
+	`, objectiveID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var keyResults []domain.KeyResult
+	for rows.Next() {
+		var kr domain.KeyResult
+		if err := rows.Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetUnits, &kr.TargetDate, &kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt); err != nil {
+			return nil, err
+		}
+		keyResults = append(keyResults, kr)
+	}
+	return keyResults, nil
+}
+
+// =====================================================
+// OKR Tuning Queries
+// =====================================================
+
+// GetUntunedObjectives retrieves objectives without tuning scores for a strategy.
+func (db *DB) GetUntunedObjectives(ctx context.Context, strategyID uuid.UUID) ([]domain.Objective, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, strategy_id, parent_id, description, tune_score, tune_feedback, deleted_at, created_at, updated_at
+		FROM objectives WHERE strategy_id = $1 AND deleted_at IS NULL AND tune_score IS NULL
+		ORDER BY created_at
+	`, strategyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var objectives []domain.Objective
+	for rows.Next() {
+		var o domain.Objective
+		if err := rows.Scan(&o.ID, &o.StrategyID, &o.ParentID, &o.Description, &o.TuneScore, &o.TuneFeedback, &o.DeletedAt, &o.CreatedAt, &o.UpdatedAt); err != nil {
+			return nil, err
+		}
+		objectives = append(objectives, o)
+	}
+	return objectives, nil
+}
+
+// GetUntunedKeyResults retrieves key results without tuning scores for a strategy.
+func (db *DB) GetUntunedKeyResults(ctx context.Context, strategyID uuid.UUID) ([]domain.KeyResult, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, strategy_id, description, target_units, target_date, tune_score, tune_feedback, deleted_at, created_at, updated_at
+		FROM key_results WHERE strategy_id = $1 AND deleted_at IS NULL AND tune_score IS NULL
+		ORDER BY created_at
+	`, strategyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var keyResults []domain.KeyResult
+	for rows.Next() {
+		var kr domain.KeyResult
+		if err := rows.Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetUnits, &kr.TargetDate, &kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt); err != nil {
+			return nil, err
+		}
+		keyResults = append(keyResults, kr)
+	}
+	return keyResults, nil
+}
+
+// UpdateObjectiveTuning updates the tuning score and feedback for an objective.
+func (db *DB) UpdateObjectiveTuning(ctx context.Context, id uuid.UUID, score float64, feedback string) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE objectives SET tune_score = $2, tune_feedback = $3, updated_at = NOW() WHERE id = $1
+	`, id, score, feedback)
+	return err
+}
+
+// UpdateKeyResultTuning updates the tuning score and feedback for a key result.
+func (db *DB) UpdateKeyResultTuning(ctx context.Context, id uuid.UUID, score float64, feedback string) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE key_results SET tune_score = $2, tune_feedback = $3, updated_at = NOW() WHERE id = $1
+	`, id, score, feedback)
+	return err
+}
+
+// ClearObjectiveTuning clears the tuning score and feedback for an objective.
+func (db *DB) ClearObjectiveTuning(ctx context.Context, id uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE objectives SET tune_score = NULL, tune_feedback = NULL, updated_at = NOW() WHERE id = $1
+	`, id)
+	return err
+}
+
+// ClearKeyResultTuning clears the tuning score and feedback for a key result.
+func (db *DB) ClearKeyResultTuning(ctx context.Context, id uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE key_results SET tune_score = NULL, tune_feedback = NULL, updated_at = NOW() WHERE id = $1
+	`, id)
+	return err
+}
+
+// GetObjectiveAncestors retrieves the ancestor chain for breadcrumb navigation.
+// Returns ancestors in order from root to parent (excluding the objective itself).
+func (db *DB) GetObjectiveAncestors(ctx context.Context, objectiveID uuid.UUID) ([]domain.Objective, error) {
+	rows, err := db.Pool.Query(ctx, `
+		WITH RECURSIVE ancestors AS (
+			SELECT id, strategy_id, parent_id, description, tune_score, tune_feedback, deleted_at, created_at, updated_at, 0 as depth
+			FROM objectives WHERE id = $1
+			UNION ALL
+			SELECT o.id, o.strategy_id, o.parent_id, o.description, o.tune_score, o.tune_feedback, o.deleted_at, o.created_at, o.updated_at, a.depth + 1
+			FROM objectives o
+			JOIN ancestors a ON o.id = a.parent_id
+		)
+		SELECT id, strategy_id, parent_id, description, tune_score, tune_feedback, deleted_at, created_at, updated_at
+		FROM ancestors
+		WHERE depth > 0
+		ORDER BY depth DESC
+	`, objectiveID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var objectives []domain.Objective
+	for rows.Next() {
+		var o domain.Objective
+		if err := rows.Scan(&o.ID, &o.StrategyID, &o.ParentID, &o.Description, &o.TuneScore, &o.TuneFeedback, &o.DeletedAt, &o.CreatedAt, &o.UpdatedAt); err != nil {
+			return nil, err
+		}
+		objectives = append(objectives, o)
+	}
+	return objectives, nil
 }
 
 // ActivateDependentHops marks hops that depend on completedHopID as active

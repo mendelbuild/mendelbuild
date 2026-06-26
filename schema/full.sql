@@ -1,5 +1,5 @@
 -- MendelBuild Core Schema
--- This file represents the complete schema after all migrations (001-006).
+-- This file represents the complete schema after all migrations (001-007).
 -- It should be kept in sync with migrations for reference.
 --
 -- See DESIGN.md Section 2 for conceptual overview.
@@ -45,12 +45,21 @@ CREATE TABLE strategies (
 --------------------------------------------------------------------------------
 -- An Objective is the "O" in OKR. A Strategy can have multiple Objectives,
 -- and each Objective can have multiple Key Results.
+-- Objectives can be hierarchical via parent_id for organizational alignment.
+-- Key Results are linked via the objective_key_result_pairs junction table.
 
 CREATE TABLE objectives (
     id UUID PRIMARY KEY,
     strategy_id UUID NOT NULL REFERENCES strategies(id),
+    parent_id UUID REFERENCES objectives(id),  -- NULL for top-level objectives [added in 007]
 
     description TEXT NOT NULL,  -- Plain-English objective
+
+    -- OKR quality tuning feedback from AI [added in 007]
+    tune_score REAL,      -- Quality score 0.0-1.0
+    tune_feedback TEXT,   -- Brief feedback on clarity, specificity
+
+    deleted_at TIMESTAMP,  -- Soft delete timestamp [added in 007]
 
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -59,12 +68,13 @@ CREATE TABLE objectives (
 --------------------------------------------------------------------------------
 -- KEY RESULTS
 --------------------------------------------------------------------------------
--- Key Results are quantitative targets attached to an Objective.
+-- Key Results are quantitative targets that can be linked to multiple Objectives
+-- via the objective_key_result_pairs junction table [changed in 007].
 -- Each KR has a target value expressed with units that MendelBuild parses.
 
 CREATE TABLE key_results (
     id UUID PRIMARY KEY,
-    objective_id UUID NOT NULL REFERENCES objectives(id),
+    strategy_id UUID NOT NULL REFERENCES strategies(id),  -- Changed from objective_id in 007
 
     description TEXT NOT NULL,
 
@@ -78,8 +88,27 @@ CREATE TABLE key_results (
 
     target_date TIMESTAMP,  -- When we expect to hit target
 
+    -- OKR quality tuning feedback from AI [added in 007]
+    tune_score REAL,      -- Quality score 0.0-1.0
+    tune_feedback TEXT,   -- Brief feedback on measurability, clarity
+
+    deleted_at TIMESTAMP,  -- Soft delete timestamp [added in 007]
+
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+--------------------------------------------------------------------------------
+-- OBJECTIVE KEY RESULT PAIRS
+--------------------------------------------------------------------------------
+-- Junction table for many-to-many relationship between Objectives and Key Results.
+-- A Key Result can contribute to multiple Objectives [added in 007].
+
+CREATE TABLE objective_key_result_pairs (
+    objective_id UUID NOT NULL REFERENCES objectives(id),
+    key_result_id UUID NOT NULL REFERENCES key_results(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (objective_id, key_result_id)
 );
 
 --------------------------------------------------------------------------------
@@ -496,7 +525,11 @@ CREATE TABLE traffic_allocation_slices (
 
 CREATE INDEX idx_strategies_project ON strategies(project_id);
 CREATE INDEX idx_objectives_strategy ON objectives(strategy_id);
-CREATE INDEX idx_key_results_objective ON key_results(objective_id);
+CREATE INDEX idx_objectives_parent ON objectives(parent_id) WHERE deleted_at IS NULL;  -- [added in 007]
+CREATE INDEX idx_objectives_deleted ON objectives(deleted_at);  -- [added in 007]
+CREATE INDEX idx_key_results_strategy ON key_results(strategy_id) WHERE deleted_at IS NULL;  -- [added in 007]
+CREATE INDEX idx_key_results_deleted ON key_results(deleted_at);  -- [added in 007]
+CREATE INDEX idx_okr_junction_kr ON objective_key_result_pairs(key_result_id);  -- [added in 007]
 CREATE INDEX idx_hops_strategy ON hops(strategy_id);
 CREATE INDEX idx_hops_status ON hops(status);
 CREATE INDEX idx_variations_hop ON variations(hop_id);
