@@ -859,6 +859,8 @@ func (db *DB) GetDecisionBySubjectAndKind(ctx context.Context, subjectType strin
 // GetHopsNeedingSelectionDecision returns hops with at least one pending variation
 // but no unresolved variation_selection Decision. Includes both 'active' and 'selecting'
 // hops to handle cases where status was updated but Decision wasn't created.
+// Also excludes hops that have an unresolved variation_review Decision (user is still
+// proposing/reviewing additional variations).
 func (db *DB) GetHopsNeedingSelectionDecision(ctx context.Context) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT DISTINCT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria, h.status, h.created_at, h.updated_at
@@ -871,6 +873,13 @@ func (db *DB) GetHopsNeedingSelectionDecision(ctx context.Context) ([]domain.Hop
 			WHERE d.subject_type = 'hop'
 			  AND d.subject_id = h.id
 			  AND d.kind = 'variation_selection'
+			  AND d.status != 'resolved'
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM decisions d
+			WHERE d.subject_type = 'hop'
+			  AND d.subject_id = h.id
+			  AND d.kind = 'variation_review'
 			  AND d.status != 'resolved'
 		  )
 		ORDER BY h.created_at ASC

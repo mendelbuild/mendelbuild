@@ -26,7 +26,10 @@ type HopDetailView struct {
 	Objectives            []domain.Objective
 	Allocations           []domain.BudgetAllocation
 	PendingReview         *domain.Decision
+	PendingSelection      *domain.Decision
 	HasCreatingVariations bool
+	HasPendingVariations  bool
+	IsStuck               bool // No pending variations and no unresolved decisions
 }
 
 func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
@@ -99,25 +102,35 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check for pending variation review decision
+	// Check for pending decisions
 	decisions, _ := s.db.GetDecisionsBySubject(ctx, "hop", hopID)
 	var pendingReview *domain.Decision
+	var pendingSelection *domain.Decision
 	for i := range decisions {
 		d := &decisions[i]
-		if d.Kind == domain.DecisionKindVariationReview && d.Status != domain.DecisionStatusResolved {
-			pendingReview = d
-			break
+		if d.Status != domain.DecisionStatusResolved {
+			if d.Kind == domain.DecisionKindVariationReview {
+				pendingReview = d
+			} else if d.Kind == domain.DecisionKindVariationSelection {
+				pendingSelection = d
+			}
 		}
 	}
 
-	// Check if any variations are in creating status
+	// Check variation statuses
 	hasCreatingVariations := false
+	hasPendingVariations := false
 	for _, v := range variations {
 		if v.Variation.Status == domain.VariationStatusCreating {
 			hasCreatingVariations = true
-			break
+		}
+		if v.Variation.Status == domain.VariationStatusPending {
+			hasPendingVariations = true
 		}
 	}
+
+	// Detect stuck state: has variations but none pending/creating, no unresolved decisions
+	isStuck := len(variations) > 0 && !hasCreatingVariations && !hasPendingVariations && pendingReview == nil && pendingSelection == nil
 
 	view := &HopDetailView{
 		Hop:                   hop,
@@ -127,7 +140,10 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 		Objectives:            objectives,
 		Allocations:           allocations,
 		PendingReview:         pendingReview,
+		PendingSelection:      pendingSelection,
 		HasCreatingVariations: hasCreatingVariations,
+		HasPendingVariations:  hasPendingVariations,
+		IsStuck:               isStuck,
 	}
 
 	data := map[string]interface{}{

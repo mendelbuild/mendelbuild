@@ -22,7 +22,32 @@
                 {{end}}
             </div>
 
+            {{/* Existing variations (immutable - already created) */}}
+            {{if .ExistingVariations}}
+            <div style="margin-bottom: 20px;">
+                <h3 style="color: #6c757d; margin-bottom: 10px;">Existing Variations (Code Complete)</h3>
+                {{range .ExistingVariations}}
+                <div class="variation-card" style="border: 2px solid {{if eq .Status "rejected"}}#dc3545{{else if eq .Status "merged"}}#28a745{{else}}#6c757d{{end}}; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: {{if eq .Status "rejected"}}#f8d7da{{else if eq .Status "merged"}}#d4edda{{else}}#e9ecef{{end}}; opacity: 0.85;">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+                        <h3 style="margin: 0; color: #495057;">{{.Name}}</h3>
+                        <span style="background: {{if eq .Status "rejected"}}#f5c6cb{{else if eq .Status "merged"}}#c3e6cb{{else}}#dee2e6{{end}}; padding: 4px 8px; border-radius: 4px; font-size: 0.85em;">
+                            {{.Status}}
+                        </span>
+                    </div>
+                    <div>
+                        <strong>Approach:</strong>
+                        <p style="margin: 5px 0; color: #555;">{{.Approach}}</p>
+                    </div>
+                </div>
+                {{end}}
+            </div>
+            {{end}}
+
+            {{/* Proposed new variations (editable) */}}
             {{if .VariationProposal}}
+            {{if .VariationProposal.Variations}}
+            <h3 style="color: #28a745; margin-bottom: 10px;">{{if .ExistingVariations}}New {{end}}Proposed Variations</h3>
+            {{end}}
             <form id="approve-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/approve">
             {{range $i, $v := .VariationProposal.Variations}}
             <div class="variation-card" style="border: 2px solid #28a745; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: #f8f9fa;">
@@ -50,8 +75,17 @@
             </div>
             {{end}}
             </form>
-            {{else}}
+            {{end}}
+
+            {{if and (not .VariationProposal.Variations) (not .ExistingVariations)}}
             <p class="empty">No variations proposed.</p>
+            {{end}}
+
+            {{if and .ExistingVariations (not .VariationProposal.Variations)}}
+            <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-radius: 8px;">
+                <strong>Request new variations:</strong>
+                <p style="margin: 5px 0; color: #666;">Use the feedback form on the right to describe what additional variations you'd like to compare against the existing ones.</p>
+            </div>
             {{end}}
         </div>
 
@@ -75,12 +109,25 @@
             <h2>Review Actions</h2>
 
             {{if ne .Decision.Status "resolved"}}
+            {{if .VariationProposal.Variations}}
             <button id="approve-button" type="submit" form="approve-form" style="width: 100%; padding: 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
-                Approve {{len .VariationProposal.Variations}} Variation{{if ne (len .VariationProposal.Variations) 1}}s{{end}}
+                Approve {{len .VariationProposal.Variations}} New Variation{{if ne (len .VariationProposal.Variations) 1}}s{{end}}
             </button>
             <p style="font-size: 0.85em; color: #666; margin-top: 15px;">
+                {{if .ExistingVariations}}
+                Approving will create the selected new variations and trigger code generation. Existing variations will be kept.
+                {{else}}
                 Approving will create variations and trigger code generation for each selected approach.
+                {{end}}
             </p>
+            {{else if .ExistingVariations}}
+            <div style="padding: 12px; background: #e9ecef; border-radius: 4px; text-align: center;">
+                <strong>No new variations to approve</strong>
+            </div>
+            <p style="font-size: 0.85em; color: #666; margin-top: 15px;">
+                Use the feedback form below to request additional variations, then approve them when ready.
+            </p>
+            {{end}}
             {{else}}
             {{if eq .Resolution "approved"}}
             <div style="padding: 15px; background: #d4edda; border-radius: 4px; text-align: center;">

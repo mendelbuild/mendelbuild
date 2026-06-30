@@ -413,6 +413,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/decisions/{decisionID}/reject", s.handleReject)
 		r.Post("/decisions/{decisionID}/select", s.handleSelectWinner)
 		r.Post("/decisions/{decisionID}/reject-all", s.handleRejectAllVariations)
+		r.Post("/decisions/{decisionID}/request-more-variations", s.handleRequestMoreVariations)
 		r.Post("/roadmap/propose", s.handleProposeRoadmap)
 	})
 

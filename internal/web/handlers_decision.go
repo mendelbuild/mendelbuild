@@ -22,6 +22,7 @@ type DecisionDetailView struct {
 	Strategy           *domain.Strategy
 	Hop                *domain.Hop
 	VariationProposal  *VariationProposalView
+	ExistingVariations []ExistingVariationView // Already-created variations (immutable in review)
 	SelectionData      *SelectionDataView
 	EvaluationCriteria *agent.EvaluationCriteria
 	CanSelect          bool // True if all variations are done and user can pick winner
@@ -30,6 +31,14 @@ type DecisionDetailView struct {
 	TotalCount         int
 	HopBudget          int    // Total token budget for the hop
 	Resolution         string // Dereferenced resolution for template comparison
+}
+
+// ExistingVariationView holds an existing variation for display in variation review.
+type ExistingVariationView struct {
+	ID       string
+	Name     string
+	Approach string
+	Status   string
 }
 
 // VariationProposalView holds parsed variation proposal data.
@@ -170,6 +179,28 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 								break
 							}
 						}
+					}
+				}
+
+				// Load existing variations (already created, shown as immutable)
+				// Include: pending, creating, rejected (with code), merged
+				existingVars, _ := s.db.GetVariationsByHop(ctx, view.Hop.ID)
+				for _, v := range existingVars {
+					shouldInclude := false
+					switch v.Status {
+					case domain.VariationStatusPending, domain.VariationStatusCreating:
+						shouldInclude = true
+					case domain.VariationStatusRejected, domain.VariationStatusMerged:
+						// Only show if code was generated (has commit ref)
+						shouldInclude = v.CommitRef != nil
+					}
+					if shouldInclude {
+						view.ExistingVariations = append(view.ExistingVariations, ExistingVariationView{
+							ID:       v.ID.String(),
+							Name:     v.Name,
+							Approach: v.Approach,
+							Status:   string(v.Status),
+						})
 					}
 				}
 			}
@@ -1118,9 +1149,22 @@ func (s *Server) approveVariations(w http.ResponseWriter, r *http.Request, decis
 		return
 	}
 
-	// Create Variation records for selected variations
+	// Get existing variations to avoid creating duplicates
+	existingVariations, _ := s.db.GetVariationsByHop(ctx, hop.ID)
+	existingNames := make(map[string]bool)
+	for _, v := range existingVariations {
+		existingNames[v.Name] = true
+	}
+
+	// Create Variation records for selected variations (skipping existing ones)
 	now := time.Now()
+	createdCount := 0
 	for _, v := range selectedVariations {
+		// Skip if a variation with this name already exists
+		if existingNames[v.Name] {
+			continue
+		}
+
 		variation := &domain.Variation{
 			ID:           uuid.New(),
 			HopID:        hop.ID,
@@ -1139,6 +1183,7 @@ func (s *Server) approveVariations(w http.ResponseWriter, r *http.Request, decis
 
 		// Record initial state
 		s.db.CreateVariationStateTransition(ctx, variation.ID, "", string(domain.VariationStatusCreating), "variation created from approved proposal")
+		createdCount++
 	}
 
 	// Update hop status to active
@@ -1161,11 +1206,17 @@ func (s *Server) approveVariations(w http.ResponseWriter, r *http.Request, decis
 	}
 
 	// Save system message about approval
+	var msgContent string
+	if createdCount > 0 {
+		msgContent = fmt.Sprintf("Approved and created %d new variation(s). Code generation will start automatically.", createdCount)
+	} else {
+		msgContent = "Approved. No new variations to create (selected variations already exist)."
+	}
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
 		DecisionID: decision.ID,
 		Role:       "system",
-		Content:    fmt.Sprintf("Approved %d variation(s): %s\n\nCode generation will start automatically.", len(selectedVariations), fmt.Sprintf("%v", selectedNames)),
+		Content:    msgContent,
 		CreatedAt:  time.Now(),
 	}
 	s.db.CreateDecisionMessage(ctx, sysMsg)
@@ -1540,24 +1591,12 @@ func (s *Server) handleRejectAllVariations(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Mark all pending variations as rejected
-	variations, _ := s.db.GetVariationsByHop(ctx, hop.ID)
-	for _, v := range variations {
-		if v.Status == domain.VariationStatusPending {
-			v.Status = domain.VariationStatusRejected
-			s.db.UpdateVariation(ctx, &v)
-		}
-	}
-
-	// Return hop to active status (can propose new variations)
-	if err := s.db.UpdateHopStatus(ctx, hop.ID, domain.HopStatusActive); err != nil {
-		http.Error(w, "error updating hop status", http.StatusInternalServerError)
-		return
-	}
+	// NOTE: We do NOT reject existing variations - they stay pending so user can
+	// compare them against new variations in the variation review
 
 	// Update decision status
 	decision.Status = domain.DecisionStatusResolved
-	resolution := "rejected"
+	resolution := "requested_more"
 	decision.Resolution = &resolution
 	resolvedAt := time.Now()
 	decision.ResolvedAt = &resolvedAt
@@ -1573,13 +1612,128 @@ func (s *Server) handleRejectAllVariations(w http.ResponseWriter, r *http.Reques
 		ID:         uuid.New(),
 		DecisionID: decisionID,
 		Role:       "system",
-		Content:    "All variations rejected. Hop returned to active status for new variation proposals.",
+		Content:    "Requested additional variations. Returning to variation review.",
 		CreatedAt:  time.Now(),
 	}
 	s.db.CreateDecisionMessage(ctx, sysMsg)
 
-	// Redirect to hop page
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/hops/%s", projectID, hop.ID), http.StatusSeeOther)
+	// Create a new VariationReview decision so user can request more variations
+	s.createMoreVariationsDecision(ctx, w, r, decision, hop, projectID)
+}
+
+// handleRequestMoreVariations handles requesting additional variations from selection page.
+func (s *Server) handleRequestMoreVariations(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID := chi.URLParam(r, "projectID")
+	decisionID, err := uuid.Parse(chi.URLParam(r, "decisionID"))
+	if err != nil {
+		http.Error(w, "invalid decision ID", http.StatusBadRequest)
+		return
+	}
+
+	decision, err := s.db.GetDecision(ctx, decisionID)
+	if err != nil {
+		http.Error(w, "decision not found", http.StatusNotFound)
+		return
+	}
+
+	if decision.SubjectID == nil {
+		http.Error(w, "no hop associated", http.StatusBadRequest)
+		return
+	}
+
+	hop, err := s.db.GetHop(ctx, *decision.SubjectID)
+	if err != nil {
+		http.Error(w, "hop not found", http.StatusNotFound)
+		return
+	}
+
+	// Resolve current selection decision as "requested_more"
+	decision.Status = domain.DecisionStatusResolved
+	resolution := "requested_more"
+	decision.Resolution = &resolution
+	resolvedAt := time.Now()
+	decision.ResolvedAt = &resolvedAt
+	decision.UpdatedAt = resolvedAt
+
+	if err := s.db.UpdateDecision(ctx, decision); err != nil {
+		http.Error(w, "error updating decision", http.StatusInternalServerError)
+		return
+	}
+
+	// Save system message
+	sysMsg := &domain.DecisionMessage{
+		ID:         uuid.New(),
+		DecisionID: decisionID,
+		Role:       "system",
+		Content:    "Requested additional variations. Returning to variation review.",
+		CreatedAt:  time.Now(),
+	}
+	s.db.CreateDecisionMessage(ctx, sysMsg)
+
+	// Create a new VariationReview decision
+	s.createMoreVariationsDecision(ctx, w, r, decision, hop, projectID)
+}
+
+// createMoreVariationsDecision creates a new VariationReview decision for proposing more variations.
+func (s *Server) createMoreVariationsDecision(ctx context.Context, w http.ResponseWriter, r *http.Request, oldDecision *domain.Decision, hop *domain.Hop, projectID string) {
+	now := time.Now()
+
+	// Create empty proposal - user will request new variations via feedback
+	proposalData := struct {
+		HopID      uuid.UUID `json:"hop_id"`
+		Variations []struct {
+			Name            string `json:"name"`
+			Approach        string `json:"approach"`
+			Differentiation string `json:"differentiation"`
+			EstimatedTokens int    `json:"estimated_tokens"`
+		} `json:"variations"`
+	}{
+		HopID: hop.ID,
+	}
+	proposalJSON, _ := json.MarshalIndent(proposalData, "", "  ")
+	proposalStr := string(proposalJSON)
+
+	newDecision := &domain.Decision{
+		ID:               uuid.New(),
+		Kind:             domain.DecisionKindVariationReview,
+		Title:            fmt.Sprintf("Variation Review: %s (additional)", hop.Name),
+		Details:          &proposalStr,
+		ObjectivityScore: 0.5,
+		ImportanceScore:  0.7,
+		Status:           domain.DecisionStatusNeedsAssignment,
+		SubjectType:      strPtr("hop"),
+		SubjectID:        &hop.ID,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+
+	if err := s.db.CreateDecision(ctx, newDecision); err != nil {
+		http.Error(w, "error creating decision: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get count of existing variations for the message
+	existingVariations, _ := s.db.GetVariationsByHop(ctx, hop.ID)
+	pendingCount := 0
+	for _, v := range existingVariations {
+		if v.Status == domain.VariationStatusPending {
+			pendingCount++
+		}
+	}
+
+	// Create system message
+	sysMsg := &domain.DecisionMessage{
+		ID:         uuid.New(),
+		DecisionID: newDecision.ID,
+		Role:       "system",
+		Content:    fmt.Sprintf("Variation review opened for additional proposals.\n\nThere are %d existing pending variation(s) that will be retained. Use the feedback form to request new variations to compare against them.", pendingCount),
+		CreatedAt:  now,
+	}
+	s.db.CreateDecisionMessage(ctx, sysMsg)
+
+	// Redirect to the new decision page
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, newDecision.ID), http.StatusSeeOther)
 }
 
 // mergeWinnerToMain merges the winning variation's branch into main.

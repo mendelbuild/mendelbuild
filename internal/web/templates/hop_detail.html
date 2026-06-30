@@ -107,6 +107,24 @@
                     Review proposed variations before generating code.
                 </div>
             </div>
+            {{else if .PendingSelection}}
+            <div style="padding: 15px; background: #fff3cd; border-radius: 4px; margin-bottom: 15px;">
+                <strong>Selection Ready</strong><br>
+                <a href="/p/{{$.ProjectID}}/decisions/{{.PendingSelection.ID}}">{{.PendingSelection.Title}}</a>
+                <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
+                    Select a winner or request more variations.
+                </div>
+            </div>
+            {{else if .IsStuck}}
+            <div style="padding: 15px; background: #f8d7da; border-radius: 4px; margin-bottom: 15px;">
+                <strong>No Active Variations</strong><br>
+                <span style="color: #666;">All variations have been rejected or terminated. Request new variations to continue.</span>
+                <form method="POST" action="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}/propose-variations" style="margin-top: 10px;">
+                    <button type="submit" style="width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Request New Variations
+                    </button>
+                </form>
+            </div>
             {{else if eq .Hop.Status "pending"}}
             <div style="padding: 15px; background: #f8f9fa; border-radius: 4px;">
                 <strong>Waiting for Dependencies</strong><br>
@@ -119,10 +137,16 @@
                         <strong>Code Generation In Progress</strong><br>
                         <span style="color: #666;">Claude is implementing the approved variations. Refresh to see status updates.</span>
                     </div>
-                    {{else}}
+                    {{else if .HasPendingVariations}}
                     <div style="padding: 15px; background: #fff3cd; border-radius: 4px;">
                         <strong>Awaiting Selection</strong><br>
-                        <span style="color: #666;">Variations are ready. A selection decision will appear in the queue.</span>
+                        <span style="color: #666;">Variations are ready. A selection decision will appear shortly.</span>
+                    </div>
+                    {{else}}
+                    {{/* This case should be caught by IsStuck above, but just in case */}}
+                    <div style="padding: 15px; background: #e2e3e5; border-radius: 4px;">
+                        <strong>Processing...</strong><br>
+                        <span style="color: #666;">Waiting for variations to complete.</span>
                     </div>
                     {{end}}
                 {{else}}

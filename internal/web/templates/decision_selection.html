@@ -129,14 +129,14 @@
                 </p>
 
                 <div style="margin-top: 15px; border-top: 1px solid #ddd; padding-top: 15px;">
-                    <button type="button" onclick="document.getElementById('reject-all-form').submit()" style="width: 100%; padding: 10px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Reject All &amp; Request New Variations
+                    <button type="button" onclick="document.getElementById('more-variations-form').submit()" style="width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Add More Variations
                     </button>
                     <p style="font-size: 0.8em; color: #999; margin-top: 8px;">
-                        This will return the hop to active status for new variation proposals.
+                        Return to variation review to propose additional variations.
                     </p>
                 </div>
-                <form id="reject-all-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/reject-all" style="display: none;"></form>
+                <form id="more-variations-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/request-more-variations" style="display: none;"></form>
                 {{else}}
                 <div style="padding: 15px; background: #fff3cd; border-radius: 4px; text-align: center;">
                     <strong>Waiting for variations...</strong><br>
