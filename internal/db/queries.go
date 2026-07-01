@@ -1467,3 +1467,132 @@ func (db *DB) ActivateDependentHops(ctx context.Context, completedHopID uuid.UUI
 	}
 	return int(result.RowsAffected()), nil
 }
+
+// =====================================================
+// Demo Instance Queries (added in 008)
+// =====================================================
+
+// CreateDemoInstance creates a new demo instance.
+func (db *DB) CreateDemoInstance(ctx context.Context, di *domain.DemoInstance) error {
+	now := time.Now()
+	if di.ID == uuid.Nil {
+		di.ID = uuid.New()
+	}
+	di.StartedAt = now
+	di.CreatedAt = now
+
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO demo_instances (id, variation_id, url, teardown_instructions, started_at, status, process_info, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, di.ID, di.VariationID, di.URL, di.TeardownInstructions, di.StartedAt, di.Status, di.ProcessInfo, di.CreatedAt)
+	return err
+}
+
+// GetDemoInstance retrieves a demo instance by ID.
+func (db *DB) GetDemoInstance(ctx context.Context, id uuid.UUID) (*domain.DemoInstance, error) {
+	var di domain.DemoInstance
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, variation_id, url, teardown_instructions, started_at, stopped_at, status, process_info, error_message, created_at
+		FROM demo_instances WHERE id = $1
+	`, id).Scan(&di.ID, &di.VariationID, &di.URL, &di.TeardownInstructions, &di.StartedAt, &di.StoppedAt, &di.Status, &di.ProcessInfo, &di.ErrorMessage, &di.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &di, nil
+}
+
+// GetRunningDemoByVariation retrieves the running demo instance for a variation (if any).
+func (db *DB) GetRunningDemoByVariation(ctx context.Context, variationID uuid.UUID) (*domain.DemoInstance, error) {
+	var di domain.DemoInstance
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, variation_id, url, teardown_instructions, started_at, stopped_at, status, process_info, error_message, created_at
+		FROM demo_instances
+		WHERE variation_id = $1 AND status = 'running'
+		ORDER BY started_at DESC
+		LIMIT 1
+	`, variationID).Scan(&di.ID, &di.VariationID, &di.URL, &di.TeardownInstructions, &di.StartedAt, &di.StoppedAt, &di.Status, &di.ProcessInfo, &di.ErrorMessage, &di.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &di, nil
+}
+
+// GetAllRunningDemos retrieves all running demo instances (for cleanup on startup).
+func (db *DB) GetAllRunningDemos(ctx context.Context) ([]domain.DemoInstance, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, variation_id, url, teardown_instructions, started_at, stopped_at, status, process_info, error_message, created_at
+		FROM demo_instances
+		WHERE status = 'running'
+		ORDER BY started_at ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var demos []domain.DemoInstance
+	for rows.Next() {
+		var di domain.DemoInstance
+		if err := rows.Scan(&di.ID, &di.VariationID, &di.URL, &di.TeardownInstructions, &di.StartedAt, &di.StoppedAt, &di.Status, &di.ProcessInfo, &di.ErrorMessage, &di.CreatedAt); err != nil {
+			return nil, err
+		}
+		demos = append(demos, di)
+	}
+	return demos, nil
+}
+
+// UpdateDemoInstanceStatus updates a demo instance's status.
+func (db *DB) UpdateDemoInstanceStatus(ctx context.Context, id uuid.UUID, status domain.DemoInstanceStatus, errorMessage *string) error {
+	var stoppedAt *time.Time
+	if status == domain.DemoInstanceStatusStopped || status == domain.DemoInstanceStatusError {
+		now := time.Now()
+		stoppedAt = &now
+	}
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE demo_instances SET status = $2, stopped_at = $3, error_message = $4 WHERE id = $1
+	`, id, status, stoppedAt, errorMessage)
+	return err
+}
+
+// =====================================================
+// Variation Migration Queries (updated in 009)
+// =====================================================
+
+// CreateVariationMigration creates a new variation migration record.
+func (db *DB) CreateVariationMigration(ctx context.Context, m *domain.VariationMigration) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO variation_migrations (id, variation_id, up_instructions, down_instructions, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, m.ID, m.VariationID, m.UpInstructions, m.DownInstructions, m.CreatedAt)
+	return err
+}
+
+// GetVariationMigration retrieves the migration for a variation (if any).
+func (db *DB) GetVariationMigration(ctx context.Context, variationID uuid.UUID) (*domain.VariationMigration, error) {
+	var m domain.VariationMigration
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, variation_id, up_instructions, down_instructions, applied_at, reverted_at, created_at
+		FROM variation_migrations WHERE variation_id = $1
+	`, variationID).Scan(&m.ID, &m.VariationID, &m.UpInstructions, &m.DownInstructions, &m.AppliedAt, &m.RevertedAt, &m.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// MarkVariationMigrationApplied marks a migration as applied.
+func (db *DB) MarkVariationMigrationApplied(ctx context.Context, id uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE variation_migrations SET applied_at = NOW() WHERE id = $1
+	`, id)
+	return err
+}
+
+// MarkVariationMigrationReverted marks a migration as reverted.
+func (db *DB) MarkVariationMigrationReverted(ctx context.Context, id uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE variation_migrations SET reverted_at = NOW() WHERE id = $1
+	`, id)
+	return err
+}
+

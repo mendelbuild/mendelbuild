@@ -1,5 +1,5 @@
 -- MendelBuild Core Schema
--- This file represents the complete schema after all migrations (001-007).
+-- This file represents the complete schema after all migrations (001-009).
 -- It should be kept in sync with migrations for reference.
 --
 -- See DESIGN.md Section 2 for conceptual overview.
@@ -314,37 +314,55 @@ CREATE INDEX idx_variation_logs_variation_id ON variation_logs(variation_id);
 CREATE INDEX idx_variation_logs_logged_at ON variation_logs(variation_id, logged_at DESC);
 
 --------------------------------------------------------------------------------
+-- DEMO INSTANCES
+--------------------------------------------------------------------------------
+-- Demo instances track running demos of variations [added in 008]
+-- Designed to be stateless: Mendel can crash and recover by reading teardown instructions
+
+CREATE TABLE demo_instances (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    variation_id UUID NOT NULL REFERENCES variations(id),
+    url TEXT NOT NULL,
+    teardown_instructions TEXT NOT NULL,  -- shell commands to stop the demo
+    started_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    stopped_at TIMESTAMP,
+    status TEXT NOT NULL DEFAULT 'running',  -- running, stopped, error
+    process_info JSONB,  -- pid, port, container_id, etc - whatever is needed for teardown
+    error_message TEXT,  -- populated if status = 'error'
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_demo_instances_variation ON demo_instances(variation_id);
+CREATE INDEX idx_demo_instances_status ON demo_instances(status) WHERE status = 'running';
+
+--------------------------------------------------------------------------------
 -- VARIATION MIGRATIONS
 --------------------------------------------------------------------------------
 -- Schema/storage changes that are specific to a Variation.
--- When a Variation is terminated, these must be reverted.
+-- These are TEMPORARY migrations applied during variation testing/demo.
 --
--- Migrations are polymorphic: the `kind` field determines which driver
--- handles apply/revert, and `params` contains the driver-specific payload.
+-- Lifecycle:
+--   - up_instructions executed when variation demo starts
+--   - down_instructions executed when variation is rejected OR accepted
+--   - When accepted, the "real" migration lives in the merged code
 --
--- Example kinds:
---   'postgres' - params: {"up": "ALTER TABLE...", "down": "ALTER TABLE..."}
---   'redis'    - params: {"up": {"keys_to_create": [...]}, "down": {"keys_to_delete": [...]}}
---   'file'     - params: {"up": {"create": "/path/to/file"}, "down": {"delete": "/path/to/file"}}
+-- Instructions are freeform text for Claude Code to interpret.
+-- They can reference MENDEL.md or specify commands directly.
+-- [Simplified in 009 from structured kind/params approach]
 
 CREATE TABLE variation_migrations (
     id UUID PRIMARY KEY,
     variation_id UUID NOT NULL REFERENCES variations(id),
 
-    kind TEXT NOT NULL,    -- Driver type: 'postgres', 'redis', 'file', etc.
-    params JSONB NOT NULL, -- Driver-specific up/down instructions
+    up_instructions TEXT NOT NULL,    -- Instructions for Claude Code to apply migration
+    down_instructions TEXT NOT NULL,  -- Instructions for Claude Code to revert migration
 
     -- Execution state
     applied_at TIMESTAMP,
     reverted_at TIMESTAMP,
 
-    -- Ordering within this Variation's migrations
-    sequence_num INTEGER NOT NULL,
-
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
-
-CREATE INDEX idx_var_migrations ON variation_migrations(variation_id, sequence_num);
 
 --------------------------------------------------------------------------------
 -- DECISIONS

@@ -117,8 +117,15 @@ schema/migrations/   # SQL migration files
 2. Write the ALTER statements needed to transform the current schema
 3. Create the corresponding `.down.sql` to revert
 4. Update `schema/full.sql` to reflect the final schema state
+5. **Run `go test ./schema/...` to verify the migration is valid**
 
 Migration files live in `schema/migrations/` and are read at runtime. The `full.sql` file represents the complete current schema for reference.
+
+**IMPORTANT:** After ANY change to `schema/migrations/` or `schema/full.sql`, you MUST run:
+```bash
+go test ./schema/...
+```
+This validates that migrations apply correctly and match full.sql.
 
 Example: To add a NOT NULL constraint to an existing column:
 ```sql

@@ -74,6 +74,7 @@ type SelectionVariationView struct {
 	Status    string
 	CommitRef string
 	BranchURL string             // GitHub branch URL
+	DemoURL   string             // Running demo URL (if any)
 	Grades    map[string]float64 // Criterion name -> score (0.0-1.0)
 }
 
@@ -257,6 +258,11 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 					}
 					if v.CommitRef != nil {
 						sv.CommitRef = *v.CommitRef
+					}
+
+					// Look up running demo URL from demo_instances
+					if demo, err := s.db.GetRunningDemoByVariation(ctx, v.ID); err == nil && demo != nil {
+						sv.DemoURL = demo.URL
 					}
 
 					// Construct branch URL

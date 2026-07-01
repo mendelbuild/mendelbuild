@@ -402,6 +402,8 @@ func (s *Server) setupRoutes() {
 		// Variation routes
 		r.Get("/variations/{variationID}", s.handleVariationDetail)
 		r.Post("/variations/{variationID}/retry", s.handleRetryVariation)
+		r.Post("/variations/{variationID}/start-demo", s.handleStartDemo)
+		r.Post("/variations/{variationID}/stop-demo", s.handleStopDemo)
 
 		// Decision routes
 		r.Get("/decisions", s.handleDecisions)

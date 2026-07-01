@@ -259,6 +259,19 @@ func BuildImplementationPrompt(hopName, variationName, approach, testCommand str
 		prompt.WriteString("Fix any failing tests before considering the task complete.\n")
 	}
 
+	prompt.WriteString("\n## Database/Datastore Migrations\n\n")
+	prompt.WriteString("If this variation requires temporary database or datastore changes for testing/demo:\n\n")
+	prompt.WriteString("1. Create `.mendel/migration.json` with this structure:\n")
+	prompt.WriteString("```json\n")
+	prompt.WriteString("{\n")
+	prompt.WriteString("  \"up_instructions\": \"Instructions to apply the migration. Can reference MENDEL.md or specify commands directly.\",\n")
+	prompt.WriteString("  \"down_instructions\": \"Instructions to cleanly revert the migration. Must NOT affect unrelated data.\"\n")
+	prompt.WriteString("}\n")
+	prompt.WriteString("```\n\n")
+	prompt.WriteString("2. The 'real' migration should be in the normal codebase migration system (Rails migrations, Flyway, etc.)\n")
+	prompt.WriteString("3. The `.mendel/migration.json` is for temporary demo/testing only and will be reverted when the variation ends\n")
+	prompt.WriteString("4. If no migrations are needed, do NOT create this file\n")
+
 	prompt.WriteString("\n## Output\n\n")
 	prompt.WriteString("Implement the changes directly. Summarize what was done at the end.\n")
 

@@ -187,6 +187,43 @@ type VariationLog struct {
 	Message     string    `json:"message"`
 }
 
+// VariationMigration represents a temporary schema migration for a variation.
+// These are applied during demo/testing and reverted when the variation ends
+// (whether accepted or rejected). The "real" migration lives in merged code.
+type VariationMigration struct {
+	ID               uuid.UUID  `json:"id"`
+	VariationID      uuid.UUID  `json:"variation_id"`
+	UpInstructions   string     `json:"up_instructions"`   // Instructions for Claude Code to apply
+	DownInstructions string     `json:"down_instructions"` // Instructions for Claude Code to revert
+	AppliedAt        *time.Time `json:"applied_at,omitempty"`
+	RevertedAt       *time.Time `json:"reverted_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+}
+
+// DemoInstanceStatus represents the lifecycle state of a demo instance.
+type DemoInstanceStatus string
+
+const (
+	DemoInstanceStatusRunning DemoInstanceStatus = "running"
+	DemoInstanceStatusStopped DemoInstanceStatus = "stopped"
+	DemoInstanceStatusError   DemoInstanceStatus = "error"
+)
+
+// DemoInstance tracks a running demo of a variation.
+// Designed to be stateless: Mendel can crash and recover by reading teardown instructions.
+type DemoInstance struct {
+	ID                   uuid.UUID          `json:"id"`
+	VariationID          uuid.UUID          `json:"variation_id"`
+	URL                  string             `json:"url"`
+	TeardownInstructions string             `json:"teardown_instructions"` // Shell commands to stop the demo
+	StartedAt            time.Time          `json:"started_at"`
+	StoppedAt            *time.Time         `json:"stopped_at,omitempty"`
+	Status               DemoInstanceStatus `json:"status"`
+	ProcessInfo          json.RawMessage    `json:"process_info,omitempty"` // pid, port, container_id, etc.
+	ErrorMessage         *string            `json:"error_message,omitempty"`
+	CreatedAt            time.Time          `json:"created_at"`
+}
+
 // BudgetAllocation is a slice of a FundingSource assigned to a specific Hop.
 type BudgetAllocation struct {
 	ID              uuid.UUID `json:"id"`
