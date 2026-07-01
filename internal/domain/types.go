@@ -145,17 +145,18 @@ const (
 
 // Variation is a concrete implementation attempt within a Hop.
 type Variation struct {
-	ID            uuid.UUID       `json:"id"`
-	HopID         uuid.UUID       `json:"hop_id"`
-	Name          string          `json:"name"`                    // e.g., "cache-layer-approach"
-	Approach      string          `json:"approach"`                // Detailed implementation approach
-	RepositoryID  *uuid.UUID      `json:"repository_id,omitempty"`
-	CommitRef     *string         `json:"commit_ref,omitempty"`
-	EcosystemID   *uuid.UUID      `json:"ecosystem_id,omitempty"`
-	DeploymentRef *string         `json:"deployment_ref,omitempty"`
-	Status        VariationStatus `json:"status"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
+	ID             uuid.UUID       `json:"id"`
+	HopID          uuid.UUID       `json:"hop_id"`
+	Name           string          `json:"name"`                    // e.g., "cache-layer-approach"
+	Approach       string          `json:"approach"`                // Detailed implementation approach
+	RepositoryID   *uuid.UUID      `json:"repository_id,omitempty"`
+	CommitRef      *string         `json:"commit_ref,omitempty"`
+	EcosystemID    *uuid.UUID      `json:"ecosystem_id,omitempty"`
+	DeploymentRef  *string         `json:"deployment_ref,omitempty"`
+	MigrationNotes *string         `json:"migration_notes,omitempty"` // Where to find migrations in user's repo
+	Status         VariationStatus `json:"status"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 // VariationStateHistory records a state transition for a Variation.

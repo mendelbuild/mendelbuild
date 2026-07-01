@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,20 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
+
+// executeMigrationInstructions runs migration instructions via shell.
+// In the future, this could use Claude Code for more complex instructions.
+func executeMigrationInstructions(ctx context.Context, instructions string) error {
+	if instructions == "" {
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, "sh", "-c", instructions)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, string(output))
+	}
+	return nil
+}
 
 // handleStartDemo starts a demo instance for a variation.
 // In the future, this will use Claude Code to read MENDEL.md and deploy.
@@ -80,6 +95,19 @@ func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 	if workDir == "" {
 		http.Error(w, "repository work_dir not configured - please set up repository in project settings", http.StatusBadRequest)
 		return
+	}
+
+	// Apply migration if one exists and hasn't been applied yet
+	migration, err := s.db.GetVariationMigration(ctx, variationID)
+	if err == nil && migration != nil && migration.AppliedAt == nil {
+		if err := executeMigrationInstructions(ctx, migration.UpInstructions); err != nil {
+			http.Error(w, "failed to apply migration: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := s.db.MarkVariationMigrationApplied(ctx, migration.ID); err != nil {
+			// Log but continue - migration was applied, just couldn't record it
+			fmt.Printf("[demo] Warning: failed to mark migration as applied: %v\n", err)
+		}
 	}
 
 	// Build variation branch path
@@ -152,7 +180,7 @@ func (s *Server) handleStopDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Run teardown instructions
+	// Run teardown instructions for demo process
 	cmd := exec.CommandContext(ctx, "sh", "-c", demo.TeardownInstructions)
 	if err := cmd.Run(); err != nil {
 		// Mark as error but continue
@@ -163,6 +191,35 @@ func (s *Server) handleStopDemo(w http.ResponseWriter, r *http.Request) {
 		s.db.UpdateDemoInstanceStatus(ctx, demo.ID, domain.DemoInstanceStatusStopped, nil)
 	}
 
+	// Revert migration if one was applied
+	if err := s.revertVariationMigration(ctx, variationID); err != nil {
+		// Log but don't fail - demo is already stopped
+		fmt.Printf("[demo] Warning: failed to revert migration: %v\n", err)
+	}
+
 	// Redirect to variation detail
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
+}
+
+// revertVariationMigration reverts a variation's migration if it was applied and not yet reverted.
+func (s *Server) revertVariationMigration(ctx context.Context, variationID uuid.UUID) error {
+	migration, err := s.db.GetVariationMigration(ctx, variationID)
+	if err != nil {
+		return nil // No migration exists, nothing to revert
+	}
+
+	// Only revert if applied and not already reverted
+	if migration.AppliedAt == nil || migration.RevertedAt != nil {
+		return nil
+	}
+
+	if err := executeMigrationInstructions(ctx, migration.DownInstructions); err != nil {
+		return fmt.Errorf("execute down_instructions: %w", err)
+	}
+
+	if err := s.db.MarkVariationMigrationReverted(ctx, migration.ID); err != nil {
+		return fmt.Errorf("mark reverted: %w", err)
+	}
+
+	return nil
 }

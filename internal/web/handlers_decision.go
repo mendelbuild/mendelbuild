@@ -1518,7 +1518,7 @@ func (s *Server) handleSelectWinner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update variation statuses
+	// Update variation statuses and revert migrations
 	for _, v := range variations {
 		if v.ID == winnerID {
 			v.Status = domain.VariationStatusMerged
@@ -1527,6 +1527,11 @@ func (s *Server) handleSelectWinner(w http.ResponseWriter, r *http.Request) {
 		}
 		// Leave error/terminated variations as-is
 		s.db.UpdateVariation(ctx, &v)
+
+		// Revert migration for ALL variations (winner too - real migration is in merged code)
+		if err := s.revertVariationMigration(ctx, v.ID); err != nil {
+			fmt.Printf("[selection] Warning: failed to revert migration for variation %s: %v\n", v.ID, err)
+		}
 	}
 
 	// Update hop status to completed
@@ -1556,12 +1561,20 @@ func (s *Server) handleSelectWinner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save system message
+	// Save system message with migration reminder if applicable
+	msgContent := fmt.Sprintf("Winner selected: %s\nBranch merged to main.", winner.Name)
+
+	// Check if winner had a migration - remind user to run it
+	winnerMigration, _ := s.db.GetVariationMigration(ctx, winnerID)
+	if winnerMigration != nil {
+		msgContent += "\n\nNote: This variation included database migrations. The temporary demo migration has been reverted. Please run your project's migration command to apply the permanent schema changes from the merged code."
+	}
+
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
 		DecisionID: decisionID,
 		Role:       "system",
-		Content:    fmt.Sprintf("Winner selected: %s\nBranch merged to main.", winner.Name),
+		Content:    msgContent,
 		CreatedAt:  time.Now(),
 	}
 	s.db.CreateDecisionMessage(ctx, sysMsg)

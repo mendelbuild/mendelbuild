@@ -211,6 +211,7 @@ func (g *Generator) runTests(ctx context.Context, workDir string) (bool, string)
 type MigrationInstructions struct {
 	UpInstructions   string `json:"up_instructions"`
 	DownInstructions string `json:"down_instructions"`
+	Notes            string `json:"notes"` // Where to find migration files in user's repo
 }
 
 // saveMigrationInstructions reads .mendel/migration.json if it exists and saves to DB.
@@ -234,7 +235,7 @@ func (g *Generator) saveMigrationInstructions(ctx context.Context, workDir strin
 		return fmt.Errorf("migration file missing up_instructions or down_instructions")
 	}
 
-	// Save to database
+	// Save migration instructions to variation_migrations table
 	migration := &domain.VariationMigration{
 		ID:               uuid.New(),
 		VariationID:      variationID,
@@ -247,7 +248,19 @@ func (g *Generator) saveMigrationInstructions(ctx context.Context, workDir strin
 		return fmt.Errorf("save migration: %w", err)
 	}
 
+	// Save notes to variation record for easy reference
+	if instructions.Notes != "" {
+		v, err := g.db.GetVariation(ctx, variationID)
+		if err == nil {
+			v.MigrationNotes = &instructions.Notes
+			g.db.UpdateVariation(ctx, v)
+		}
+	}
+
 	logger(domain.LogLevelMilestone, "Saved migration instructions")
+	if instructions.Notes != "" {
+		logger(domain.LogLevelInfo, fmt.Sprintf("Migration files: %s", instructions.Notes))
+	}
 	return nil
 }
 
