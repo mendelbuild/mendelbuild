@@ -1,5 +1,5 @@
 -- MendelBuild Core Schema
--- This file represents the complete schema after all migrations (001-010).
+-- This file represents the complete schema after all migrations (001-011).
 -- It should be kept in sync with migrations for reference.
 --
 -- See DESIGN.md Section 2 for conceptual overview.
@@ -278,9 +278,6 @@ CREATE TABLE variations (
         CHECK (status IN ('creating', 'pending', 'migrating', 'active', 'draining',
                           'error', 'terminated', 'pruned', 'selected', 'merged', 'rejected')),
 
-    -- Notes on where to find migrations in user's repo/datastore [added in 010]
-    migration_notes TEXT,
-
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -359,6 +356,7 @@ CREATE TABLE variation_migrations (
 
     up_instructions TEXT NOT NULL,    -- Instructions for Claude Code to apply migration
     down_instructions TEXT NOT NULL,  -- Instructions for Claude Code to revert migration
+    notes TEXT,                       -- Where to find migration files in user's CODE repo [added in 011]
 
     -- Execution state
     applied_at TIMESTAMP,

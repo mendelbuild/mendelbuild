@@ -236,25 +236,22 @@ func (g *Generator) saveMigrationInstructions(ctx context.Context, workDir strin
 	}
 
 	// Save migration instructions to variation_migrations table
+	var notesPtr *string
+	if instructions.Notes != "" {
+		notesPtr = &instructions.Notes
+	}
+
 	migration := &domain.VariationMigration{
 		ID:               uuid.New(),
 		VariationID:      variationID,
 		UpInstructions:   instructions.UpInstructions,
 		DownInstructions: instructions.DownInstructions,
+		Notes:            notesPtr,
 		CreatedAt:        time.Now(),
 	}
 
 	if err := g.db.CreateVariationMigration(ctx, migration); err != nil {
 		return fmt.Errorf("save migration: %w", err)
-	}
-
-	// Save notes to variation record for easy reference
-	if instructions.Notes != "" {
-		v, err := g.db.GetVariation(ctx, variationID)
-		if err == nil {
-			v.MigrationNotes = &instructions.Notes
-			g.db.UpdateVariation(ctx, v)
-		}
 	}
 
 	logger(domain.LogLevelMilestone, "Saved migration instructions")

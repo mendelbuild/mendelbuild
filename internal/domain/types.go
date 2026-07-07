@@ -145,18 +145,17 @@ const (
 
 // Variation is a concrete implementation attempt within a Hop.
 type Variation struct {
-	ID             uuid.UUID       `json:"id"`
-	HopID          uuid.UUID       `json:"hop_id"`
-	Name           string          `json:"name"`                    // e.g., "cache-layer-approach"
-	Approach       string          `json:"approach"`                // Detailed implementation approach
-	RepositoryID   *uuid.UUID      `json:"repository_id,omitempty"`
-	CommitRef      *string         `json:"commit_ref,omitempty"`
-	EcosystemID    *uuid.UUID      `json:"ecosystem_id,omitempty"`
-	DeploymentRef  *string         `json:"deployment_ref,omitempty"`
-	MigrationNotes *string         `json:"migration_notes,omitempty"` // Where to find migrations in user's repo
-	Status         VariationStatus `json:"status"`
-	CreatedAt      time.Time       `json:"created_at"`
-	UpdatedAt      time.Time       `json:"updated_at"`
+	ID            uuid.UUID       `json:"id"`
+	HopID         uuid.UUID       `json:"hop_id"`
+	Name          string          `json:"name"`                    // e.g., "cache-layer-approach"
+	Approach      string          `json:"approach"`                // Detailed implementation approach
+	RepositoryID  *uuid.UUID      `json:"repository_id,omitempty"`
+	CommitRef     *string         `json:"commit_ref,omitempty"`
+	EcosystemID   *uuid.UUID      `json:"ecosystem_id,omitempty"`
+	DeploymentRef *string         `json:"deployment_ref,omitempty"`
+	Status        VariationStatus `json:"status"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
 }
 
 // VariationStateHistory records a state transition for a Variation.
@@ -196,6 +195,7 @@ type VariationMigration struct {
 	VariationID      uuid.UUID  `json:"variation_id"`
 	UpInstructions   string     `json:"up_instructions"`   // Instructions for Claude Code to apply
 	DownInstructions string     `json:"down_instructions"` // Instructions for Claude Code to revert
+	Notes            *string    `json:"notes,omitempty"`   // Where to find migration files in user's CODE repo
 	AppliedAt        *time.Time `json:"applied_at,omitempty"`
 	RevertedAt       *time.Time `json:"reverted_at,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`

@@ -606,9 +606,9 @@ func (db *DB) UpdateHopEvaluationCriteria(ctx context.Context, hopID uuid.UUID, 
 // CreateVariation creates a new variation.
 func (db *DB) CreateVariation(ctx context.Context, v *domain.Variation) error {
 	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO variations (id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref, migration_notes, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
-	`, v.ID, v.HopID, v.Name, v.Approach, v.RepositoryID, v.CommitRef, v.EcosystemID, v.DeploymentRef, v.MigrationNotes, v.Status, v.CreatedAt)
+		INSERT INTO variations (id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+	`, v.ID, v.HopID, v.Name, v.Approach, v.RepositoryID, v.CommitRef, v.EcosystemID, v.DeploymentRef, v.Status, v.CreatedAt)
 	return err
 }
 
@@ -616,9 +616,9 @@ func (db *DB) CreateVariation(ctx context.Context, v *domain.Variation) error {
 func (db *DB) GetVariation(ctx context.Context, id uuid.UUID) (*domain.Variation, error) {
 	var v domain.Variation
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref, migration_notes, status, created_at, updated_at
+		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref, status, created_at, updated_at
 		FROM variations WHERE id = $1
-	`, id).Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef, &v.MigrationNotes, &v.Status, &v.CreatedAt, &v.UpdatedAt)
+	`, id).Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef, &v.Status, &v.CreatedAt, &v.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -630,16 +630,16 @@ func (db *DB) UpdateVariation(ctx context.Context, v *domain.Variation) error {
 	_, err := db.Pool.Exec(ctx, `
 		UPDATE variations SET
 			name = $2, approach = $3, repository_id = $4, commit_ref = $5,
-			ecosystem_id = $6, deployment_ref = $7, migration_notes = $8, status = $9, updated_at = NOW()
+			ecosystem_id = $6, deployment_ref = $7, status = $8, updated_at = NOW()
 		WHERE id = $1
-	`, v.ID, v.Name, v.Approach, v.RepositoryID, v.CommitRef, v.EcosystemID, v.DeploymentRef, v.MigrationNotes, v.Status)
+	`, v.ID, v.Name, v.Approach, v.RepositoryID, v.CommitRef, v.EcosystemID, v.DeploymentRef, v.Status)
 	return err
 }
 
 // GetVariationsByHop retrieves all variations for a hop.
 func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain.Variation, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref, migration_notes, status, created_at, updated_at
+		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref, status, created_at, updated_at
 		FROM variations
 		WHERE hop_id = $1
 		ORDER BY created_at ASC
@@ -652,7 +652,7 @@ func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain
 	var variations []domain.Variation
 	for rows.Next() {
 		var v domain.Variation
-		if err := rows.Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef, &v.MigrationNotes, &v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef, &v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
 		variations = append(variations, v)
@@ -1561,9 +1561,9 @@ func (db *DB) UpdateDemoInstanceStatus(ctx context.Context, id uuid.UUID, status
 // CreateVariationMigration creates a new variation migration record.
 func (db *DB) CreateVariationMigration(ctx context.Context, m *domain.VariationMigration) error {
 	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO variation_migrations (id, variation_id, up_instructions, down_instructions, created_at)
-		VALUES ($1, $2, $3, $4, $5)
-	`, m.ID, m.VariationID, m.UpInstructions, m.DownInstructions, m.CreatedAt)
+		INSERT INTO variation_migrations (id, variation_id, up_instructions, down_instructions, notes, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, m.ID, m.VariationID, m.UpInstructions, m.DownInstructions, m.Notes, m.CreatedAt)
 	return err
 }
 
@@ -1571,13 +1571,38 @@ func (db *DB) CreateVariationMigration(ctx context.Context, m *domain.VariationM
 func (db *DB) GetVariationMigration(ctx context.Context, variationID uuid.UUID) (*domain.VariationMigration, error) {
 	var m domain.VariationMigration
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, variation_id, up_instructions, down_instructions, applied_at, reverted_at, created_at
+		SELECT id, variation_id, up_instructions, down_instructions, notes, applied_at, reverted_at, created_at
 		FROM variation_migrations WHERE variation_id = $1
-	`, variationID).Scan(&m.ID, &m.VariationID, &m.UpInstructions, &m.DownInstructions, &m.AppliedAt, &m.RevertedAt, &m.CreatedAt)
+	`, variationID).Scan(&m.ID, &m.VariationID, &m.UpInstructions, &m.DownInstructions, &m.Notes, &m.AppliedAt, &m.RevertedAt, &m.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 	return &m, nil
+}
+
+// GetVariationMigrationsForHop retrieves all variation migrations for variations belonging to a hop.
+// Returns a map from variation ID to migration for easy lookup.
+func (db *DB) GetVariationMigrationsForHop(ctx context.Context, hopID uuid.UUID) (map[string]*domain.VariationMigration, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT vm.id, vm.variation_id, vm.up_instructions, vm.down_instructions, vm.notes, vm.applied_at, vm.reverted_at, vm.created_at
+		FROM variation_migrations vm
+		JOIN variations v ON v.id = vm.variation_id
+		WHERE v.hop_id = $1
+	`, hopID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]*domain.VariationMigration)
+	for rows.Next() {
+		var m domain.VariationMigration
+		if err := rows.Scan(&m.ID, &m.VariationID, &m.UpInstructions, &m.DownInstructions, &m.Notes, &m.AppliedAt, &m.RevertedAt, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		result[m.VariationID.String()] = &m
+	}
+	return result, rows.Err()
 }
 
 // MarkVariationMigrationApplied marks a migration as applied.

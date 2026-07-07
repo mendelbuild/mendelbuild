@@ -300,6 +300,9 @@ func (s *Server) proposeVariationsForHop(ctx context.Context, hop *domain.Hop) e
 }
 
 // createSelectionDecision creates a variation_selection Decision for a hop.
+// Before creating the selection decision, it runs a conflict audit on all
+// variation migrations. If conflicts are detected, it creates a variation_review
+// decision instead to let the user address the conflicts.
 func (s *Server) createSelectionDecision(ctx context.Context, hop *domain.Hop) error {
 	// Get all variations for this hop
 	variations, err := s.db.GetVariationsByHop(ctx, hop.ID)
@@ -307,6 +310,92 @@ func (s *Server) createSelectionDecision(ctx context.Context, hop *domain.Hop) e
 		return fmt.Errorf("get variations: %w", err)
 	}
 
+	// Get all migrations for this hop
+	migrations, err := s.db.GetVariationMigrationsForHop(ctx, hop.ID)
+	if err != nil {
+		return fmt.Errorf("get migrations: %w", err)
+	}
+
+	// Run conflict audit if there are any migrations
+	if len(migrations) > 0 {
+		auditInput := agent.BuildConflictAuditInput(hop, variations, migrations)
+
+		client, err := agent.NewClient("")
+		if err != nil {
+			return fmt.Errorf("create agent client: %w", err)
+		}
+
+		auditResult, err := client.AuditHopVariationConflicts(ctx, auditInput)
+		if err != nil {
+			// Log error but don't block - we can proceed without the audit
+			fmt.Printf("[worker] Warning: conflict audit failed for hop %s: %v\n", hop.Name, err)
+		} else if auditResult.HasConflicts {
+			// Conflicts detected - create a variation_review decision instead
+			return s.createConflictReviewDecision(ctx, hop, variations, auditResult)
+		}
+	}
+
+	// No conflicts - create the selection decision
+	return s.createSelectionDecisionInternal(ctx, hop, variations)
+}
+
+// createConflictReviewDecision creates a variation_review decision when
+// migration conflicts are detected between variations.
+func (s *Server) createConflictReviewDecision(ctx context.Context, hop *domain.Hop, variations []domain.Variation, auditResult *agent.ConflictAuditResponse) error {
+	// Build conflict details for the decision
+	type conflictInfo struct {
+		VariationNames []string `json:"variation_names"`
+		ConflictType   string   `json:"conflict_type"`
+		Description    string   `json:"description"`
+		AffectedSchema string   `json:"affected_schema"`
+	}
+
+	var conflicts []conflictInfo
+	for _, c := range auditResult.Conflicts {
+		conflicts = append(conflicts, conflictInfo{
+			VariationNames: c.VariationNames,
+			ConflictType:   c.ConflictType,
+			Description:    c.Description,
+			AffectedSchema: c.AffectedSchema,
+		})
+	}
+
+	details := struct {
+		HopID     string         `json:"hop_id"`
+		HopName   string         `json:"hop_name"`
+		Summary   string         `json:"summary"`
+		Conflicts []conflictInfo `json:"conflicts"`
+	}{
+		HopID:     hop.ID.String(),
+		HopName:   hop.Name,
+		Summary:   auditResult.Summary,
+		Conflicts: conflicts,
+	}
+
+	detailsJSON, _ := json.MarshalIndent(details, "", "  ")
+	detailsStr := string(detailsJSON)
+
+	decision := &domain.Decision{
+		ID:               uuid.New(),
+		Kind:             domain.DecisionKindVariationReview,
+		Title:            fmt.Sprintf("Migration Conflicts: %s", hop.Name),
+		Details:          &detailsStr,
+		ObjectivityScore: 0.3, // Requires human judgment to resolve conflicts
+		ImportanceScore:  0.9, // Very important - blocking selection
+		Status:           domain.DecisionStatusNeedsAssignment,
+		SubjectType:      strPtr("hop"),
+		SubjectID:        &hop.ID,
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+	}
+
+	fmt.Printf("[worker] Migration conflicts detected for hop '%s': %s\n", hop.Name, auditResult.Summary)
+
+	return s.db.CreateDecision(ctx, decision)
+}
+
+// createSelectionDecisionInternal creates the actual selection decision.
+func (s *Server) createSelectionDecisionInternal(ctx context.Context, hop *domain.Hop, variations []domain.Variation) error {
 	// Build details JSON with variation info
 	type variationInfo struct {
 		ID        string `json:"id"`
@@ -331,10 +420,10 @@ func (s *Server) createSelectionDecision(ctx context.Context, hop *domain.Hop) e
 	}
 
 	details := struct {
-		HopID              string           `json:"hop_id"`
-		HopName            string           `json:"hop_name"`
-		EvaluationCriteria string           `json:"evaluation_criteria,omitempty"`
-		Variations         []variationInfo  `json:"variations"`
+		HopID              string          `json:"hop_id"`
+		HopName            string          `json:"hop_name"`
+		EvaluationCriteria string          `json:"evaluation_criteria,omitempty"`
+		Variations         []variationInfo `json:"variations"`
 	}{
 		HopID:      hop.ID.String(),
 		HopName:    hop.Name,
@@ -404,6 +493,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/variations/{variationID}/retry", s.handleRetryVariation)
 		r.Post("/variations/{variationID}/start-demo", s.handleStartDemo)
 		r.Post("/variations/{variationID}/stop-demo", s.handleStopDemo)
+		r.Post("/variations/{variationID}/prune", s.handlePruneVariation)
 
 		// Decision routes
 		r.Get("/decisions", s.handleDecisions)
@@ -416,6 +506,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/decisions/{decisionID}/select", s.handleSelectWinner)
 		r.Post("/decisions/{decisionID}/reject-all", s.handleRejectAllVariations)
 		r.Post("/decisions/{decisionID}/request-more-variations", s.handleRequestMoreVariations)
+		r.Post("/decisions/{decisionID}/resolve-conflicts", s.handleResolveConflicts)
 		r.Post("/roadmap/propose", s.handleProposeRoadmap)
 	})
 
