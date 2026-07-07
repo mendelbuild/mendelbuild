@@ -1,14 +1,20 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
+	"github.com/bhs/mendelbuild/internal/demo"
 	"github.com/bhs/mendelbuild/internal/domain"
+	"github.com/bhs/mendelbuild/internal/git"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -27,9 +33,7 @@ func executeMigrationInstructions(ctx context.Context, instructions string) erro
 	return nil
 }
 
-// handleStartDemo starts a demo instance for a variation.
-// In the future, this will use Claude Code to read MENDEL.md and deploy.
-// For now, it provides a placeholder that records the demo request.
+// handleStartDemo starts a demo instance for a variation using .mendel/demo.yaml.
 func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	projectID := chi.URLParam(r, "projectID")
@@ -40,7 +44,7 @@ func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	variation, err := s.db.GetVariation(ctx, variationID)
+	_, err = s.db.GetVariation(ctx, variationID)
 	if err != nil {
 		http.Error(w, "variation not found", http.StatusNotFound)
 		return
@@ -54,46 +58,19 @@ func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get the hop for this variation
-	hop, err := s.db.GetHop(ctx, variation.HopID)
-	if err != nil {
-		http.Error(w, "hop not found", http.StatusNotFound)
+	// Get the work directory for this variation
+	workDir := git.WorkDirForVariation(projectID, variationID.String())
+
+	// Check if work directory exists
+	if _, err := os.Stat(workDir); os.IsNotExist(err) {
+		http.Error(w, "variation work directory not found - code may not be generated yet", http.StatusBadRequest)
 		return
 	}
 
-	// Get repository info
-	strategy, err := s.db.GetStrategy(ctx, hop.StrategyID)
+	// Load demo config from .mendel/demo.yaml
+	cfg, err := demo.LoadConfig(workDir)
 	if err != nil {
-		http.Error(w, "strategy not found", http.StatusNotFound)
-		return
-	}
-
-	repo, err := s.db.GetRepositoryByProject(ctx, strategy.ProjectID)
-	if err != nil {
-		http.Error(w, "repository not found", http.StatusNotFound)
-		return
-	}
-
-	// For now, we implement a simple localhost demo approach
-	// In the future, this will read MENDEL.md and use Claude Code
-
-	// Determine a port based on variation name hash (simple approach)
-	port := 3000 + (int(variationID[0]) % 100)
-	url := fmt.Sprintf("http://localhost:%d", port)
-
-	// Get the working directory for this variation
-	workDir := ""
-	if repo.Config != nil {
-		var config map[string]interface{}
-		if err := json.Unmarshal(repo.Config, &config); err == nil {
-			if wd, ok := config["work_dir"].(string); ok {
-				workDir = wd
-			}
-		}
-	}
-
-	if workDir == "" {
-		http.Error(w, "repository work_dir not configured - please set up repository in project settings", http.StatusBadRequest)
+		http.Error(w, "demo config error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -105,49 +82,127 @@ func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.db.MarkVariationMigrationApplied(ctx, migration.ID); err != nil {
-			// Log but continue - migration was applied, just couldn't record it
 			fmt.Printf("[demo] Warning: failed to mark migration as applied: %v\n", err)
 		}
 	}
 
-	// Build variation branch path
-	branchPath := fmt.Sprintf("%s/variations/%s", workDir, variation.Name)
+	// Build variable substitution map
+	vars := map[string]string{
+		"VARIATION_ID": variationID.String(),
+	}
 
-	// Try to start a simple dev server (npm run dev)
-	// This is a basic implementation - MENDEL.md will make this configurable
-	cmd := exec.CommandContext(ctx, "sh", "-c", fmt.Sprintf(
-		"cd %s && git checkout %s 2>/dev/null; PORT=%d npm run dev &",
-		branchPath, variation.Name, port,
-	))
+	var demoURL string
+	var port int
+	var teardownCmd string
+
+	if cfg.Type == "local" {
+		// Local mode: allocate port and start service
+		port = demo.AllocatePort(variationID.String(), cfg.Port)
+		vars["PORT"] = fmt.Sprintf("%d", port)
+		demoURL = fmt.Sprintf("http://localhost:%d", port)
+	}
+
+	// Copy env file if specified
+	if cfg.EnvFile != "" {
+		envSrc := filepath.Join(workDir, cfg.EnvFile)
+		envDst := filepath.Join(workDir, ".env")
+		if err := copyFile(envSrc, envDst); err != nil {
+			http.Error(w, "failed to copy env file: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Run setup commands
+	for _, setupCmd := range cfg.Setup {
+		cmd := exec.CommandContext(ctx, "sh", "-c", demo.SubstituteVariables(setupCmd, vars))
+		cmd.Dir = workDir
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			errMsg := fmt.Sprintf("setup command failed: %s\n%s", setupCmd, string(output))
+			http.Error(w, errMsg, http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Start the service
+	startCmd := demo.SubstituteVariables(cfg.Start, vars)
+	cmd := exec.CommandContext(ctx, "sh", "-c", startCmd)
+	cmd.Dir = workDir
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stdout
 
 	if err := cmd.Start(); err != nil {
-		// Failed to start - create error demo instance
-		demoInstance := &domain.DemoInstance{
-			ID:                   uuid.New(),
-			VariationID:          variationID,
-			URL:                  url,
-			TeardownInstructions: fmt.Sprintf("lsof -ti:%d | xargs kill -9", port),
-			Status:               domain.DemoInstanceStatusError,
-		}
-		errMsg := fmt.Sprintf("Failed to start demo: %v", err)
-		demoInstance.ErrorMessage = &errMsg
-		s.db.CreateDemoInstance(ctx, demoInstance)
+		http.Error(w, "failed to start service: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-		http.Error(w, "failed to start demo: "+err.Error(), http.StatusInternalServerError)
+	// For cloud mode, we need to capture output to extract the URL
+	// For local mode, we know the URL already
+	if cfg.Type == "cloud" {
+		// Wait a bit for output (cloud deployments typically print URL quickly)
+		time.Sleep(5 * time.Second)
+		output := stdout.String()
+		demoURL = demo.ExtractURL(output, cfg.URLPattern)
+		if demoURL == "" {
+			errMsg := "could not extract deployment URL from output"
+			s.createErrorDemoInstance(ctx, variationID, "", errMsg)
+			http.Error(w, errMsg, http.StatusInternalServerError)
+			return
+		}
+		vars["DEPLOY_URL"] = demoURL
+	}
+
+	// Build teardown command
+	teardownCmd = demo.SubstituteVariables(cfg.Stop, vars)
+
+	// Wait for health check
+	healthURL := demo.SubstituteVariables(cfg.HealthURL, vars)
+	if cfg.Type == "cloud" {
+		healthURL = demo.SubstituteVariables(cfg.HealthURL, vars)
+	}
+
+	healthy := false
+	deadline := time.Now().Add(time.Duration(cfg.HealthTimeout) * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(healthURL)
+		if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 400 {
+			resp.Body.Close()
+			healthy = true
+			break
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+		time.Sleep(time.Duration(cfg.HealthInterval) * time.Second)
+	}
+
+	if !healthy {
+		// Cleanup: run teardown
+		teardown := exec.CommandContext(ctx, "sh", "-c", teardownCmd)
+		teardown.Dir = workDir
+		teardown.Run()
+
+		errMsg := fmt.Sprintf("health check failed after %d seconds", cfg.HealthTimeout)
+		s.createErrorDemoInstance(ctx, variationID, demoURL, errMsg)
+		http.Error(w, errMsg, http.StatusInternalServerError)
 		return
 	}
 
 	// Record the demo instance
 	processInfo, _ := json.Marshal(map[string]interface{}{
-		"port": port,
-		"pid":  cmd.Process.Pid,
+		"port":     port,
+		"pid":      cmd.Process.Pid,
+		"work_dir": workDir,
+		"type":     cfg.Type,
 	})
 
 	demoInstance := &domain.DemoInstance{
 		ID:                   uuid.New(),
 		VariationID:          variationID,
-		URL:                  url,
-		TeardownInstructions: fmt.Sprintf("lsof -ti:%d | xargs kill -9", port),
+		URL:                  demoURL,
+		TeardownInstructions: teardownCmd,
 		StartedAt:            time.Now(),
 		Status:               domain.DemoInstanceStatusRunning,
 		ProcessInfo:          processInfo,
@@ -162,6 +217,36 @@ func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
 }
 
+// createErrorDemoInstance records a failed demo attempt.
+func (s *Server) createErrorDemoInstance(ctx context.Context, variationID uuid.UUID, url, errMsg string) {
+	demoInstance := &domain.DemoInstance{
+		ID:          uuid.New(),
+		VariationID: variationID,
+		URL:         url,
+		Status:      domain.DemoInstanceStatusError,
+	}
+	demoInstance.ErrorMessage = &errMsg
+	s.db.CreateDemoInstance(ctx, demoInstance)
+}
+
+// copyFile copies a file from src to dst.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
+}
+
 // handleStopDemo stops a running demo instance for a variation.
 func (s *Server) handleStopDemo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -174,21 +259,32 @@ func (s *Server) handleStopDemo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Find running demo
-	demo, err := s.db.GetRunningDemoByVariation(ctx, variationID)
+	demoInst, err := s.db.GetRunningDemoByVariation(ctx, variationID)
 	if err != nil {
 		http.Error(w, "no running demo found", http.StatusNotFound)
 		return
 	}
 
+	// Extract work_dir from process info
+	var processInfo map[string]interface{}
+	if demoInst.ProcessInfo != nil {
+		json.Unmarshal(demoInst.ProcessInfo, &processInfo)
+	}
+	workDir, _ := processInfo["work_dir"].(string)
+	if workDir == "" {
+		workDir = git.WorkDirForVariation(projectID, variationID.String())
+	}
+
 	// Run teardown instructions for demo process
-	cmd := exec.CommandContext(ctx, "sh", "-c", demo.TeardownInstructions)
+	cmd := exec.CommandContext(ctx, "sh", "-c", demoInst.TeardownInstructions)
+	cmd.Dir = workDir
 	if err := cmd.Run(); err != nil {
 		// Mark as error but continue
 		errMsg := fmt.Sprintf("Teardown failed: %v", err)
-		s.db.UpdateDemoInstanceStatus(ctx, demo.ID, domain.DemoInstanceStatusError, &errMsg)
+		s.db.UpdateDemoInstanceStatus(ctx, demoInst.ID, domain.DemoInstanceStatusError, &errMsg)
 	} else {
 		// Mark as stopped
-		s.db.UpdateDemoInstanceStatus(ctx, demo.ID, domain.DemoInstanceStatusStopped, nil)
+		s.db.UpdateDemoInstanceStatus(ctx, demoInst.ID, domain.DemoInstanceStatusStopped, nil)
 	}
 
 	// Revert migration if one was applied
@@ -222,4 +318,11 @@ func (s *Server) revertVariationMigration(ctx context.Context, variationID uuid.
 	}
 
 	return nil
+}
+
+// cleanupVariationWorkDir removes the work directory for a resolved variation.
+// This should be called when a variation reaches a terminal state (merged, rejected, pruned).
+func (s *Server) cleanupVariationWorkDir(projectID string, variationID uuid.UUID) error {
+	workDir := git.WorkDirForVariation(projectID, variationID.String())
+	return os.RemoveAll(workDir)
 }

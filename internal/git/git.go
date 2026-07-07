@@ -290,12 +290,13 @@ func (c *Client) GetWorkDir() string {
 }
 
 // WorkDirForVariation returns the working directory path for a variation.
-func WorkDirForVariation(variationID string) string {
+// Path structure: {MENDEL_WORK_DIR}/{projectID}/{variationID}/
+func WorkDirForVariation(projectID, variationID string) string {
 	baseDir := os.Getenv("MENDEL_WORK_DIR")
 	if baseDir == "" {
 		baseDir = "/tmp/mendel"
 	}
-	return filepath.Join(baseDir, variationID)
+	return filepath.Join(baseDir, projectID, variationID)
 }
 
 // embedAuthToken embeds an auth token in an HTTPS URL.

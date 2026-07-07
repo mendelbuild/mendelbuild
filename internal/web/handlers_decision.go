@@ -1580,7 +1580,7 @@ func (s *Server) handleSelectWinner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update variation statuses and revert migrations
+	// Update variation statuses, revert migrations, and cleanup work directories
 	for _, v := range variations {
 		if v.ID == winnerID {
 			v.Status = domain.VariationStatusMerged
@@ -1593,6 +1593,13 @@ func (s *Server) handleSelectWinner(w http.ResponseWriter, r *http.Request) {
 		// Revert migration for ALL variations (winner too - real migration is in merged code)
 		if err := s.revertVariationMigration(ctx, v.ID); err != nil {
 			fmt.Printf("[selection] Warning: failed to revert migration for variation %s: %v\n", v.ID, err)
+		}
+
+		// Cleanup work directory for resolved variations
+		if v.Status == domain.VariationStatusMerged || v.Status == domain.VariationStatusRejected {
+			if err := s.cleanupVariationWorkDir(projectID, v.ID); err != nil {
+				fmt.Printf("[selection] Warning: failed to cleanup work dir for variation %s: %v\n", v.ID, err)
+			}
 		}
 	}
 
@@ -1842,8 +1849,8 @@ func (s *Server) mergeWinnerToMain(ctx context.Context, hop *domain.Hop, winner 
 		repoConfig.MainBranch = "main"
 	}
 
-	// Clone repository
-	workDir := git.WorkDirForVariation("merge-" + winner.ID.String())
+	// Clone repository to a temporary merge directory
+	workDir := git.WorkDirForVariation(strategy.ProjectID.String(), "merge-"+winner.ID.String())
 	gitClient := git.NewClient(workDir)
 	defer gitClient.Cleanup()
 
@@ -2028,6 +2035,11 @@ func (s *Server) handlePruneVariation(w http.ResponseWriter, r *http.Request) {
 
 	// Record state transition
 	s.db.CreateVariationStateTransition(ctx, variationID, string(domain.VariationStatusPending), string(domain.VariationStatusPruned), "pruned by user to resolve migration conflict")
+
+	// Cleanup work directory for pruned variation
+	if err := s.cleanupVariationWorkDir(projectID, variationID); err != nil {
+		fmt.Printf("[prune] Warning: failed to cleanup work dir for variation %s: %v\n", variationID, err)
+	}
 
 	// Redirect back to the referring decision page
 	referer := r.Header.Get("Referer")
