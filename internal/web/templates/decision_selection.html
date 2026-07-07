@@ -26,6 +26,7 @@
                             <th>Variation</th>
                             <th>Status</th>
                             <th>Code</th>
+                            <th>Demo</th>
                             {{range $.View.SelectionData.Criteria}}
                             <th class="grade-header">{{.}}</th>
                             {{end}}
@@ -57,6 +58,28 @@
                                 </a>
                                 {{else if $v.CommitRef}}
                                 <code style="font-size: 0.8em;">{{slice $v.CommitRef 0 7}}</code>
+                                {{else}}
+                                <span style="color: #999;">-</span>
+                                {{end}}
+                            </td>
+                            <td style="border-bottom: none; padding-bottom: 4px;">
+                                {{if $v.DemoURL}}
+                                <div style="display: flex; gap: 4px; align-items: center;">
+                                    <a href="{{$v.DemoURL}}" target="_blank" style="padding: 4px 8px; background: #28a745; color: white; text-decoration: none; border-radius: 4px; font-size: 0.8em;">
+                                        View Demo
+                                    </a>
+                                    <form method="POST" action="/p/{{$.ProjectID}}/variations/{{$v.ID}}/stop-demo" style="display: inline;">
+                                        <button type="submit" style="padding: 4px 6px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75em;" title="Stop Demo">
+                                            Stop
+                                        </button>
+                                    </form>
+                                </div>
+                                {{else if eq $v.Status "pending"}}
+                                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{$v.ID}}/start-demo" style="display: inline;">
+                                    <button type="submit" style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8em;">
+                                        Start Demo
+                                    </button>
+                                </form>
                                 {{else}}
                                 <span style="color: #999;">-</span>
                                 {{end}}

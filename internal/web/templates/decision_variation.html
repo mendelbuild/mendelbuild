@@ -2,12 +2,39 @@
 {{with .View}}
 <h1>{{.Decision.Title}}</h1>
 
+{{/* Conflict warning banner */}}
+{{if .ConflictInfo}}
+<div class="card" style="background: #f8d7da; border: 2px solid #dc3545; margin-bottom: 20px;">
+    <h2 style="margin: 0 0 10px 0; color: #721c24;">Migration Conflicts Detected</h2>
+    <p style="margin: 0 0 15px 0; color: #856404;">{{.ConflictInfo.Summary}}</p>
+
+    <div style="background: #fff; border-radius: 4px; padding: 15px;">
+        {{range .ConflictInfo.Conflicts}}
+        <div style="margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #f5c6cb;">
+            <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 5px;">
+                <strong style="color: #dc3545;">{{.ConflictType}}</strong>
+                {{if .AffectedSchema}}<code style="background: #f8d7da; padding: 2px 6px; border-radius: 3px;">{{.AffectedSchema}}</code>{{end}}
+            </div>
+            <p style="margin: 5px 0; color: #555;">{{.Description}}</p>
+            <div style="font-size: 0.85em; color: #666;">
+                Conflicts between: {{range $i, $name := .VariationNames}}{{if $i}}, {{end}}<strong>{{$name}}</strong>{{end}}
+            </div>
+        </div>
+        {{end}}
+    </div>
+
+    <p style="margin: 15px 0 0 0; font-size: 0.9em; color: #721c24;">
+        <strong>To proceed:</strong> Prune conflicting variations below until no conflicts remain, or request revised variations that avoid these conflicts.
+    </p>
+</div>
+{{end}}
+
 <div style="display: flex; gap: 20px; align-items: flex-start;">
     {{/* Left column: Variation proposals */}}
     <div style="flex: 2;">
         <div class="card">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                <h2 style="margin: 0;">Proposed Variations</h2>
+                <h2 style="margin: 0;">{{if .ConflictInfo}}Existing{{else}}Proposed{{end}} Variations</h2>
                 {{if .VariationProposal}}
                 <div style="text-align: right;">
                     <div style="font-size: 0.9em; color: #666;">
@@ -22,17 +49,33 @@
                 {{end}}
             </div>
 
-            {{/* Existing variations (immutable - already created) */}}
+            {{/* Existing variations (with optional pruning for conflicts) */}}
             {{if .ExistingVariations}}
             <div style="margin-bottom: 20px;">
-                <h3 style="color: #6c757d; margin-bottom: 10px;">Existing Variations (Code Complete)</h3>
+                {{if not .ConflictInfo}}<h3 style="color: #6c757d; margin-bottom: 10px;">Existing Variations (Code Complete)</h3>{{end}}
                 {{range .ExistingVariations}}
-                <div class="variation-card" style="border: 2px solid {{if eq .Status "rejected"}}#dc3545{{else if eq .Status "merged"}}#28a745{{else}}#6c757d{{end}}; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: {{if eq .Status "rejected"}}#f8d7da{{else if eq .Status "merged"}}#d4edda{{else}}#e9ecef{{end}}; opacity: 0.85;">
+                <div class="variation-card" style="border: 2px solid {{if .HasConflict}}#dc3545{{else if eq .Status "rejected"}}#dc3545{{else if eq .Status "merged"}}#28a745{{else if eq .Status "pruned"}}#6c757d{{else}}#6c757d{{end}}; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: {{if .HasConflict}}#fff5f5{{else if eq .Status "rejected"}}#f8d7da{{else if eq .Status "merged"}}#d4edda{{else}}#e9ecef{{end}}; {{if eq .Status "pruned"}}opacity: 0.5;{{else}}opacity: 0.85;{{end}}">
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
-                        <h3 style="margin: 0; color: #495057;">{{.Name}}</h3>
-                        <span style="background: {{if eq .Status "rejected"}}#f5c6cb{{else if eq .Status "merged"}}#c3e6cb{{else}}#dee2e6{{end}}; padding: 4px 8px; border-radius: 4px; font-size: 0.85em;">
-                            {{.Status}}
-                        </span>
+                        <div>
+                            <h3 style="margin: 0; color: #495057;">{{.Name}}</h3>
+                            {{if .HasConflict}}
+                            <div style="font-size: 0.85em; color: #dc3545; margin-top: 5px;">
+                                Conflicts with: {{range $i, $name := .ConflictsWith}}{{if $i}}, {{end}}{{$name}}{{end}}
+                            </div>
+                            {{end}}
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <span style="background: {{if eq .Status "rejected"}}#f5c6cb{{else if eq .Status "merged"}}#c3e6cb{{else if eq .Status "pruned"}}#dee2e6{{else}}#dee2e6{{end}}; padding: 4px 8px; border-radius: 4px; font-size: 0.85em;">
+                                {{.Status}}
+                            </span>
+                            {{if and $.View.ConflictInfo (eq .Status "pending")}}
+                            {{if ne $.View.Decision.Status "resolved"}}
+                            <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.ID}}/prune" style="margin: 0;" onsubmit="return confirm('Prune this variation? This will remove it from consideration.')">
+                                <button type="submit" style="padding: 4px 8px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">Prune</button>
+                            </form>
+                            {{end}}
+                            {{end}}
+                        </div>
                     </div>
                     <div>
                         <strong>Approach:</strong>
@@ -109,7 +152,23 @@
             <h2>Review Actions</h2>
 
             {{if ne .Decision.Status "resolved"}}
-            {{if .VariationProposal.Variations}}
+            {{if .ConflictInfo}}
+            {{/* Conflict resolution mode */}}
+            <div style="padding: 12px; background: #f8d7da; border-radius: 4px; text-align: center; margin-bottom: 15px;">
+                <strong style="color: #721c24;">Resolve Conflicts First</strong>
+            </div>
+            <p style="font-size: 0.85em; color: #666; margin-bottom: 15px;">
+                Prune conflicting variations until no conflicts remain. You can also use the feedback form to request revised variations that avoid these conflicts.
+            </p>
+            <form method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/resolve-conflicts">
+                <button type="submit" style="width: 100%; padding: 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+                    Conflicts Resolved - Proceed to Selection
+                </button>
+            </form>
+            <p style="font-size: 0.85em; color: #666; margin-top: 10px;">
+                Click when you've pruned enough variations to eliminate conflicts. The system will re-check for remaining conflicts.
+            </p>
+            {{else if .VariationProposal.Variations}}
             <button id="approve-button" type="submit" form="approve-form" style="width: 100%; padding: 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
                 Approve {{len .VariationProposal.Variations}} New Variation{{if ne (len .VariationProposal.Variations) 1}}s{{end}}
             </button>

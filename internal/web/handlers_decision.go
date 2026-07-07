@@ -25,7 +25,8 @@ type DecisionDetailView struct {
 	ExistingVariations []ExistingVariationView // Already-created variations (immutable in review)
 	SelectionData      *SelectionDataView
 	EvaluationCriteria *agent.EvaluationCriteria
-	CanSelect          bool // True if all variations are done and user can pick winner
+	ConflictInfo       *ConflictInfoView // Migration conflicts if detected
+	CanSelect          bool              // True if all variations are done and user can pick winner
 	PendingCount       int
 	FailedCount        int
 	TotalCount         int
@@ -35,10 +36,12 @@ type DecisionDetailView struct {
 
 // ExistingVariationView holds an existing variation for display in variation review.
 type ExistingVariationView struct {
-	ID       string
-	Name     string
-	Approach string
-	Status   string
+	ID          string
+	Name        string
+	Approach    string
+	Status      string
+	HasConflict bool     // True if this variation has migration conflicts
+	ConflictsWith []string // Names of other variations this conflicts with
 }
 
 // VariationProposalView holds parsed variation proposal data.
@@ -74,6 +77,7 @@ type SelectionVariationView struct {
 	Status    string
 	CommitRef string
 	BranchURL string             // GitHub branch URL
+	DemoURL   string             // Running demo URL (if any)
 	Grades    map[string]float64 // Criterion name -> score (0.0-1.0)
 }
 
@@ -81,6 +85,20 @@ type SelectionVariationView struct {
 type VariationGrade struct {
 	Score     float64
 	Rationale string
+}
+
+// ConflictInfoView holds parsed conflict data for display.
+type ConflictInfoView struct {
+	Summary   string
+	Conflicts []ConflictView
+}
+
+// ConflictView holds a single conflict for display.
+type ConflictView struct {
+	VariationNames []string
+	ConflictType   string
+	Description    string
+	AffectedSchema string
 }
 
 func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
@@ -133,34 +151,73 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 
 	case domain.DecisionKindVariationReview:
 		templateName = "decision_variation.html"
-		// Parse variation proposal from details
+
+		// Build a map of variation name -> conflicting variation names
+		conflictMap := make(map[string][]string)
+
+		// Parse details - could be conflicts or variation proposal
 		if decision.Details != nil && *decision.Details != "" {
-			var proposal struct {
-				HopID      string `json:"hop_id"`
-				Variations []struct {
-					Name            string `json:"name"`
-					Approach        string `json:"approach"`
-					Differentiation string `json:"differentiation"`
-					EstimatedTokens int    `json:"estimated_tokens"`
-				} `json:"variations"`
+			// First check for conflicts
+			var conflictCheck struct {
+				Conflicts []struct {
+					VariationNames []string `json:"variation_names"`
+					ConflictType   string   `json:"conflict_type"`
+					Description    string   `json:"description"`
+					AffectedSchema string   `json:"affected_schema"`
+				} `json:"conflicts"`
+				Summary string `json:"summary"`
 			}
-			if err := json.Unmarshal([]byte(*decision.Details), &proposal); err == nil {
-				vpv := &VariationProposalView{
-					HopID: proposal.HopID,
+			if err := json.Unmarshal([]byte(*decision.Details), &conflictCheck); err == nil && len(conflictCheck.Conflicts) > 0 {
+				// Store conflict info for display
+				civ := &ConflictInfoView{
+					Summary: conflictCheck.Summary,
 				}
-				totalTokens := 0
-				for i, v := range proposal.Variations {
-					vpv.Variations = append(vpv.Variations, ProposedVariationView{
-						Index:           i,
-						Name:            v.Name,
-						Approach:        v.Approach,
-						Differentiation: v.Differentiation,
-						EstimatedTokens: v.EstimatedTokens,
+				for _, c := range conflictCheck.Conflicts {
+					civ.Conflicts = append(civ.Conflicts, ConflictView{
+						VariationNames: c.VariationNames,
+						ConflictType:   c.ConflictType,
+						Description:    c.Description,
+						AffectedSchema: c.AffectedSchema,
 					})
-					totalTokens += v.EstimatedTokens
+					// Build conflict map: for each variation, track what it conflicts with
+					for _, name := range c.VariationNames {
+						for _, otherName := range c.VariationNames {
+							if name != otherName {
+								conflictMap[name] = append(conflictMap[name], otherName)
+							}
+						}
+					}
 				}
-				vpv.TotalEstimatedTokens = totalTokens
-				view.VariationProposal = vpv
+				view.ConflictInfo = civ
+			} else {
+				// Normal variation proposal
+				var proposal struct {
+					HopID      string `json:"hop_id"`
+					Variations []struct {
+						Name            string `json:"name"`
+						Approach        string `json:"approach"`
+						Differentiation string `json:"differentiation"`
+						EstimatedTokens int    `json:"estimated_tokens"`
+					} `json:"variations"`
+				}
+				if err := json.Unmarshal([]byte(*decision.Details), &proposal); err == nil {
+					vpv := &VariationProposalView{
+						HopID: proposal.HopID,
+					}
+					totalTokens := 0
+					for i, v := range proposal.Variations {
+						vpv.Variations = append(vpv.Variations, ProposedVariationView{
+							Index:           i,
+							Name:            v.Name,
+							Approach:        v.Approach,
+							Differentiation: v.Differentiation,
+							EstimatedTokens: v.EstimatedTokens,
+						})
+						totalTokens += v.EstimatedTokens
+					}
+					vpv.TotalEstimatedTokens = totalTokens
+					view.VariationProposal = vpv
+				}
 			}
 		}
 		// Load hop and budget
@@ -195,12 +252,18 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 						shouldInclude = v.CommitRef != nil
 					}
 					if shouldInclude {
-						view.ExistingVariations = append(view.ExistingVariations, ExistingVariationView{
+						ev := ExistingVariationView{
 							ID:       v.ID.String(),
 							Name:     v.Name,
 							Approach: v.Approach,
 							Status:   string(v.Status),
-						})
+						}
+						// Check if this variation has conflicts
+						if conflicts, ok := conflictMap[v.Name]; ok {
+							ev.HasConflict = true
+							ev.ConflictsWith = conflicts
+						}
+						view.ExistingVariations = append(view.ExistingVariations, ev)
 					}
 				}
 			}
@@ -257,6 +320,11 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 					}
 					if v.CommitRef != nil {
 						sv.CommitRef = *v.CommitRef
+					}
+
+					// Look up running demo URL from demo_instances
+					if demo, err := s.db.GetRunningDemoByVariation(ctx, v.ID); err == nil && demo != nil {
+						sv.DemoURL = demo.URL
 					}
 
 					// Construct branch URL
@@ -1512,7 +1580,7 @@ func (s *Server) handleSelectWinner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update variation statuses
+	// Update variation statuses and revert migrations
 	for _, v := range variations {
 		if v.ID == winnerID {
 			v.Status = domain.VariationStatusMerged
@@ -1521,6 +1589,11 @@ func (s *Server) handleSelectWinner(w http.ResponseWriter, r *http.Request) {
 		}
 		// Leave error/terminated variations as-is
 		s.db.UpdateVariation(ctx, &v)
+
+		// Revert migration for ALL variations (winner too - real migration is in merged code)
+		if err := s.revertVariationMigration(ctx, v.ID); err != nil {
+			fmt.Printf("[selection] Warning: failed to revert migration for variation %s: %v\n", v.ID, err)
+		}
 	}
 
 	// Update hop status to completed
@@ -1550,12 +1623,20 @@ func (s *Server) handleSelectWinner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save system message
+	// Save system message with migration reminder if applicable
+	msgContent := fmt.Sprintf("Winner selected: %s\nBranch merged to main.", winner.Name)
+
+	// Check if winner had a migration - remind user to run it
+	winnerMigration, _ := s.db.GetVariationMigration(ctx, winnerID)
+	if winnerMigration != nil {
+		msgContent += "\n\nNote: This variation included database migrations. The temporary demo migration has been reverted. Please run your project's migration command to apply the permanent schema changes from the merged code."
+	}
+
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
 		DecisionID: decisionID,
 		Role:       "system",
-		Content:    fmt.Sprintf("Winner selected: %s\nBranch merged to main.", winner.Name),
+		Content:    msgContent,
 		CreatedAt:  time.Now(),
 	}
 	s.db.CreateDecisionMessage(ctx, sysMsg)
@@ -1912,4 +1993,189 @@ func constructGitHubBranchURL(repoURL, branchName string) string {
 	}
 
 	return url + "/tree/" + branchName
+}
+
+// handlePruneVariation marks a variation as pruned, removing it from selection consideration.
+func (s *Server) handlePruneVariation(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID := chi.URLParam(r, "projectID")
+	variationID, err := uuid.Parse(chi.URLParam(r, "variationID"))
+	if err != nil {
+		http.Error(w, "invalid variation ID", http.StatusBadRequest)
+		return
+	}
+
+	// Get the variation
+	variation, err := s.db.GetVariation(ctx, variationID)
+	if err != nil {
+		http.Error(w, "variation not found", http.StatusNotFound)
+		return
+	}
+
+	// Only allow pruning pending variations
+	if variation.Status != domain.VariationStatusPending {
+		http.Error(w, "can only prune pending variations", http.StatusBadRequest)
+		return
+	}
+
+	// Update status to pruned
+	variation.Status = domain.VariationStatusPruned
+	variation.UpdatedAt = time.Now()
+	if err := s.db.UpdateVariation(ctx, variation); err != nil {
+		http.Error(w, "failed to update variation", http.StatusInternalServerError)
+		return
+	}
+
+	// Record state transition
+	s.db.CreateVariationStateTransition(ctx, variationID, string(domain.VariationStatusPending), string(domain.VariationStatusPruned), "pruned by user to resolve migration conflict")
+
+	// Redirect back to the referring decision page
+	referer := r.Header.Get("Referer")
+	if referer != "" {
+		http.Redirect(w, r, referer, http.StatusSeeOther)
+	} else {
+		// Fallback: redirect to hop page
+		http.Redirect(w, r, fmt.Sprintf("/p/%s/hops/%s", projectID, variation.HopID), http.StatusSeeOther)
+	}
+}
+
+// handleResolveConflicts re-runs the conflict audit after user has pruned variations.
+// If conflicts are resolved, marks the decision as resolved and creates a selection decision.
+func (s *Server) handleResolveConflicts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID := chi.URLParam(r, "projectID")
+	decisionID, err := uuid.Parse(chi.URLParam(r, "decisionID"))
+	if err != nil {
+		http.Error(w, "invalid decision ID", http.StatusBadRequest)
+		return
+	}
+
+	// Get the decision
+	decision, err := s.db.GetDecision(ctx, decisionID)
+	if err != nil {
+		http.Error(w, "decision not found", http.StatusNotFound)
+		return
+	}
+
+	// Must be a variation_review decision
+	if decision.Kind != domain.DecisionKindVariationReview {
+		http.Error(w, "invalid decision kind", http.StatusBadRequest)
+		return
+	}
+
+	// Get the hop
+	if decision.SubjectID == nil {
+		http.Error(w, "decision has no subject", http.StatusBadRequest)
+		return
+	}
+	hop, err := s.db.GetHop(ctx, *decision.SubjectID)
+	if err != nil {
+		http.Error(w, "hop not found", http.StatusNotFound)
+		return
+	}
+
+	// Get remaining pending variations
+	variations, err := s.db.GetVariationsByHop(ctx, hop.ID)
+	if err != nil {
+		http.Error(w, "failed to get variations", http.StatusInternalServerError)
+		return
+	}
+
+	// Filter to only pending variations
+	var pendingVariations []domain.Variation
+	for _, v := range variations {
+		if v.Status == domain.VariationStatusPending {
+			pendingVariations = append(pendingVariations, v)
+		}
+	}
+
+	// Get migrations for remaining variations
+	migrations, err := s.db.GetVariationMigrationsForHop(ctx, hop.ID)
+	if err != nil {
+		http.Error(w, "failed to get migrations", http.StatusInternalServerError)
+		return
+	}
+
+	// Filter migrations to only include pending variations
+	filteredMigrations := make(map[string]*domain.VariationMigration)
+	for _, v := range pendingVariations {
+		if m, ok := migrations[v.ID.String()]; ok {
+			filteredMigrations[v.ID.String()] = m
+		}
+	}
+
+	// Re-run conflict audit
+	if len(filteredMigrations) > 0 {
+		auditInput := agent.BuildConflictAuditInput(hop, pendingVariations, filteredMigrations)
+
+		client, err := agent.NewClient("")
+		if err != nil {
+			http.Error(w, "failed to create agent client", http.StatusInternalServerError)
+			return
+		}
+
+		auditResult, err := client.AuditHopVariationConflicts(ctx, auditInput)
+		if err != nil {
+			// Log but don't block
+			fmt.Printf("[resolve-conflicts] Warning: audit failed: %v\n", err)
+		} else if auditResult.HasConflicts {
+			// Still have conflicts - update the decision details and show again
+			type conflictInfo struct {
+				VariationNames []string `json:"variation_names"`
+				ConflictType   string   `json:"conflict_type"`
+				Description    string   `json:"description"`
+				AffectedSchema string   `json:"affected_schema"`
+			}
+			var conflicts []conflictInfo
+			for _, c := range auditResult.Conflicts {
+				conflicts = append(conflicts, conflictInfo{
+					VariationNames: c.VariationNames,
+					ConflictType:   c.ConflictType,
+					Description:    c.Description,
+					AffectedSchema: c.AffectedSchema,
+				})
+			}
+			details := struct {
+				HopID     string         `json:"hop_id"`
+				HopName   string         `json:"hop_name"`
+				Summary   string         `json:"summary"`
+				Conflicts []conflictInfo `json:"conflicts"`
+			}{
+				HopID:     hop.ID.String(),
+				HopName:   hop.Name,
+				Summary:   auditResult.Summary,
+				Conflicts: conflicts,
+			}
+			detailsJSON, _ := json.MarshalIndent(details, "", "  ")
+			detailsStr := string(detailsJSON)
+			decision.Details = &detailsStr
+			decision.UpdatedAt = time.Now()
+			s.db.UpdateDecision(ctx, decision)
+
+			// Redirect back to decision with updated conflicts
+			http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decisionID), http.StatusSeeOther)
+			return
+		}
+	}
+
+	// No conflicts! Resolve this decision and create selection decision
+	resolution := "conflicts_resolved"
+	decision.Status = domain.DecisionStatusResolved
+	decision.Resolution = &resolution
+	now := time.Now()
+	decision.ResolvedAt = &now
+	decision.UpdatedAt = now
+	if err := s.db.UpdateDecision(ctx, decision); err != nil {
+		http.Error(w, "failed to update decision", http.StatusInternalServerError)
+		return
+	}
+
+	// Create selection decision
+	if err := s.createSelectionDecisionInternal(ctx, hop, pendingVariations); err != nil {
+		http.Error(w, "failed to create selection decision: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Redirect to hop page where they'll see the new selection decision
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/hops/%s", projectID, hop.ID), http.StatusSeeOther)
 }
