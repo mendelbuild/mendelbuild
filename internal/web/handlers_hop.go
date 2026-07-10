@@ -4,12 +4,40 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
+
+// buildGitHubBranchURL constructs a GitHub URL for viewing a branch or commit.
+// Handles both HTTPS and SSH repo URLs.
+func buildGitHubBranchURL(repoURL, branchName string, commitRef *string) string {
+	// Convert repo URL to GitHub base URL
+	// https://github.com/user/repo.git -> https://github.com/user/repo
+	// git@github.com:user/repo.git -> https://github.com/user/repo
+	base := repoURL
+	base = strings.TrimSuffix(base, ".git")
+
+	if strings.HasPrefix(base, "git@github.com:") {
+		base = strings.Replace(base, "git@github.com:", "https://github.com/", 1)
+	}
+
+	// Only works for GitHub URLs
+	if !strings.Contains(base, "github.com") {
+		return ""
+	}
+
+	// If we have a commit ref, link to that specific commit
+	if commitRef != nil && *commitRef != "" {
+		return fmt.Sprintf("%s/tree/%s", base, *commitRef)
+	}
+
+	// Otherwise link to the branch
+	return fmt.Sprintf("%s/tree/%s", base, branchName)
+}
 
 // VariationWithLogs holds a variation and its recent logs.
 type VariationWithLogs struct {
@@ -197,14 +225,21 @@ func (s *Server) handleProposeVariations(w http.ResponseWriter, r *http.Request)
 
 // VariationDetailView holds data for rendering the variation detail page.
 type VariationDetailView struct {
-	Variation *domain.Variation
-	Hop       *domain.Hop
-	Logs      []domain.VariationLog
+	Variation    *domain.Variation
+	Hop          *domain.Hop
+	Logs         []domain.VariationLog
+	DemoInstance *domain.DemoInstance  // Current or recent demo instance
+	DemoLogs     []domain.VariationLog // Logs specific to the current demo
+	GitHubURL    string                // Link to branch on GitHub (if applicable)
 }
 
 func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	projectID := chi.URLParam(r, "projectID")
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
 
 	variationID, err := uuid.Parse(chi.URLParam(r, "variationID"))
 	if err != nil {
@@ -224,12 +259,32 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logs, _ := s.db.GetVariationLogs(ctx, variationID, 100)
+	// Get codegen logs only (not demo logs)
+	logs, _ := s.db.GetVariationLogsByType(ctx, variationID, domain.SourceTypeCodegen, 100)
+
+	// Get the most recent demo instance (any status) for display
+	demoInstance, _ := s.db.GetLatestDemoByVariation(ctx, variationID)
+
+	// Get demo-specific logs if there's a demo instance
+	var demoLogs []domain.VariationLog
+	if demoInstance != nil {
+		demoLogs, _ = s.db.GetVariationLogsBySource(ctx, domain.SourceTypeDemo, demoInstance.ID, 200)
+	}
+
+	// Build GitHub URL for the branch
+	branchName := fmt.Sprintf("mendel/%s/%s", hop.Name, variation.Name)
+	var githubURL string
+	if repo, err := s.db.GetRepositoryByProject(ctx, projectID); err == nil && repo != nil && repo.URL != nil {
+		githubURL = buildGitHubBranchURL(*repo.URL, branchName, variation.CommitRef)
+	}
 
 	view := &VariationDetailView{
-		Variation: variation,
-		Hop:       hop,
-		Logs:      logs,
+		Variation:    variation,
+		Hop:          hop,
+		Logs:         logs,
+		DemoInstance: demoInstance,
+		DemoLogs:     demoLogs,
+		GitHubURL:    githubURL,
 	}
 
 	data := map[string]interface{}{

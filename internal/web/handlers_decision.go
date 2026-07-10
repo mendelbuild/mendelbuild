@@ -1580,7 +1580,7 @@ func (s *Server) handleSelectWinner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update variation statuses and revert migrations
+	// Update variation statuses, revert migrations, and cleanup work directories
 	for _, v := range variations {
 		if v.ID == winnerID {
 			v.Status = domain.VariationStatusMerged
@@ -1591,8 +1591,15 @@ func (s *Server) handleSelectWinner(w http.ResponseWriter, r *http.Request) {
 		s.db.UpdateVariation(ctx, &v)
 
 		// Revert migration for ALL variations (winner too - real migration is in merged code)
-		if err := s.revertVariationMigration(ctx, v.ID); err != nil {
+		if err := s.revertVariationMigration(ctx, projectID, v.ID); err != nil {
 			fmt.Printf("[selection] Warning: failed to revert migration for variation %s: %v\n", v.ID, err)
+		}
+
+		// Cleanup work directory for resolved variations
+		if v.Status == domain.VariationStatusMerged || v.Status == domain.VariationStatusRejected {
+			if err := s.cleanupVariationWorkDir(projectID, v.ID); err != nil {
+				fmt.Printf("[selection] Warning: failed to cleanup work dir for variation %s: %v\n", v.ID, err)
+			}
 		}
 	}
 
@@ -1842,8 +1849,8 @@ func (s *Server) mergeWinnerToMain(ctx context.Context, hop *domain.Hop, winner 
 		repoConfig.MainBranch = "main"
 	}
 
-	// Clone repository
-	workDir := git.WorkDirForVariation("merge-" + winner.ID.String())
+	// Clone repository to a temporary merge directory
+	workDir := git.WorkDirForVariation(strategy.ProjectID.String(), "merge-"+winner.ID.String())
 	gitClient := git.NewClient(workDir)
 	defer gitClient.Cleanup()
 
@@ -1870,6 +1877,7 @@ func (s *Server) mergeWinnerToMain(ctx context.Context, hop *domain.Hop, winner 
 }
 
 // apiEvaluateVariations evaluates variations for a hop and returns JSON.
+// Scores are cached in the decision's cache field to avoid repeated LLM calls.
 func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	hopID, err := uuid.Parse(chi.URLParam(r, "hopID"))
@@ -1894,7 +1902,6 @@ func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(criteria.Criteria) == 0 {
-		// No criteria to evaluate against
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"evaluations": []interface{}{},
@@ -1910,11 +1917,11 @@ func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build list for evaluation (only pending variations)
-	var variationsForEval []agent.VariationForEvaluation
+	// Build list of pending variations
+	var pendingVariations []agent.VariationForEvaluation
 	for _, v := range variations {
 		if v.Status == domain.VariationStatusPending {
-			variationsForEval = append(variationsForEval, agent.VariationForEvaluation{
+			pendingVariations = append(pendingVariations, agent.VariationForEvaluation{
 				ID:       v.ID.String(),
 				Name:     v.Name,
 				Approach: v.Approach,
@@ -1922,7 +1929,7 @@ func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if len(variationsForEval) == 0 {
+	if len(pendingVariations) == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"evaluations": []interface{}{},
@@ -1931,11 +1938,29 @@ func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Evaluate
+	// Find the variation_selection decision for this hop to check/store cache
+	decision, err := s.db.GetDecisionBySubjectAndKind(ctx, "hop", hopID, domain.DecisionKindVariationSelection)
+	if err != nil {
+		// No decision found - evaluate without caching
+		decision = nil
+	}
+
+	// Check cache
+	if decision != nil {
+		cacheData, err := s.db.GetDecisionCache(ctx, decision.ID)
+		if err == nil && len(cacheData) > 0 {
+			// Return cached data directly
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(cacheData)
+			return
+		}
+	}
+
+	// No cache - call LLM
 	evalInput := agent.VariationEvaluationInput{
 		HopName:    hop.Name,
 		Criteria:   criteria.Criteria,
-		Variations: variationsForEval,
+		Variations: pendingVariations,
 	}
 
 	client, err := agent.NewClient("")
@@ -1949,6 +1974,14 @@ func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "evaluation failed: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Cache the result
+	if decision != nil {
+		cacheJSON, err := json.Marshal(evalResult)
+		if err == nil {
+			s.db.SetDecisionCache(ctx, decision.ID, cacheJSON)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -2028,6 +2061,11 @@ func (s *Server) handlePruneVariation(w http.ResponseWriter, r *http.Request) {
 
 	// Record state transition
 	s.db.CreateVariationStateTransition(ctx, variationID, string(domain.VariationStatusPending), string(domain.VariationStatusPruned), "pruned by user to resolve migration conflict")
+
+	// Cleanup work directory for pruned variation
+	if err := s.cleanupVariationWorkDir(projectID, variationID); err != nil {
+		fmt.Printf("[prune] Warning: failed to cleanup work dir for variation %s: %v\n", variationID, err)
+	}
 
 	// Redirect back to the referring decision page
 	referer := r.Header.Get("Referer")

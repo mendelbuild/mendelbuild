@@ -1,5 +1,23 @@
 # MendelBuild Development Guidelines
 
+## Core Design Principles
+
+### Minimize User Repository Dependencies on Mendel
+
+User repositories should have **minimal to no awareness** of Mendel. This applies to:
+
+- **Code**: No Mendel-specific imports, SDKs, or dependencies
+- **Configuration**: Prefer standard formats (docker-compose.yml, package.json scripts) over Mendel-specific files when possible
+- **Documentation**: User repos should not need to document Mendel integration
+- **Docker images**: Use standard images (postgres, redis, node) not mendel/* images
+
+When Mendel-specific configuration is unavoidable (like `.mendel/demo-config.yml`), keep it:
+- Self-contained (no references to external Mendel docs)
+- Using standard tooling under the hood (Docker, npm, etc.)
+- Optional when possible (sensible defaults)
+
+The goal: if a user stops using Mendel, their repository should work exactly the same without cleanup.
+
 ## Structured LLM API Conventions
 
 All LLM API calls in MendelBuild use Anthropic's **structured outputs** feature for guaranteed JSON compliance. Schemas are generated from Go struct tags.

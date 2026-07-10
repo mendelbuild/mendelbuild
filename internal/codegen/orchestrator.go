@@ -83,6 +83,7 @@ func (o *Orchestrator) Orchestrate(ctx context.Context, hopID uuid.UUID, proposa
 	}
 
 	// Use config from repository and project
+	config.ProjectID = strategy.ProjectID.String()
 	if config.RepositoryURL == "" && repo.URL != nil {
 		config.RepositoryURL = *repo.URL
 	}
@@ -295,6 +296,7 @@ func (o *Orchestrator) buildConfig(ctx context.Context, strategyID uuid.UUID) (G
 	}
 
 	// Build config
+	config.ProjectID = strategy.ProjectID.String()
 	if repo.URL != nil {
 		config.RepositoryURL = *repo.URL
 	}

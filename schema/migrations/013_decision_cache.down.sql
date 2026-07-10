@@ -1,0 +1,1 @@
+ALTER TABLE decisions DROP COLUMN IF EXISTS cache;

@@ -17,6 +17,7 @@ import (
 
 // GeneratorConfig holds configuration for the generator.
 type GeneratorConfig struct {
+	ProjectID     string
 	RepositoryURL string
 	MainBranch    string
 	AuthToken     string
@@ -63,9 +64,9 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 	logger(domain.LogLevelMilestone, fmt.Sprintf("Starting code generation for variation '%s'", variation.Name))
 
 	// 1. Clone repository to work directory
-	workDir := git.WorkDirForVariation(variation.ID.String())
+	// Work directories persist until variation is resolved (merged/rejected/pruned)
+	workDir := git.WorkDirForVariation(g.config.ProjectID, variation.ID.String())
 	gitClient := git.NewClient(workDir)
-	defer gitClient.Cleanup()
 
 	// Infrastructure failures use "error" status (retryable)
 	// Code/test failures use "terminated" status (not retryable)
