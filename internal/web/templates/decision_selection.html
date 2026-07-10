@@ -3,110 +3,155 @@
 <h1>{{.Decision.Title}}</h1>
 <p><a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">&larr; Back to Hop: {{.Hop.Name}}</a></p>
 
-<div style="display: flex; gap: 20px; align-items: flex-start;">
-    {{/* Left column: Variations */}}
-    <div style="flex: 2; min-width: 0; overflow: hidden;">
-        <div class="card" style="overflow: hidden;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                <h2 style="margin: 0;">Variation Comparison</h2>
-                {{if not .CanSelect}}
-                <span style="background: #fff3cd; padding: 8px 12px; border-radius: 4px; font-size: 0.9em;">
-                    Waiting for all variations to complete...
-                </span>
-                {{end}}
-            </div>
-
-            {{if .SelectionData}}
-            <form id="select-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/select">
-            <div class="table-scroll-container">
-                <table id="variations-table" class="variations-table">
-                    <thead>
-                        <tr>
-                            {{if $.View.CanSelect}}<th style="width: 40px;"></th>{{end}}
-                            <th>Variation</th>
-                            <th>Status</th>
-                            <th>Code</th>
-                            <th>Demo</th>
-                            {{range $.View.SelectionData.Criteria}}
-                            <th class="grade-header">{{.}}</th>
-                            {{end}}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {{range $i, $v := .SelectionData.Variations}}
-                        {{/* Row 1: Name, status, code, grades */}}
-                        <tr class="variation-row-main" data-variation-id="{{$v.ID}}" style="border-bottom: none; {{if eq $v.Status "merged"}}background: #d4edda;{{else if eq $v.Status "rejected"}}background: #f8f9fa;{{end}}">
-                            {{if $.View.CanSelect}}
-                            <td style="border-bottom: none; padding-bottom: 4px;">
-                                {{if eq $v.Status "pending"}}
-                                <input type="radio" name="winner" value="{{$v.ID}}" class="winner-radio" style="width: 18px; height: 18px;">
-                                {{end}}
-                            </td>
-                            {{end}}
-                            <td style="border-bottom: none; padding-bottom: 4px;">
-                                <a href="/p/{{$.ProjectID}}/variations/{{$v.ID}}" style="font-weight: bold; color: #007bff;">{{$v.Name}}</a>
-                            </td>
-                            <td style="border-bottom: none; padding-bottom: 4px;">
-                                <span class="status {{if eq $v.Status "pending"}}status-pending{{else if eq $v.Status "merged"}}status-resolved{{else if eq $v.Status "rejected"}}status-resolved{{else}}status-error{{end}}">
-                                    {{$v.Status}}
-                                </span>
-                            </td>
-                            <td style="border-bottom: none; padding-bottom: 4px;">
-                                {{if $v.BranchURL}}
-                                <a href="{{$v.BranchURL}}" target="_blank" style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; background: #24292e; color: white; text-decoration: none; border-radius: 4px; font-size: 0.8em;">
-                                    <span>View Branch</span>
-                                </a>
-                                {{else if $v.CommitRef}}
-                                <code style="font-size: 0.8em;">{{slice $v.CommitRef 0 7}}</code>
-                                {{else}}
-                                <span style="color: #999;">-</span>
-                                {{end}}
-                            </td>
-                            <td style="border-bottom: none; padding-bottom: 4px;">
-                                {{if $v.DemoURL}}
-                                <div style="display: flex; gap: 4px; align-items: center;">
-                                    <a href="{{$v.DemoURL}}" target="_blank" style="padding: 4px 8px; background: #28a745; color: white; text-decoration: none; border-radius: 4px; font-size: 0.8em;">
-                                        View Demo
-                                    </a>
-                                    {{/* Use formaction to override parent form - nested forms don't work in HTML */}}
-                                    <button type="submit" formaction="/p/{{$.ProjectID}}/variations/{{$v.ID}}/stop-demo" formmethod="POST" style="padding: 4px 6px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75em;" title="Stop Demo">
-                                        Stop
-                                    </button>
-                                </div>
-                                {{else if eq $v.Status "pending"}}
-                                {{/* Use formaction to override parent form - nested forms don't work in HTML */}}
-                                <button type="submit" formaction="/p/{{$.ProjectID}}/variations/{{$v.ID}}/start-demo" formmethod="POST" style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8em;">
-                                    Start Demo
-                                </button>
-                                {{else}}
-                                <span style="color: #999;">-</span>
-                                {{end}}
-                            </td>
-                            {{range $criterion := $.View.SelectionData.Criteria}}
-                            <td class="grade-cell" data-criterion="{{$criterion}}" style="text-align: center; border-bottom: none; padding-bottom: 4px;">
-                                <div class="grade-loading cell-spinner"></div>
-                            </td>
-                            {{end}}
-                        </tr>
-                        {{/* Row 2: Description spanning full width */}}
-                        <tr class="variation-row-desc" style="{{if eq $v.Status "merged"}}background: #d4edda;{{else if eq $v.Status "rejected"}}background: #f8f9fa;{{end}}">
-                            <td colspan="100" style="padding-top: 0; padding-bottom: 12px; border-bottom: 2px solid #dee2e6;">
-                                <div style="font-size: 0.85em; color: #555; padding-left: {{if $.View.CanSelect}}40px{{else}}0{{end}};">
-                                    {{$v.Approach}}
-                                </div>
-                            </td>
-                        </tr>
-                        {{end}}
-                    </tbody>
-                </table>
-            </div>
-
-            </form>
+{{if .SelectionData}}
+<div class="card" style="margin-bottom: 20px;">
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px;">
+        <h2 style="margin: 0;">Variation Comparison</h2>
+        <div style="display: flex; gap: 10px; align-items: center;">
+            {{if not .CanSelect}}
+            <span style="background: #fff3cd; padding: 8px 12px; border-radius: 4px; font-size: 0.9em;">
+                Waiting for all variations to complete...
+            </span>
             {{else}}
-            <p class="empty">No variations found.</p>
+            <button type="button" onclick="document.getElementById('more-variations-form').submit()" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em;">
+                Add More Variations
+            </button>
+            <button id="select-button" type="submit" form="select-form" disabled style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: not-allowed; font-size: 0.9em; font-weight: bold;">
+                Select Winner
+            </button>
             {{end}}
         </div>
+    </div>
 
+    {{/* Variation list with descriptions */}}
+    <div style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 4px;">
+        <ul style="margin: 0; padding-left: 20px; list-style-type: disc;">
+            {{range .SelectionData.Variations}}
+            <li style="margin-bottom: 8px;">
+                <strong><a href="/p/{{$.ProjectID}}/variations/{{.ID}}" style="color: #007bff;">{{.Name}}</a></strong>:
+                <span style="color: #555;">{{.Approach}}</span>
+            </li>
+            {{end}}
+        </ul>
+    </div>
+
+    <form id="select-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/select">
+    <div class="table-scroll-wrapper">
+        <div class="table-scroll-container">
+            <table class="comparison-table">
+                <thead>
+                    <tr>
+                        <th class="row-header"></th>
+                        {{range .SelectionData.Variations}}
+                        <th class="variation-col" data-variation-id="{{.ID}}">
+                            <a href="/p/{{$.ProjectID}}/variations/{{.ID}}" style="color: #007bff; font-weight: bold;">{{.Name}}</a>
+                        </th>
+                        {{end}}
+                    </tr>
+                </thead>
+                <tbody>
+                    {{/* Select row */}}
+                    {{if $.View.CanSelect}}
+                    <tr class="select-row">
+                        <td class="row-header">Select</td>
+                        {{range $v := $.View.SelectionData.Variations}}
+                        <td style="text-align: center;">
+                            {{if eq $v.Status "pending"}}
+                            <input type="radio" name="winner" value="{{$v.ID}}" class="winner-radio" style="width: 18px; height: 18px;">
+                            {{else}}
+                            <span style="color: #999;">-</span>
+                            {{end}}
+                        </td>
+                        {{end}}
+                    </tr>
+                    {{end}}
+
+                    {{/* Status row */}}
+                    <tr>
+                        <td class="row-header">Status</td>
+                        {{range .SelectionData.Variations}}
+                        <td style="text-align: center;">
+                            <span class="status {{if eq .Status "pending"}}status-pending{{else if eq .Status "merged"}}status-resolved{{else if eq .Status "rejected"}}status-resolved{{else}}status-error{{end}}">
+                                {{.Status}}
+                            </span>
+                        </td>
+                        {{end}}
+                    </tr>
+
+                    {{/* Code row */}}
+                    <tr>
+                        <td class="row-header">Code</td>
+                        {{range .SelectionData.Variations}}
+                        <td style="text-align: center;">
+                            {{if .BranchURL}}
+                            <a href="{{.BranchURL}}" target="_blank" style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; background: #24292e; color: white; text-decoration: none; border-radius: 4px; font-size: 0.8em;">
+                                View Branch
+                            </a>
+                            {{else if .CommitRef}}
+                            <code style="font-size: 0.8em;">{{slice .CommitRef 0 7}}</code>
+                            {{else}}
+                            <span style="color: #999;">-</span>
+                            {{end}}
+                        </td>
+                        {{end}}
+                    </tr>
+
+                    {{/* Demo row */}}
+                    <tr>
+                        <td class="row-header">Demo</td>
+                        {{range $v := $.View.SelectionData.Variations}}
+                        <td style="text-align: center;">
+                            {{if $v.DemoURL}}
+                            <div style="display: flex; gap: 4px; align-items: center; justify-content: center;">
+                                <a href="{{$v.DemoURL}}" target="_blank" style="padding: 4px 8px; background: #28a745; color: white; text-decoration: none; border-radius: 4px; font-size: 0.8em;">
+                                    View
+                                </a>
+                                <button type="submit" formaction="/p/{{$.ProjectID}}/variations/{{$v.ID}}/stop-demo" formmethod="POST" style="padding: 4px 6px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75em;" title="Stop Demo">
+                                    Stop
+                                </button>
+                            </div>
+                            {{else if eq $v.Status "pending"}}
+                            <button type="button" onclick="startDemoInNewTab('{{$.ProjectID}}', '{{$v.ID}}')" style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8em;">
+                                Start
+                            </button>
+                            {{else}}
+                            <span style="color: #999;">-</span>
+                            {{end}}
+                        </td>
+                        {{end}}
+                    </tr>
+
+                    {{/* Criteria rows */}}
+                    {{range $criterion := $.View.SelectionData.Criteria}}
+                    <tr class="criterion-row" data-criterion="{{$criterion}}">
+                        <td class="row-header">{{$criterion}}</td>
+                        {{range $v := $.View.SelectionData.Variations}}
+                        <td class="grade-cell" data-variation-id="{{$v.ID}}" data-criterion="{{$criterion}}" style="text-align: center;">
+                            <div class="grade-loading cell-spinner"></div>
+                        </td>
+                        {{end}}
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        <div class="scroll-indicator" style="display: none;">
+            <span style="color: #666; font-size: 0.8em;">Scroll for more &rarr;</span>
+        </div>
+    </div>
+    </form>
+    <form id="more-variations-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/request-more-variations" style="display: none;"></form>
+</div>
+{{else}}
+<div class="card">
+    <h2>Variation Comparison</h2>
+    <p class="empty">No variations found.</p>
+</div>
+{{end}}
+
+<div style="display: flex; gap: 20px; align-items: flex-start;">
+    {{/* Left column: Evaluation Criteria */}}
+    <div style="flex: 2;">
         {{if .EvaluationCriteria}}
         <div class="card">
             <h2>Evaluation Criteria</h2>
@@ -135,36 +180,21 @@
         {{end}}
     </div>
 
-    {{/* Right column: Actions */}}
+    {{/* Right column: Info cards */}}
     <div style="flex: 1;">
+        {{if ne .Decision.Status "resolved"}}
+        {{if not .CanSelect}}
         <div class="card">
-            <h2>Selection</h2>
-
-            {{if ne .Decision.Status "resolved"}}
-                {{if .CanSelect}}
-                <button id="select-button" type="submit" form="select-form" disabled style="width: 100%; padding: 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: not-allowed; font-weight: bold;">
-                    Select a winner
-                </button>
-                <p style="font-size: 0.85em; color: #666; margin-top: 15px;">
-                    Selecting a winner will merge the variation's branch into main and mark the hop as completed.
-                </p>
-
-                <div style="margin-top: 15px; border-top: 1px solid #ddd; padding-top: 15px;">
-                    <button type="button" onclick="document.getElementById('more-variations-form').submit()" style="width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Add More Variations
-                    </button>
-                    <p style="font-size: 0.8em; color: #999; margin-top: 8px;">
-                        Return to variation review to propose additional variations.
-                    </p>
-                </div>
-                <form id="more-variations-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/request-more-variations" style="display: none;"></form>
-                {{else}}
-                <div style="padding: 15px; background: #fff3cd; border-radius: 4px; text-align: center;">
-                    <strong>Waiting for variations...</strong><br>
-                    Selection will be available once all variations complete code generation.
-                </div>
-                {{end}}
-            {{else}}
+            <h2>Status</h2>
+            <div style="padding: 15px; background: #fff3cd; border-radius: 4px; text-align: center;">
+                <strong>Waiting for variations...</strong><br>
+                Selection will be available once all variations complete code generation.
+            </div>
+        </div>
+        {{end}}
+        {{else}}
+        <div class="card">
+            <h2>Result</h2>
             {{if eq .Resolution "approved"}}
             <div style="padding: 15px; background: #d4edda; border-radius: 4px; text-align: center;">
                 <strong>Winner Selected!</strong><br>
@@ -181,8 +211,8 @@
                 <strong>Decision Resolved</strong>
             </div>
             {{end}}
-            {{end}}
         </div>
+        {{end}}
 
         <div class="card">
             <h2>Hop Info</h2>
@@ -243,22 +273,77 @@
     animation: spin 0.8s linear infinite;
     display: inline-block;
 }
+.table-scroll-wrapper {
+    position: relative;
+}
 .table-scroll-container {
     overflow-x: auto;
     overflow-y: visible;
 }
-.variations-table {
+.comparison-table {
     border-collapse: collapse;
+    min-width: 100%;
 }
-.grade-header {
-    min-width: 120px;
+.comparison-table th,
+.comparison-table td {
+    padding: 10px 15px;
+    border-bottom: 1px solid #dee2e6;
     white-space: nowrap;
+}
+.comparison-table thead th {
+    background: #f8f9fa;
+    font-weight: bold;
     text-align: center;
+}
+.comparison-table .row-header {
+    font-weight: bold;
+    text-align: left;
+    background: #f8f9fa;
+    min-width: 150px;
+    position: sticky;
+    left: 0;
+    z-index: 1;
+}
+.comparison-table .variation-col {
+    min-width: 120px;
+    text-align: center;
+}
+.comparison-table .select-row {
+    background: #e8f4ff;
+}
+.comparison-table .criterion-row td {
+    vertical-align: middle;
+}
+.scroll-indicator {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    background: linear-gradient(to right, transparent, white 30%);
+    padding: 10px 15px 10px 30px;
+    pointer-events: none;
 }
 </style>
 
 {{if .CanSelect}}
 <script>
+// Start demo and open variation page in new tab
+function startDemoInNewTab(projectID, variationID) {
+    const url = '/p/' + projectID + '/variations/' + variationID + '/start-demo';
+    const viewUrl = '/p/' + projectID + '/variations/' + variationID;
+
+    // POST to start the demo
+    fetch(url, { method: 'POST' })
+        .then(function() {
+            // Open variation page in new tab
+            window.open(viewUrl, '_blank');
+        })
+        .catch(function(err) {
+            console.error('Failed to start demo:', err);
+            alert('Failed to start demo');
+        });
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     const radios = document.querySelectorAll('.winner-radio');
     const button = document.getElementById('select-button');
@@ -273,6 +358,25 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     });
+
+    // Check for horizontal scroll and show indicator
+    const wrapper = document.querySelector('.table-scroll-wrapper');
+    const container = document.querySelector('.table-scroll-container');
+    const indicator = document.querySelector('.scroll-indicator');
+
+    function checkScroll() {
+        if (container && indicator) {
+            const hasOverflow = container.scrollWidth > container.clientWidth;
+            const atEnd = container.scrollLeft + container.clientWidth >= container.scrollWidth - 5;
+            indicator.style.display = hasOverflow && !atEnd ? 'block' : 'none';
+        }
+    }
+
+    if (container) {
+        container.addEventListener('scroll', checkScroll);
+        window.addEventListener('resize', checkScroll);
+        checkScroll();
+    }
 
     // Fetch grades via AJAX
     loadGrades();
@@ -293,11 +397,8 @@ function loadGrades() {
             // Populate grades
             if (data.evaluations) {
                 data.evaluations.forEach(function(evalItem) {
-                    const row = document.querySelector('tr[data-variation-id="' + evalItem.variation_id + '"]');
-                    if (!row) return;
-
                     evalItem.scores.forEach(function(score) {
-                        const cell = row.querySelector('.grade-cell[data-criterion="' + score.criterion_name + '"]');
+                        const cell = document.querySelector('.grade-cell[data-variation-id="' + evalItem.variation_id + '"][data-criterion="' + score.criterion_name + '"]');
                         if (!cell) return;
 
                         const gradeValue = score.score;
@@ -332,8 +433,41 @@ function loadGrades() {
 </script>
 {{else}}
 <script>
+// Start demo and open variation page in new tab
+function startDemoInNewTab(projectID, variationID) {
+    const url = '/p/' + projectID + '/variations/' + variationID + '/start-demo';
+    const viewUrl = '/p/' + projectID + '/variations/' + variationID;
+
+    fetch(url, { method: 'POST' })
+        .then(function() {
+            window.open(viewUrl, '_blank');
+        })
+        .catch(function(err) {
+            console.error('Failed to start demo:', err);
+            alert('Failed to start demo');
+        });
+}
+
 document.addEventListener('DOMContentLoaded', function() {
-    // Load grades even if not selectable (for viewing)
+    // Check for horizontal scroll
+    const container = document.querySelector('.table-scroll-container');
+    const indicator = document.querySelector('.scroll-indicator');
+
+    function checkScroll() {
+        if (container && indicator) {
+            const hasOverflow = container.scrollWidth > container.clientWidth;
+            const atEnd = container.scrollLeft + container.clientWidth >= container.scrollWidth - 5;
+            indicator.style.display = hasOverflow && !atEnd ? 'block' : 'none';
+        }
+    }
+
+    if (container) {
+        container.addEventListener('scroll', checkScroll);
+        window.addEventListener('resize', checkScroll);
+        checkScroll();
+    }
+
+    // Load grades even if not selectable
     loadGrades();
 });
 
@@ -341,7 +475,6 @@ function loadGrades() {
     const hopID = '{{.Hop.ID}}';
     const projectID = '{{$.ProjectID}}';
 
-    // Check if there are any grade columns
     if (document.querySelectorAll('.grade-cell').length === 0) {
         return;
     }
@@ -349,14 +482,10 @@ function loadGrades() {
     fetch('/api/projects/' + projectID + '/hops/' + hopID + '/evaluate')
         .then(response => response.json())
         .then(data => {
-            // Populate grades
             if (data.evaluations) {
                 data.evaluations.forEach(function(evalItem) {
-                    const row = document.querySelector('tr[data-variation-id="' + evalItem.variation_id + '"]');
-                    if (!row) return;
-
                     evalItem.scores.forEach(function(score) {
-                        const cell = row.querySelector('.grade-cell[data-criterion="' + score.criterion_name + '"]');
+                        const cell = document.querySelector('.grade-cell[data-variation-id="' + evalItem.variation_id + '"][data-criterion="' + score.criterion_name + '"]');
                         if (!cell) return;
 
                         const gradeValue = score.score;
@@ -376,7 +505,6 @@ function loadGrades() {
                 });
             }
 
-            // Clear any remaining loading indicators
             document.querySelectorAll('.grade-loading').forEach(function(el) {
                 el.outerHTML = '<span style="color: #999;">-</span>';
             });

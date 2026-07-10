@@ -1877,6 +1877,7 @@ func (s *Server) mergeWinnerToMain(ctx context.Context, hop *domain.Hop, winner 
 }
 
 // apiEvaluateVariations evaluates variations for a hop and returns JSON.
+// Scores are cached in the database to avoid repeated LLM calls.
 func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	hopID, err := uuid.Parse(chi.URLParam(r, "hopID"))
@@ -1917,19 +1918,17 @@ func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build list for evaluation (only pending variations)
-	var variationsForEval []agent.VariationForEvaluation
+	// Build list of pending variations
+	var pendingVariations []domain.Variation
+	var variationIDs []uuid.UUID
 	for _, v := range variations {
 		if v.Status == domain.VariationStatusPending {
-			variationsForEval = append(variationsForEval, agent.VariationForEvaluation{
-				ID:       v.ID.String(),
-				Name:     v.Name,
-				Approach: v.Approach,
-			})
+			pendingVariations = append(pendingVariations, v)
+			variationIDs = append(variationIDs, v.ID)
 		}
 	}
 
-	if len(variationsForEval) == 0 {
+	if len(pendingVariations) == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"evaluations": []interface{}{},
@@ -1938,28 +1937,118 @@ func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Evaluate
-	evalInput := agent.VariationEvaluationInput{
-		HopName:    hop.Name,
-		Criteria:   criteria.Criteria,
-		Variations: variationsForEval,
+	// Check cache for existing scores
+	cachedScores, _ := s.db.GetVariationEvaluationScoresBulk(ctx, variationIDs)
+
+	// Build criteria name set for checking completeness
+	criteriaNames := make(map[string]bool)
+	for _, c := range criteria.Criteria {
+		criteriaNames[c.Name] = true
 	}
 
-	client, err := agent.NewClient("")
-	if err != nil {
-		http.Error(w, "failed to create agent client", http.StatusInternalServerError)
-		return
+	// Identify which variations need evaluation (missing or incomplete scores)
+	var variationsNeedingEval []agent.VariationForEvaluation
+	variationsWithCompleteCache := make(map[string]bool)
+
+	for _, v := range pendingVariations {
+		scores := cachedScores[v.ID]
+		scoredCriteria := make(map[string]bool)
+		for _, s := range scores {
+			scoredCriteria[s.CriterionName] = true
+		}
+
+		// Check if all criteria are scored
+		complete := true
+		for name := range criteriaNames {
+			if !scoredCriteria[name] {
+				complete = false
+				break
+			}
+		}
+
+		if complete {
+			variationsWithCompleteCache[v.ID.String()] = true
+		} else {
+			variationsNeedingEval = append(variationsNeedingEval, agent.VariationForEvaluation{
+				ID:       v.ID.String(),
+				Name:     v.Name,
+				Approach: v.Approach,
+			})
+		}
 	}
 
-	evaluator := agent.NewVariationEvaluator(client)
-	evalResult, _, err := evaluator.Evaluate(ctx, evalInput)
-	if err != nil {
-		http.Error(w, "evaluation failed: "+err.Error(), http.StatusInternalServerError)
-		return
+	// If some variations need evaluation, call LLM
+	var newEvaluations *agent.VariationEvaluationResponse
+	if len(variationsNeedingEval) > 0 {
+		evalInput := agent.VariationEvaluationInput{
+			HopName:    hop.Name,
+			Criteria:   criteria.Criteria,
+			Variations: variationsNeedingEval,
+		}
+
+		client, err := agent.NewClient("")
+		if err != nil {
+			http.Error(w, "failed to create agent client", http.StatusInternalServerError)
+			return
+		}
+
+		evaluator := agent.NewVariationEvaluator(client)
+		newEvaluations, _, err = evaluator.Evaluate(ctx, evalInput)
+		if err != nil {
+			http.Error(w, "evaluation failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Cache the new scores
+		for _, eval := range newEvaluations.Evaluations {
+			varID, err := uuid.Parse(eval.VariationID)
+			if err != nil {
+				continue
+			}
+			for _, score := range eval.Scores {
+				rationale := score.Rationale
+				s.db.SaveVariationEvaluationScore(ctx, varID, score.CriterionName, score.Score, &rationale)
+			}
+		}
+	}
+
+	// Build response combining cached and new evaluations
+	var allEvaluations []agent.VariationEvaluation
+
+	// Add cached evaluations
+	for _, v := range pendingVariations {
+		if variationsWithCompleteCache[v.ID.String()] {
+			scores := cachedScores[v.ID]
+			var evalScores []agent.VariationScore
+			for _, s := range scores {
+				rationale := ""
+				if s.Rationale != nil {
+					rationale = *s.Rationale
+				}
+				evalScores = append(evalScores, agent.VariationScore{
+					CriterionName: s.CriterionName,
+					Score:         s.Score,
+					Rationale:     rationale,
+				})
+			}
+			allEvaluations = append(allEvaluations, agent.VariationEvaluation{
+				VariationID: v.ID.String(),
+				Scores:      evalScores,
+			})
+		}
+	}
+
+	// Add new evaluations
+	if newEvaluations != nil {
+		allEvaluations = append(allEvaluations, newEvaluations.Evaluations...)
+	}
+
+	result := agent.VariationEvaluationResponse{
+		Evaluations: allEvaluations,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(evalResult)
+	json.NewEncoder(w).Encode(result)
 }
 
 // sanitizeBranchName converts a name to a git-safe branch name component.
