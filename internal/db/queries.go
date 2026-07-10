@@ -1723,98 +1723,41 @@ func (db *DB) MarkVariationMigrationReverted(ctx context.Context, id uuid.UUID) 
 	return nil
 }
 
-// VariationEvaluationScore represents a cached evaluation score.
-type VariationEvaluationScore struct {
-	ID            uuid.UUID
-	VariationID   uuid.UUID
-	CriterionName string
-	Score         float64
-	Rationale     *string
-	CreatedAt     time.Time
-}
-
-// GetVariationEvaluationScores retrieves all cached scores for a variation.
-func (db *DB) GetVariationEvaluationScores(ctx context.Context, variationID uuid.UUID) ([]VariationEvaluationScore, error) {
-	rows, err := db.Pool.Query(ctx, `
-		SELECT id, variation_id, criterion_name, score, rationale, created_at
-		FROM variation_evaluation_scores
-		WHERE variation_id = $1
-		ORDER BY criterion_name
-	`, variationID)
+// GetDecisionCache retrieves the cache JSON for a decision.
+func (db *DB) GetDecisionCache(ctx context.Context, decisionID uuid.UUID) (json.RawMessage, error) {
+	var cache json.RawMessage
+	err := db.Pool.QueryRow(ctx, `
+		SELECT cache FROM decisions WHERE id = $1
+	`, decisionID).Scan(&cache)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var scores []VariationEvaluationScore
-	for rows.Next() {
-		var s VariationEvaluationScore
-		if err := rows.Scan(&s.ID, &s.VariationID, &s.CriterionName, &s.Score, &s.Rationale, &s.CreatedAt); err != nil {
-			return nil, err
-		}
-		scores = append(scores, s)
-	}
-	return scores, rows.Err()
+	return cache, nil
 }
 
-// GetVariationEvaluationScoresBulk retrieves cached scores for multiple variations.
-func (db *DB) GetVariationEvaluationScoresBulk(ctx context.Context, variationIDs []uuid.UUID) (map[uuid.UUID][]VariationEvaluationScore, error) {
-	if len(variationIDs) == 0 {
-		return make(map[uuid.UUID][]VariationEvaluationScore), nil
-	}
-
-	rows, err := db.Pool.Query(ctx, `
-		SELECT id, variation_id, criterion_name, score, rationale, created_at
-		FROM variation_evaluation_scores
-		WHERE variation_id = ANY($1)
-		ORDER BY variation_id, criterion_name
-	`, variationIDs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	result := make(map[uuid.UUID][]VariationEvaluationScore)
-	for rows.Next() {
-		var s VariationEvaluationScore
-		if err := rows.Scan(&s.ID, &s.VariationID, &s.CriterionName, &s.Score, &s.Rationale, &s.CreatedAt); err != nil {
-			return nil, err
-		}
-		result[s.VariationID] = append(result[s.VariationID], s)
-	}
-	return result, rows.Err()
-}
-
-// SaveVariationEvaluationScore upserts a single evaluation score.
-func (db *DB) SaveVariationEvaluationScore(ctx context.Context, variationID uuid.UUID, criterionName string, score float64, rationale *string) error {
+// SetDecisionCache updates the cache JSON for a decision.
+func (db *DB) SetDecisionCache(ctx context.Context, decisionID uuid.UUID, cache json.RawMessage) error {
 	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO variation_evaluation_scores (variation_id, criterion_name, score, rationale)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (variation_id, criterion_name)
-		DO UPDATE SET score = EXCLUDED.score, rationale = EXCLUDED.rationale, created_at = NOW()
-	`, variationID, criterionName, score, rationale)
+		UPDATE decisions SET cache = $2, updated_at = NOW() WHERE id = $1
+	`, decisionID, cache)
 	return err
 }
 
-// SaveVariationEvaluationScores saves multiple evaluation scores for a variation.
-func (db *DB) SaveVariationEvaluationScores(ctx context.Context, variationID uuid.UUID, scores []struct {
-	CriterionName string
-	Score         float64
-	Rationale     *string
-}) error {
-	for _, s := range scores {
-		if err := db.SaveVariationEvaluationScore(ctx, variationID, s.CriterionName, s.Score, s.Rationale); err != nil {
-			return err
-		}
-	}
-	return nil
+// ClearDecisionCache sets the cache to NULL for a decision.
+func (db *DB) ClearDecisionCache(ctx context.Context, decisionID uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE decisions SET cache = NULL, updated_at = NOW() WHERE id = $1
+	`, decisionID)
+	return err
 }
 
-// DeleteVariationEvaluationScores removes all cached scores for a variation.
-func (db *DB) DeleteVariationEvaluationScores(ctx context.Context, variationID uuid.UUID) error {
+// ClearDecisionCacheBySubject clears cache for all decisions related to a subject.
+// Used when evaluation criteria change for a hop.
+func (db *DB) ClearDecisionCacheBySubject(ctx context.Context, subjectType string, subjectID uuid.UUID) error {
 	_, err := db.Pool.Exec(ctx, `
-		DELETE FROM variation_evaluation_scores WHERE variation_id = $1
-	`, variationID)
+		UPDATE decisions SET cache = NULL, updated_at = NOW()
+		WHERE subject_type = $1 AND subject_id = $2
+	`, subjectType, subjectID)
 	return err
 }
 

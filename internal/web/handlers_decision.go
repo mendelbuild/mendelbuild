@@ -1877,7 +1877,7 @@ func (s *Server) mergeWinnerToMain(ctx context.Context, hop *domain.Hop, winner 
 }
 
 // apiEvaluateVariations evaluates variations for a hop and returns JSON.
-// Scores are cached in the database to avoid repeated LLM calls.
+// Scores are cached in the decision's cache field to avoid repeated LLM calls.
 func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	hopID, err := uuid.Parse(chi.URLParam(r, "hopID"))
@@ -1902,7 +1902,6 @@ func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(criteria.Criteria) == 0 {
-		// No criteria to evaluate against
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"evaluations": []interface{}{},
@@ -1919,12 +1918,14 @@ func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build list of pending variations
-	var pendingVariations []domain.Variation
-	var variationIDs []uuid.UUID
+	var pendingVariations []agent.VariationForEvaluation
 	for _, v := range variations {
 		if v.Status == domain.VariationStatusPending {
-			pendingVariations = append(pendingVariations, v)
-			variationIDs = append(variationIDs, v.ID)
+			pendingVariations = append(pendingVariations, agent.VariationForEvaluation{
+				ID:       v.ID.String(),
+				Name:     v.Name,
+				Approach: v.Approach,
+			})
 		}
 	}
 
@@ -1937,118 +1938,54 @@ func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check cache for existing scores
-	cachedScores, _ := s.db.GetVariationEvaluationScoresBulk(ctx, variationIDs)
-
-	// Build criteria name set for checking completeness
-	criteriaNames := make(map[string]bool)
-	for _, c := range criteria.Criteria {
-		criteriaNames[c.Name] = true
+	// Find the variation_selection decision for this hop to check/store cache
+	decision, err := s.db.GetDecisionBySubjectAndKind(ctx, "hop", hopID, domain.DecisionKindVariationSelection)
+	if err != nil {
+		// No decision found - evaluate without caching
+		decision = nil
 	}
 
-	// Identify which variations need evaluation (missing or incomplete scores)
-	var variationsNeedingEval []agent.VariationForEvaluation
-	variationsWithCompleteCache := make(map[string]bool)
-
-	for _, v := range pendingVariations {
-		scores := cachedScores[v.ID]
-		scoredCriteria := make(map[string]bool)
-		for _, s := range scores {
-			scoredCriteria[s.CriterionName] = true
-		}
-
-		// Check if all criteria are scored
-		complete := true
-		for name := range criteriaNames {
-			if !scoredCriteria[name] {
-				complete = false
-				break
-			}
-		}
-
-		if complete {
-			variationsWithCompleteCache[v.ID.String()] = true
-		} else {
-			variationsNeedingEval = append(variationsNeedingEval, agent.VariationForEvaluation{
-				ID:       v.ID.String(),
-				Name:     v.Name,
-				Approach: v.Approach,
-			})
-		}
-	}
-
-	// If some variations need evaluation, call LLM
-	var newEvaluations *agent.VariationEvaluationResponse
-	if len(variationsNeedingEval) > 0 {
-		evalInput := agent.VariationEvaluationInput{
-			HopName:    hop.Name,
-			Criteria:   criteria.Criteria,
-			Variations: variationsNeedingEval,
-		}
-
-		client, err := agent.NewClient("")
-		if err != nil {
-			http.Error(w, "failed to create agent client", http.StatusInternalServerError)
+	// Check cache
+	if decision != nil {
+		cacheData, err := s.db.GetDecisionCache(ctx, decision.ID)
+		if err == nil && len(cacheData) > 0 {
+			// Return cached data directly
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(cacheData)
 			return
 		}
-
-		evaluator := agent.NewVariationEvaluator(client)
-		newEvaluations, _, err = evaluator.Evaluate(ctx, evalInput)
-		if err != nil {
-			http.Error(w, "evaluation failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// Cache the new scores
-		for _, eval := range newEvaluations.Evaluations {
-			varID, err := uuid.Parse(eval.VariationID)
-			if err != nil {
-				continue
-			}
-			for _, score := range eval.Scores {
-				rationale := score.Rationale
-				s.db.SaveVariationEvaluationScore(ctx, varID, score.CriterionName, score.Score, &rationale)
-			}
-		}
 	}
 
-	// Build response combining cached and new evaluations
-	var allEvaluations []agent.VariationEvaluation
+	// No cache - call LLM
+	evalInput := agent.VariationEvaluationInput{
+		HopName:    hop.Name,
+		Criteria:   criteria.Criteria,
+		Variations: pendingVariations,
+	}
 
-	// Add cached evaluations
-	for _, v := range pendingVariations {
-		if variationsWithCompleteCache[v.ID.String()] {
-			scores := cachedScores[v.ID]
-			var evalScores []agent.VariationScore
-			for _, s := range scores {
-				rationale := ""
-				if s.Rationale != nil {
-					rationale = *s.Rationale
-				}
-				evalScores = append(evalScores, agent.VariationScore{
-					CriterionName: s.CriterionName,
-					Score:         s.Score,
-					Rationale:     rationale,
-				})
-			}
-			allEvaluations = append(allEvaluations, agent.VariationEvaluation{
-				VariationID: v.ID.String(),
-				Scores:      evalScores,
-			})
+	client, err := agent.NewClient("")
+	if err != nil {
+		http.Error(w, "failed to create agent client", http.StatusInternalServerError)
+		return
+	}
+
+	evaluator := agent.NewVariationEvaluator(client)
+	evalResult, _, err := evaluator.Evaluate(ctx, evalInput)
+	if err != nil {
+		http.Error(w, "evaluation failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Cache the result
+	if decision != nil {
+		cacheJSON, err := json.Marshal(evalResult)
+		if err == nil {
+			s.db.SetDecisionCache(ctx, decision.ID, cacheJSON)
 		}
-	}
-
-	// Add new evaluations
-	if newEvaluations != nil {
-		allEvaluations = append(allEvaluations, newEvaluations.Evaluations...)
-	}
-
-	result := agent.VariationEvaluationResponse{
-		Evaluations: allEvaluations,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	json.NewEncoder(w).Encode(evalResult)
 }
 
 // sanitizeBranchName converts a name to a git-safe branch name component.

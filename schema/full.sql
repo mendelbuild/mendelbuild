@@ -319,26 +319,6 @@ CREATE INDEX idx_variation_logs_logged_at ON variation_logs(variation_id, logged
 CREATE INDEX idx_variation_logs_source ON variation_logs(source_type, source_id);
 
 --------------------------------------------------------------------------------
--- VARIATION EVALUATION SCORES
---------------------------------------------------------------------------------
--- Cache for variation evaluation scores against criteria [added in 013]
--- Scores are computed by LLM and cached here to avoid repeated API calls
-
-CREATE TABLE variation_evaluation_scores (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    variation_id UUID NOT NULL REFERENCES variations(id) ON DELETE CASCADE,
-    criterion_name TEXT NOT NULL,
-    score DECIMAL(3,2) NOT NULL CHECK (score >= 0 AND score <= 1),
-    rationale TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    -- Only one score per variation per criterion
-    UNIQUE (variation_id, criterion_name)
-);
-
-CREATE INDEX idx_variation_eval_scores_variation ON variation_evaluation_scores(variation_id);
-
---------------------------------------------------------------------------------
 -- DEMO INSTANCES
 --------------------------------------------------------------------------------
 -- Demo instances track running demos of variations [added in 008]
@@ -444,6 +424,10 @@ CREATE TABLE decisions (
     -- What entity does this decision relate to?
     subject_type TEXT,     -- 'hop', 'variation', 'strategy', etc.
     subject_id UUID,
+
+    -- Cache for computed/ephemeral data (structure varies by kind) [added in 013]
+    -- For variation_selection: stores LLM-computed evaluation scores
+    cache JSONB,
 
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()

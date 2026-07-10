@@ -243,6 +243,9 @@ func (s *Server) proposeVariationsForHop(ctx context.Context, hop *domain.Hop) e
 			if err == nil {
 				if err := s.db.UpdateHopEvaluationCriteria(ctx, hop.ID, criteriaJSON); err != nil {
 					fmt.Printf("[worker] Warning: failed to save evaluation criteria: %v\n", err)
+				} else {
+					// Invalidate cached evaluation scores since criteria changed
+					s.db.ClearDecisionCacheBySubject(ctx, "hop", hop.ID)
 				}
 			}
 		}
