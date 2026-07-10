@@ -20,7 +20,16 @@
                     <th>Approach</th>
                     <td>{{.Variation.Approach}}</td>
                 </tr>
-                {{if .Variation.CommitRef}}
+                {{if .GitHubURL}}
+                <tr>
+                    <th>Branch</th>
+                    <td>
+                        <a href="{{.GitHubURL}}" target="_blank" style="font-family: monospace;">
+                            {{if .Variation.CommitRef}}{{slice .Variation.CommitRef 0 8}}{{else}}View on GitHub{{end}} ↗
+                        </a>
+                    </td>
+                </tr>
+                {{else if .Variation.CommitRef}}
                 <tr>
                     <th>Commit</th>
                     <td><code>{{slice .Variation.CommitRef 0 8}}</code></td>
@@ -82,9 +91,18 @@
                 <div style="margin-top: 15px; padding: 10px; background: #f8d7da; border-radius: 4px;">
                     <strong style="color: #721c24;">Error:</strong>
                     <p style="margin: 5px 0; color: #721c24; font-family: monospace; white-space: pre-wrap;">{{.DemoInstance.ErrorMessage}}</p>
+
+                    <div style="margin-top: 10px; display: flex; gap: 10px; align-items: flex-start;">
+                        <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/restart-demo">
+                            <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                Retry Demo
+                            </button>
+                        </form>
+                    </div>
+
                     {{if .DemoInstance.SuggestedFix}}
-                    <div style="margin-top: 10px;">
-                        <strong style="color: #856404;">Suggested fix:</strong>
+                    <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #f5c6cb;">
+                        <strong style="color: #856404;">Or apply a fix first:</strong>
                         <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry-demo" style="margin-top: 5px;">
                             <textarea name="fix_prompt" style="width: 100%; height: 100px; font-family: monospace; font-size: 0.85em; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">{{.DemoInstance.SuggestedFix}}</textarea>
                             <button type="submit" style="margin-top: 8px; padding: 8px 16px; background: #ffc107; color: #212529; border: none; border-radius: 4px; cursor: pointer;">

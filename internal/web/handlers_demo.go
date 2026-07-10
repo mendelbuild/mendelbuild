@@ -1,7 +1,6 @@
 package web
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -48,7 +46,36 @@ func executeMigrationInstructions(ctx context.Context, workDir, instructions str
 	return nil
 }
 
-// handleStartDemo starts a demo instance for a variation using .mendel/demo.yaml.
+// generateFixPrompt creates a well-contextualized prompt for Claude Code to fix a Docker-based dev environment issue.
+func generateFixPrompt(errMsg string) string {
+	return fmt.Sprintf(`I'm trying to run the local development environment using Docker, but encountered an error.
+
+## Error
+%s
+
+## Context
+The demo runs via Docker Compose from the .mendel/ directory:
+- .mendel/docker-compose.yml defines all services (app, database, etc.)
+- .mendel/demo.yaml specifies which service to expose and any setup scripts
+
+## What to check
+1. Does .mendel/docker-compose.yml exist and define all needed services?
+2. Are service health checks configured correctly?
+3. Do after_up scripts in .mendel/demo.yaml work? (migrations, seed data)
+4. Are environment variables and connection strings correct for Docker networking?
+   - Services communicate via service names (e.g., db:5432, not localhost:5432)
+
+## What to do
+1. Diagnose the root cause from the error message
+2. Fix the Docker Compose or demo.yaml configuration
+3. If the main app needs a Dockerfile, create/update it
+4. Make sure the fix is committed to this branch
+
+The goal is a working Docker-based local dev environment.`, errMsg)
+}
+
+// handleStartDemo starts a demo instance for a variation using Docker.
+// Uses .mendel/docker-compose.yml and .mendel/demo.yaml for configuration.
 // The actual startup runs in a background goroutine with output logged to variation_logs.
 func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -82,6 +109,12 @@ func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check for .mendel/docker-compose.yml
+	if !demo.HasDockerCompose(workDir) {
+		http.Error(w, "demo not configured: .mendel/docker-compose.yml not found", http.StatusBadRequest)
+		return
+	}
+
 	// Load demo config from .mendel/demo.yaml
 	cfg, err := demo.LoadConfig(workDir)
 	if err != nil {
@@ -91,24 +124,17 @@ func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 
 	// Create demo instance with "starting" status immediately
 	demoInstanceID := uuid.New()
-	port := 0
-	demoURL := ""
-	if cfg.Type == "local" {
-		port = demo.AllocatePort(variationID.String(), cfg.Port)
-		demoURL = fmt.Sprintf("http://localhost:%d", port)
-	}
 
 	processInfo, _ := json.Marshal(map[string]interface{}{
-		"port":     port,
 		"work_dir": workDir,
-		"type":     cfg.Type,
+		"service":  cfg.Service,
 	})
 
 	demoInstance := &domain.DemoInstance{
 		ID:                   demoInstanceID,
 		VariationID:          variationID,
-		URL:                  demoURL,
-		TeardownInstructions: "", // Will be set once we know the full command
+		URL:                  "", // Will be set once we know the port
+		TeardownInstructions: fmt.Sprintf("cd %s/.mendel && docker-compose down -v", workDir),
 		Status:               domain.DemoInstanceStatusStarting,
 		ProcessInfo:          processInfo,
 	}
@@ -119,14 +145,14 @@ func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Start the demo in a background goroutine
-	go s.runDemoStartup(projectID, variationID, demoInstanceID, workDir, cfg, port)
+	go s.runDemoStartup(projectID, variationID, demoInstanceID, workDir, cfg)
 
 	// Redirect immediately - user will see "starting" status
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
 }
 
-// runDemoStartup runs the demo startup process in the background, logging output to variation_logs.
-func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uuid.UUID, workDir string, cfg *demo.Config, port int) {
+// runDemoStartup runs the Docker-based demo startup process in the background.
+func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uuid.UUID, workDir string, cfg *demo.Config) {
 	ctx := context.Background()
 
 	// Helper to log with source tracking
@@ -140,115 +166,59 @@ func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uu
 		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelError, msg, domain.SourceTypeDemo, &demoInstanceID)
 	}
 
-	// Helper to handle failures
+	// Helper to handle failures - tears down containers before recording error
 	failDemo := func(errMsg string) {
 		logError(errMsg)
-		// TODO: Call LLM to suggest a fix
-		suggestedFix := fmt.Sprintf("Please investigate and fix the following error in the demo setup:\n\n%s", errMsg)
+		logInfo("Tearing down containers...")
+		if output, err := demo.DockerComposeDown(workDir, true); err != nil {
+			logInfo(fmt.Sprintf("Teardown warning: %v\n%s", err, output))
+		}
+		suggestedFix := generateFixPrompt(errMsg)
 		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, suggestedFix)
 	}
 
-	logMilestone("Starting demo...")
+	logMilestone("Starting Docker containers...")
 
-	// Build variable substitution map
-	vars := map[string]string{
-		"VARIATION_ID": variationID.String(),
+	// Run docker-compose up
+	logInfo("Running: docker-compose up -d --build --wait")
+	output, err := demo.DockerComposeUp(workDir)
+	if output != "" {
+		logInfo(truncateOutput(output, 6000))
 	}
-
-	var demoURL string
-	if cfg.Type == "local" {
-		vars["PORT"] = fmt.Sprintf("%d", port)
-		demoURL = fmt.Sprintf("http://localhost:%d", port)
-	}
-
-	// Apply migration if one exists and hasn't been applied yet
-	migration, err := s.db.GetVariationMigration(ctx, variationID)
-	if err == nil && migration != nil && migration.AppliedAt == nil {
-		logInfo("Applying migration...")
-		if err := executeMigrationInstructions(ctx, workDir, migration.UpInstructions); err != nil {
-			failDemo(fmt.Sprintf("Migration failed: %v", err))
-			return
-		}
-		s.db.MarkVariationMigrationApplied(ctx, migration.ID)
-		logMilestone("Migration applied")
-	}
-
-	// Copy env file if specified
-	if cfg.EnvFile != "" {
-		logInfo(fmt.Sprintf("Copying %s to .env", cfg.EnvFile))
-		envSrc := filepath.Join(workDir, cfg.EnvFile)
-		envDst := filepath.Join(workDir, ".env")
-		if err := copyFile(envSrc, envDst); err != nil {
-			failDemo(fmt.Sprintf("Failed to copy env file: %v", err))
-			return
-		}
-	}
-
-	// Run setup commands
-	for i, setupCmd := range cfg.Setup {
-		cmdStr := demo.SubstituteVariables(setupCmd, vars)
-		logInfo(fmt.Sprintf("Running setup [%d/%d]: %s", i+1, len(cfg.Setup), cmdStr))
-
-		cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
-		cmd.Dir = workDir
-		output, err := cmd.CombinedOutput()
-
-		if len(output) > 0 {
-			// Log output in chunks if very long
-			outStr := string(output)
-			if len(outStr) > 2000 {
-				outStr = outStr[:2000] + "\n... (truncated)"
-			}
-			logInfo(outStr)
-		}
-
-		if err != nil {
-			failDemo(fmt.Sprintf("Setup command failed: %s\n\nError: %v\n\nOutput:\n%s", setupCmd, err, string(output)))
-			return
-		}
-	}
-	if len(cfg.Setup) > 0 {
-		logMilestone("Setup complete")
-	}
-
-	// Start the service
-	startCmd := demo.SubstituteVariables(cfg.Start, vars)
-	logInfo(fmt.Sprintf("Starting service: %s", startCmd))
-
-	cmd := exec.CommandContext(ctx, "sh", "-c", startCmd)
-	cmd.Dir = workDir
-
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stdout
-
-	if err := cmd.Start(); err != nil {
-		failDemo(fmt.Sprintf("Failed to start service: %v", err))
+	if err != nil {
+		failDemo(fmt.Sprintf("docker-compose up failed: %v\n\nOutput tail:\n%s", err, lastNChars(output, 2000)))
 		return
 	}
+	logMilestone("Containers started")
 
-	// For cloud mode, capture output to extract URL
-	if cfg.Type == "cloud" {
-		logInfo("Waiting for deployment URL...")
-		time.Sleep(5 * time.Second)
-		output := stdout.String()
-		if len(output) > 0 {
-			logInfo(output)
+	// Run after_up scripts (migrations, seed data, etc.)
+	for i, script := range cfg.AfterUp {
+		logInfo(fmt.Sprintf("Running after_up [%d/%d]: %s", i+1, len(cfg.AfterUp), script))
+		output, err := demo.RunScript(workDir, script)
+		if output != "" {
+			logInfo(truncateOutput(output, 2000))
 		}
-		demoURL = demo.ExtractURL(output, cfg.URLPattern)
-		if demoURL == "" {
-			failDemo("Could not extract deployment URL from output")
+		if err != nil {
+			failDemo(fmt.Sprintf("after_up script failed: %s\n\nError: %v", script, err))
 			return
 		}
-		vars["DEPLOY_URL"] = demoURL
-		logInfo(fmt.Sprintf("Deployment URL: %s", demoURL))
+	}
+	if len(cfg.AfterUp) > 0 {
+		logMilestone("Setup scripts complete")
 	}
 
-	// Build teardown command
-	teardownCmd := demo.SubstituteVariables(cfg.Stop, vars)
+	// Get the exposed port for the service
+	logInfo(fmt.Sprintf("Getting port for service '%s'...", cfg.Service))
+	port, err := demo.GetServicePort(workDir, cfg.Service, cfg.ContainerPort)
+	if err != nil {
+		failDemo(fmt.Sprintf("Failed to get service port: %v", err))
+		return
+	}
+	demoURL := fmt.Sprintf("http://localhost:%d", port)
+	logInfo(fmt.Sprintf("Service available at %s", demoURL))
 
 	// Wait for health check
-	healthURL := demo.SubstituteVariables(cfg.HealthURL, vars)
+	healthURL := fmt.Sprintf("http://localhost:%d%s", port, cfg.HealthPath)
 	logInfo(fmt.Sprintf("Waiting for health check: %s", healthURL))
 
 	healthy := false
@@ -272,32 +242,44 @@ func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uu
 	}
 
 	if !healthy {
-		// Cleanup: run teardown
-		logInfo("Health check failed, running teardown...")
-		teardown := exec.CommandContext(ctx, "sh", "-c", teardownCmd)
-		teardown.Dir = workDir
-		teardown.Run()
-
 		failDemo(fmt.Sprintf("Health check failed after %d seconds (%d attempts)", cfg.HealthTimeout, attempts))
 		return
 	}
 
 	logMilestone(fmt.Sprintf("Demo running at %s", demoURL))
 
-	// Update demo instance to running status with full info
+	// Update demo instance to running status
 	processInfo, _ := json.Marshal(map[string]interface{}{
-		"port":     port,
-		"pid":      cmd.Process.Pid,
 		"work_dir": workDir,
-		"type":     cfg.Type,
+		"service":  cfg.Service,
+		"port":     port,
 	})
 
-	// Update the demo instance with URL, teardown, and running status
 	s.db.Pool.Exec(ctx, `
 		UPDATE demo_instances
 		SET url = $2, teardown_instructions = $3, status = $4, process_info = $5
 		WHERE id = $1
-	`, demoInstanceID, demoURL, teardownCmd, domain.DemoInstanceStatusRunning, processInfo)
+	`, demoInstanceID, demoURL, fmt.Sprintf("cd %s/.mendel && docker-compose down -v", workDir), domain.DemoInstanceStatusRunning, processInfo)
+}
+
+// truncateOutput truncates output to maxLen characters, keeping both beginning and end.
+// This is important for Docker output where errors appear at the end.
+func truncateOutput(output string, maxLen int) string {
+	if len(output) <= maxLen {
+		return output
+	}
+	// Keep 20% from start, 80% from end (errors are usually at the end)
+	headLen := maxLen / 5
+	tailLen := maxLen - headLen - 50 // 50 chars for the truncation notice
+	return output[:headLen] + "\n\n... (truncated " + fmt.Sprintf("%d", len(output)-maxLen) + " chars) ...\n\n" + output[len(output)-tailLen:]
+}
+
+// lastNChars returns the last n characters of a string.
+func lastNChars(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
 }
 
 // createErrorDemoInstance records a failed demo attempt.
@@ -517,8 +499,9 @@ func (s *Server) runFixAndDemo(projectID string, variationID, demoInstanceID uui
 	logInfo(fmt.Sprintf("Prompt: %s", fixPrompt))
 
 	// Run Claude Code with the fix prompt
-	// Use --print to get output without interactive mode
-	cmd := exec.CommandContext(ctx, "claude", "--print", fixPrompt)
+	// --print: non-interactive output mode
+	// --dangerously-skip-permissions: allow file writes without approval
+	cmd := exec.CommandContext(ctx, "claude", "--print", "--dangerously-skip-permissions", fixPrompt)
 	cmd.Dir = workDir
 
 	output, err := cmd.CombinedOutput()
@@ -540,21 +523,84 @@ func (s *Server) runFixAndDemo(projectID string, variationID, demoInstanceID uui
 
 	logMilestone("Fix applied, starting demo...")
 
-	// Now load demo config and start the demo
+	// Check for docker-compose
+	if !demo.HasDockerCompose(workDir) {
+		errMsg := "Docker configuration not found: .mendel/docker-compose.yml"
+		logError(errMsg)
+		missingDockerPrompt := `The project needs Docker configuration for demos.
+
+Create .mendel/docker-compose.yml that defines all services needed to run the application. Example:
+
+` + "```yaml" + `
+# .mendel/docker-compose.yml
+
+# Include the project's existing docker-compose if it has one
+# include:
+#   - path: ../docker-compose.yml
+#     project_directory: ..
+
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "3000"  # Mendel will allocate a host port dynamically
+    environment:
+      - DATABASE_URL=postgresql://dev:dev@db:5432/app
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev -d app"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+` + "```" + `
+
+Also create .mendel/demo.yaml:
+
+` + "```yaml" + `
+version: 1
+service: web
+container_port: 3000
+health_path: /health
+after_up:
+  - "docker-compose exec -T web npm run db:migrate"
+  - "docker-compose exec -T web npm run db:seed"
+` + "```" + `
+
+Adapt to match the project's actual stack.`
+		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, missingDockerPrompt)
+		return
+	}
+
+	// Load demo config
 	cfg, err := demo.LoadConfig(workDir)
 	if err != nil {
 		errMsg := fmt.Sprintf("Failed to load demo config: %v", err)
 		logError(errMsg)
-		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, "Check that .mendel/demo.yaml exists and is valid")
+		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, generateFixPrompt(errMsg))
 		return
 	}
 
-	// Continue with normal demo startup (reusing the same demo instance)
+	// Continue with Docker-based demo startup
 	s.continueDemoStartup(ctx, projectID, variationID, demoInstanceID, workDir, cfg)
 }
 
-// continueDemoStartup continues the demo startup process after a fix has been applied.
-// This is similar to runDemoStartup but reuses an existing demo instance.
+// continueDemoStartup continues the Docker-based demo startup after a fix has been applied.
 func (s *Server) continueDemoStartup(ctx context.Context, projectID string, variationID, demoInstanceID uuid.UUID, workDir string, cfg *demo.Config) {
 	// Helper to log with source tracking
 	logInfo := func(msg string) {
@@ -567,100 +613,59 @@ func (s *Server) continueDemoStartup(ctx context.Context, projectID string, vari
 		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelError, msg, domain.SourceTypeDemo, &demoInstanceID)
 	}
 
+	// Helper to handle failures - tears down containers before recording error
 	failDemo := func(errMsg string) {
 		logError(errMsg)
-		suggestedFix := fmt.Sprintf("Please investigate and fix the following error:\n\n%s", errMsg)
+		logInfo("Tearing down containers...")
+		if output, err := demo.DockerComposeDown(workDir, true); err != nil {
+			logInfo(fmt.Sprintf("Teardown warning: %v\n%s", err, output))
+		}
+		suggestedFix := generateFixPrompt(errMsg)
 		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, suggestedFix)
 	}
 
-	// Build variable substitution map
-	vars := map[string]string{
-		"VARIATION_ID": variationID.String(),
+	logMilestone("Starting Docker containers...")
+
+	// Run docker-compose up
+	logInfo("Running: docker-compose up -d --build --wait")
+	output, err := demo.DockerComposeUp(workDir)
+	if output != "" {
+		logInfo(truncateOutput(output, 6000))
 	}
-
-	var demoURL string
-	var port int
-	if cfg.Type == "local" {
-		port = demo.AllocatePort(variationID.String(), cfg.Port)
-		vars["PORT"] = fmt.Sprintf("%d", port)
-		demoURL = fmt.Sprintf("http://localhost:%d", port)
-	}
-
-	// Copy env file if specified
-	if cfg.EnvFile != "" {
-		logInfo(fmt.Sprintf("Copying %s to .env", cfg.EnvFile))
-		envSrc := filepath.Join(workDir, cfg.EnvFile)
-		envDst := filepath.Join(workDir, ".env")
-		if err := copyFile(envSrc, envDst); err != nil {
-			failDemo(fmt.Sprintf("Failed to copy env file: %v", err))
-			return
-		}
-	}
-
-	// Run setup commands
-	for i, setupCmd := range cfg.Setup {
-		cmdStr := demo.SubstituteVariables(setupCmd, vars)
-		logInfo(fmt.Sprintf("Running setup [%d/%d]: %s", i+1, len(cfg.Setup), cmdStr))
-
-		cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
-		cmd.Dir = workDir
-		output, err := cmd.CombinedOutput()
-
-		if len(output) > 0 {
-			outStr := string(output)
-			if len(outStr) > 2000 {
-				outStr = outStr[:2000] + "\n... (truncated)"
-			}
-			logInfo(outStr)
-		}
-
-		if err != nil {
-			failDemo(fmt.Sprintf("Setup command failed: %s\n\nError: %v\n\nOutput:\n%s", setupCmd, err, string(output)))
-			return
-		}
-	}
-	if len(cfg.Setup) > 0 {
-		logMilestone("Setup complete")
-	}
-
-	// Start the service
-	startCmd := demo.SubstituteVariables(cfg.Start, vars)
-	logInfo(fmt.Sprintf("Starting service: %s", startCmd))
-
-	cmd := exec.CommandContext(ctx, "sh", "-c", startCmd)
-	cmd.Dir = workDir
-
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stdout
-
-	if err := cmd.Start(); err != nil {
-		failDemo(fmt.Sprintf("Failed to start service: %v", err))
+	if err != nil {
+		failDemo(fmt.Sprintf("docker-compose up failed: %v\n\nOutput tail:\n%s", err, lastNChars(output, 2000)))
 		return
 	}
+	logMilestone("Containers started")
 
-	// For cloud mode, capture output to extract URL
-	if cfg.Type == "cloud" {
-		logInfo("Waiting for deployment URL...")
-		time.Sleep(5 * time.Second)
-		output := stdout.String()
-		if len(output) > 0 {
-			logInfo(output)
+	// Run after_up scripts (migrations, seed data, etc.)
+	for i, script := range cfg.AfterUp {
+		logInfo(fmt.Sprintf("Running after_up [%d/%d]: %s", i+1, len(cfg.AfterUp), script))
+		output, err := demo.RunScript(workDir, script)
+		if output != "" {
+			logInfo(truncateOutput(output, 2000))
 		}
-		demoURL = demo.ExtractURL(output, cfg.URLPattern)
-		if demoURL == "" {
-			failDemo("Could not extract deployment URL from output")
+		if err != nil {
+			failDemo(fmt.Sprintf("after_up script failed: %s\n\nError: %v", script, err))
 			return
 		}
-		vars["DEPLOY_URL"] = demoURL
-		logInfo(fmt.Sprintf("Deployment URL: %s", demoURL))
+	}
+	if len(cfg.AfterUp) > 0 {
+		logMilestone("Setup scripts complete")
 	}
 
-	// Build teardown command
-	teardownCmd := demo.SubstituteVariables(cfg.Stop, vars)
+	// Get the exposed port for the service
+	logInfo(fmt.Sprintf("Getting port for service '%s'...", cfg.Service))
+	port, err := demo.GetServicePort(workDir, cfg.Service, cfg.ContainerPort)
+	if err != nil {
+		failDemo(fmt.Sprintf("Failed to get service port: %v", err))
+		return
+	}
+	demoURL := fmt.Sprintf("http://localhost:%d", port)
+	logInfo(fmt.Sprintf("Service available at %s", demoURL))
 
 	// Wait for health check
-	healthURL := demo.SubstituteVariables(cfg.HealthURL, vars)
+	healthURL := fmt.Sprintf("http://localhost:%d%s", port, cfg.HealthPath)
 	logInfo(fmt.Sprintf("Waiting for health check: %s", healthURL))
 
 	healthy := false
@@ -684,11 +689,6 @@ func (s *Server) continueDemoStartup(ctx context.Context, projectID string, vari
 	}
 
 	if !healthy {
-		logInfo("Health check failed, running teardown...")
-		teardown := exec.CommandContext(ctx, "sh", "-c", teardownCmd)
-		teardown.Dir = workDir
-		teardown.Run()
-
 		failDemo(fmt.Sprintf("Health check failed after %d seconds (%d attempts)", cfg.HealthTimeout, attempts))
 		return
 	}
@@ -697,15 +697,76 @@ func (s *Server) continueDemoStartup(ctx context.Context, projectID string, vari
 
 	// Update demo instance to running status
 	processInfo, _ := json.Marshal(map[string]interface{}{
-		"port":     port,
-		"pid":      cmd.Process.Pid,
 		"work_dir": workDir,
-		"type":     cfg.Type,
+		"service":  cfg.Service,
+		"port":     port,
 	})
 
+	teardownCmd := fmt.Sprintf("cd %s/.mendel && docker-compose down -v", workDir)
 	s.db.Pool.Exec(ctx, `
 		UPDATE demo_instances
 		SET url = $2, teardown_instructions = $3, status = $4, process_info = $5
 		WHERE id = $1
 	`, demoInstanceID, demoURL, teardownCmd, domain.DemoInstanceStatusRunning, processInfo)
+}
+
+// handleRestartDemo stops any existing demo and starts fresh without code changes.
+func (s *Server) handleRestartDemo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID := chi.URLParam(r, "projectID")
+
+	variationID, err := uuid.Parse(chi.URLParam(r, "variationID"))
+	if err != nil {
+		http.Error(w, "invalid variation ID", http.StatusBadRequest)
+		return
+	}
+
+	// Get the work directory
+	workDir := git.WorkDirForVariation(projectID, variationID.String())
+	if _, err := os.Stat(workDir); os.IsNotExist(err) {
+		http.Error(w, "variation work directory not found", http.StatusBadRequest)
+		return
+	}
+
+	// Stop any existing containers first (ignore errors - may not be running)
+	demo.DockerComposeDown(workDir, true)
+
+	// Check for docker-compose
+	if !demo.HasDockerCompose(workDir) {
+		http.Error(w, "demo not configured: .mendel/docker-compose.yml not found", http.StatusBadRequest)
+		return
+	}
+
+	// Load demo config
+	cfg, err := demo.LoadConfig(workDir)
+	if err != nil {
+		http.Error(w, "demo config error: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Create new demo instance
+	demoInstanceID := uuid.New()
+	processInfo, _ := json.Marshal(map[string]interface{}{
+		"work_dir": workDir,
+		"service":  cfg.Service,
+	})
+
+	demoInstance := &domain.DemoInstance{
+		ID:                   demoInstanceID,
+		VariationID:          variationID,
+		URL:                  "",
+		TeardownInstructions: fmt.Sprintf("cd %s/.mendel && docker-compose down -v", workDir),
+		Status:               domain.DemoInstanceStatusStarting,
+		ProcessInfo:          processInfo,
+	}
+
+	if err := s.db.CreateDemoInstance(ctx, demoInstance); err != nil {
+		http.Error(w, "failed to create demo instance: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Start demo in background
+	go s.runDemoStartup(projectID, variationID, demoInstanceID, workDir, cfg)
+
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
 }

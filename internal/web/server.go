@@ -494,6 +494,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/variations/{variationID}/start-demo", s.handleStartDemo)
 		r.Post("/variations/{variationID}/stop-demo", s.handleStopDemo)
 		r.Post("/variations/{variationID}/retry-demo", s.handleRetryDemo)
+		r.Post("/variations/{variationID}/restart-demo", s.handleRestartDemo)
 		r.Post("/variations/{variationID}/prune", s.handlePruneVariation)
 
 		// Decision routes

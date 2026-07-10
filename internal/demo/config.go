@@ -3,31 +3,30 @@ package demo
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 // Config represents the .mendel/demo.yaml configuration file.
+// This is a minimal config that works alongside .mendel/docker-compose.yml.
 type Config struct {
 	Version int `yaml:"version"`
 
-	// Deployment type: "local" (default) or "cloud"
-	Type string `yaml:"type"`
+	// Which docker-compose service to expose as the demo (required)
+	Service string `yaml:"service"`
 
-	// Command to start the service (required)
-	// Variables: ${PORT}, ${VARIATION_ID}, and for cloud: output captured for ${DEPLOY_URL}
-	Start string `yaml:"start"`
+	// The port inside the container that the service listens on (required)
+	// Mendel will map this to a host port dynamically
+	ContainerPort int `yaml:"container_port"`
 
-	// Command to stop the service (required)
-	// Variables: ${PORT}, ${VARIATION_ID}, ${DEPLOY_URL} (cloud only)
-	Stop string `yaml:"stop"`
-
-	// URL to check for health (required)
-	// Variables: ${PORT}, ${DEPLOY_URL}
-	HealthURL string `yaml:"health_url"`
+	// Path to health check endpoint (e.g., "/health", "/api/health")
+	// Combined with allocated host port to form full health URL
+	HealthPath string `yaml:"health_path"`
 
 	// Seconds to wait for health check (default: 60)
 	HealthTimeout int `yaml:"health_timeout"`
@@ -35,24 +34,12 @@ type Config struct {
 	// Seconds between health check attempts (default: 2)
 	HealthInterval int `yaml:"health_interval"`
 
-	// Port configuration (local mode only)
-	Port PortConfig `yaml:"port"`
+	// Commands to run after containers are up (migrations, seed data, etc.)
+	// These run from the .mendel directory
+	AfterUp []string `yaml:"after_up"`
 
-	// Regex to extract deployed URL from start command output (cloud mode only)
-	// If empty, uses built-in fallback (first https:// URL)
-	URLPattern string `yaml:"url_pattern"`
-
-	// Commands to run before start, in order (optional)
-	Setup []string `yaml:"setup"`
-
-	// File to copy to .env before start (optional)
-	EnvFile string `yaml:"env_file"`
-}
-
-// PortConfig holds port allocation settings for local mode.
-type PortConfig struct {
-	Default int `yaml:"default"`
-	Range   int `yaml:"range"`
+	// Commands to run before docker-compose down (cleanup, etc.)
+	BeforeDown []string `yaml:"before_down"`
 }
 
 // LoadConfig reads and parses .mendel/demo.yaml from the given directory.
@@ -62,7 +49,7 @@ func LoadConfig(workDir string) (*Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("demo config not found: %s", configPath)
+			return nil, fmt.Errorf("demo config not found: %s - create .mendel/demo.yaml and .mendel/docker-compose.yml", configPath)
 		}
 		return nil, fmt.Errorf("read demo config: %w", err)
 	}
@@ -85,38 +72,87 @@ func LoadConfig(workDir string) (*Config, error) {
 
 // applyDefaults sets default values for unspecified fields.
 func (c *Config) applyDefaults() {
-	if c.Type == "" {
-		c.Type = "local"
-	}
 	if c.HealthTimeout == 0 {
 		c.HealthTimeout = 60
 	}
 	if c.HealthInterval == 0 {
 		c.HealthInterval = 2
 	}
-	if c.Port.Default == 0 {
-		c.Port.Default = 3000
+	if c.HealthPath == "" {
+		c.HealthPath = "/"
 	}
-	if c.Port.Range == 0 {
-		c.Port.Range = 100
+	if c.ContainerPort == 0 {
+		c.ContainerPort = 3000
 	}
 }
 
 // validate checks that required fields are present.
 func (c *Config) validate() error {
-	if c.Start == "" {
-		return fmt.Errorf("start command is required")
-	}
-	if c.Stop == "" {
-		return fmt.Errorf("stop command is required")
-	}
-	if c.HealthURL == "" {
-		return fmt.Errorf("health_url is required")
-	}
-	if c.Type != "local" && c.Type != "cloud" {
-		return fmt.Errorf("type must be 'local' or 'cloud', got '%s'", c.Type)
+	if c.Service == "" {
+		return fmt.Errorf("service is required (which docker-compose service to expose)")
 	}
 	return nil
+}
+
+// HasDockerCompose checks if .mendel/docker-compose.yml exists.
+func HasDockerCompose(workDir string) bool {
+	composePath := filepath.Join(workDir, ".mendel", "docker-compose.yml")
+	_, err := os.Stat(composePath)
+	return err == nil
+}
+
+// DockerComposeUp runs docker-compose up in the .mendel directory.
+func DockerComposeUp(workDir string) (string, error) {
+	mendelDir := filepath.Join(workDir, ".mendel")
+	cmd := exec.Command("docker-compose", "up", "-d", "--build", "--wait")
+	cmd.Dir = mendelDir
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+// DockerComposeDown runs docker-compose down in the .mendel directory.
+func DockerComposeDown(workDir string, removeVolumes bool) (string, error) {
+	mendelDir := filepath.Join(workDir, ".mendel")
+	args := []string{"down"}
+	if removeVolumes {
+		args = append(args, "-v")
+	}
+	cmd := exec.Command("docker-compose", args...)
+	cmd.Dir = mendelDir
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+// GetServicePort gets the host port mapped to a service's container port.
+func GetServicePort(workDir, serviceName string, containerPort int) (int, error) {
+	mendelDir := filepath.Join(workDir, ".mendel")
+	// docker-compose port <service> <container_port> returns "0.0.0.0:12345" or similar
+	cmd := exec.Command("docker-compose", "port", serviceName, strconv.Itoa(containerPort))
+	cmd.Dir = mendelDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("get service port: %w - output: %s", err, string(output))
+	}
+
+	// Parse "0.0.0.0:12345" or "[::]:12345"
+	parts := strings.Split(strings.TrimSpace(string(output)), ":")
+	if len(parts) < 2 {
+		return 0, fmt.Errorf("unexpected port output: %s", string(output))
+	}
+	port, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil {
+		return 0, fmt.Errorf("parse port: %w", err)
+	}
+	return port, nil
+}
+
+// RunScript runs a shell command in the .mendel directory.
+func RunScript(workDir, script string) (string, error) {
+	mendelDir := filepath.Join(workDir, ".mendel")
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Dir = mendelDir
+	output, err := cmd.CombinedOutput()
+	return string(output), err
 }
 
 // SubstituteVariables replaces ${VAR} placeholders in a string.
@@ -141,20 +177,4 @@ func ExtractURL(output, pattern string) string {
 
 	match := re.FindString(output)
 	return match
-}
-
-// AllocatePort returns a port based on the variation ID and port config.
-// Uses a simple hash to spread variations across the port range.
-func AllocatePort(variationID string, portCfg PortConfig) int {
-	if len(variationID) == 0 {
-		return portCfg.Default
-	}
-
-	// Simple hash: sum of bytes mod range
-	var hash int
-	for _, b := range []byte(variationID) {
-		hash += int(b)
-	}
-
-	return portCfg.Default + (hash % portCfg.Range)
 }
