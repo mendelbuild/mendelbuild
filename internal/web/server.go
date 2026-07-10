@@ -493,6 +493,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/variations/{variationID}/retry", s.handleRetryVariation)
 		r.Post("/variations/{variationID}/start-demo", s.handleStartDemo)
 		r.Post("/variations/{variationID}/stop-demo", s.handleStopDemo)
+		r.Post("/variations/{variationID}/retry-demo", s.handleRetryDemo)
 		r.Post("/variations/{variationID}/prune", s.handlePruneVariation)
 
 		// Decision routes
@@ -516,6 +517,8 @@ func (s *Server) setupRoutes() {
 		r.Get("/projects/{projectID}/strategy", s.apiGetStrategy)
 		r.Get("/projects/{projectID}/hops/{hopID}/evaluate", s.apiEvaluateVariations)
 		r.Post("/projects/{projectID}/okr/tune", s.apiTuneOKRs)
+		r.Get("/demos/{demoID}/logs", s.apiGetDemoLogs)
+		r.Get("/demos/{demoID}/status", s.apiGetDemoStatus)
 	})
 
 	s.router = r

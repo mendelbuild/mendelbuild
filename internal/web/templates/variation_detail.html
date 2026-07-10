@@ -47,11 +47,95 @@
             {{end}}
         </div>
 
+        {{/* Demo Panel - shown when variation is ready to demo or has a demo instance */}}
+        {{if or .DemoInstance (eq .Variation.Status "pending")}}
+        <div class="card">
+            <h2>Demo</h2>
+            {{if .DemoInstance}}
+            <div style="margin-bottom: 15px;">
+                <table>
+                    <tr>
+                        <th style="width: 80px;">Status</th>
+                        <td>
+                            <span class="status {{if eq .DemoInstance.Status "running"}}status-active{{else if eq .DemoInstance.Status "starting"}}status-pending{{else if eq .DemoInstance.Status "error"}}status-error{{else}}status-resolved{{end}}">
+                                {{.DemoInstance.Status}}
+                            </span>
+                        </td>
+                    </tr>
+                    {{if and .DemoInstance.URL (ne .DemoInstance.Status "starting")}}
+                    <tr>
+                        <th>URL</th>
+                        <td><a href="{{.DemoInstance.URL}}" target="_blank">{{.DemoInstance.URL}}</a></td>
+                    </tr>
+                    {{end}}
+                </table>
+
+                {{if eq .DemoInstance.Status "running"}}
+                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/stop-demo" style="margin-top: 10px;">
+                    <button type="submit" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Stop Demo
+                    </button>
+                </form>
+                {{end}}
+
+                {{if eq .DemoInstance.Status "error"}}
+                <div style="margin-top: 15px; padding: 10px; background: #f8d7da; border-radius: 4px;">
+                    <strong style="color: #721c24;">Error:</strong>
+                    <p style="margin: 5px 0; color: #721c24; font-family: monospace; white-space: pre-wrap;">{{.DemoInstance.ErrorMessage}}</p>
+                    {{if .DemoInstance.SuggestedFix}}
+                    <div style="margin-top: 10px;">
+                        <strong style="color: #856404;">Suggested fix:</strong>
+                        <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry-demo" style="margin-top: 5px;">
+                            <textarea name="fix_prompt" style="width: 100%; height: 100px; font-family: monospace; font-size: 0.85em; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">{{.DemoInstance.SuggestedFix}}</textarea>
+                            <button type="submit" style="margin-top: 8px; padding: 8px 16px; background: #ffc107; color: #212529; border: none; border-radius: 4px; cursor: pointer;">
+                                Retry with Fix
+                            </button>
+                        </form>
+                    </div>
+                    {{end}}
+                </div>
+                {{end}}
+            </div>
+
+            {{/* Demo Logs */}}
+            {{if .DemoLogs}}
+            <div style="border-top: 1px solid #ddd; padding-top: 15px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <strong>Logs</strong>
+                    {{if eq .DemoInstance.Status "starting"}}
+                    <span style="color: #666; font-size: 0.85em;">Auto-refreshing...</span>
+                    {{end}}
+                </div>
+                <div id="demo-logs" style="max-height: 300px; overflow-y: auto; background: #f8f9fa; border-radius: 4px; padding: 10px; font-family: monospace; font-size: 0.8em;">
+                    {{range .DemoLogs}}
+                    <div style="margin-bottom: 4px; {{if eq .Level "error"}}color: #dc3545;{{else if eq .Level "milestone"}}color: #28a745; font-weight: bold;{{else}}color: #333;{{end}}">
+                        <span style="color: #999;">{{.LoggedAt.Format "15:04:05"}}</span>
+                        {{.Message}}
+                    </div>
+                    {{end}}
+                </div>
+            </div>
+            {{end}}
+
+            {{else}}
+            {{/* No demo running - show start button */}}
+            <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/start-demo">
+                <button type="submit" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    Start Demo
+                </button>
+            </form>
+            <p style="color: #666; font-size: 0.85em; margin-top: 10px;">
+                Start a local demo of this variation to test it.
+            </p>
+            {{end}}
+        </div>
+        {{end}}
+
         <div class="card">
             <div style="display: flex; justify-content: space-between; align-items: center;">
-                <h2 style="margin: 0;">Logs</h2>
+                <h2 style="margin: 0;">Code Generation</h2>
                 {{if eq .Variation.Status "creating"}}
-                <button onclick="refreshLogs()" style="padding: 4px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em;">
+                <button onclick="location.reload()" style="padding: 4px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em;">
                     Refresh
                 </button>
                 {{end}}
@@ -98,20 +182,12 @@
     </div>
 </div>
 
-{{if eq .Variation.Status "creating"}}
+{{if or (eq .Variation.Status "creating") (and .DemoInstance (eq .DemoInstance.Status "starting"))}}
 <script>
-// Auto-refresh logs every 3 seconds while creating
+// Auto-refresh every 3 seconds while creating or demo is starting
 let refreshInterval = setInterval(function() {
-    refreshLogs();
-}, 3000);
-
-function refreshLogs() {
-    // Simple page refresh for now
-    // Could be improved with htmx or fetch API
     location.reload();
-}
-
-// Stop refreshing when status changes (page will reload with new status)
+}, 3000);
 </script>
 {{end}}
 {{end}}

@@ -789,13 +789,18 @@ func (db *DB) UpdateProjectConfig(ctx context.Context, projectID uuid.UUID, conf
 	return err
 }
 
-// CreateVariationLog creates a new log entry for a variation.
+// CreateVariationLog creates a new log entry for a variation (defaults to codegen source).
 func (db *DB) CreateVariationLog(ctx context.Context, variationID uuid.UUID, level domain.LogLevel, message string) error {
+	return db.CreateVariationLogWithSource(ctx, variationID, level, message, domain.SourceTypeCodegen, nil)
+}
+
+// CreateVariationLogWithSource creates a log entry with explicit source tracking.
+func (db *DB) CreateVariationLogWithSource(ctx context.Context, variationID uuid.UUID, level domain.LogLevel, message string, sourceType domain.SourceType, sourceID *uuid.UUID) error {
 	id := uuid.New()
 	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO variation_logs (id, variation_id, logged_at, level, message)
-		VALUES ($1, $2, NOW(), $3, $4)
-	`, id, variationID, string(level), message)
+		INSERT INTO variation_logs (id, variation_id, logged_at, level, message, source_type, source_id)
+		VALUES ($1, $2, NOW(), $3, $4, $5, $6)
+	`, id, variationID, string(level), message, string(sourceType), sourceID)
 	return err
 }
 
@@ -805,7 +810,7 @@ func (db *DB) GetVariationLogs(ctx context.Context, variationID uuid.UUID, limit
 		limit = 100
 	}
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, variation_id, logged_at, level, message
+		SELECT id, variation_id, logged_at, level, message, source_type, source_id
 		FROM variation_logs
 		WHERE variation_id = $1
 		ORDER BY logged_at DESC
@@ -819,7 +824,35 @@ func (db *DB) GetVariationLogs(ctx context.Context, variationID uuid.UUID, limit
 	var logs []domain.VariationLog
 	for rows.Next() {
 		var l domain.VariationLog
-		if err := rows.Scan(&l.ID, &l.VariationID, &l.LoggedAt, &l.Level, &l.Message); err != nil {
+		if err := rows.Scan(&l.ID, &l.VariationID, &l.LoggedAt, &l.Level, &l.Message, &l.SourceType, &l.SourceID); err != nil {
+			return nil, err
+		}
+		logs = append(logs, l)
+	}
+	return logs, nil
+}
+
+// GetVariationLogsBySource retrieves logs for a specific source (e.g., a demo instance).
+func (db *DB) GetVariationLogsBySource(ctx context.Context, sourceType domain.SourceType, sourceID uuid.UUID, limit int) ([]domain.VariationLog, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, variation_id, logged_at, level, message, source_type, source_id
+		FROM variation_logs
+		WHERE source_type = $1 AND source_id = $2
+		ORDER BY logged_at ASC
+		LIMIT $3
+	`, string(sourceType), sourceID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []domain.VariationLog
+	for rows.Next() {
+		var l domain.VariationLog
+		if err := rows.Scan(&l.ID, &l.VariationID, &l.LoggedAt, &l.Level, &l.Message, &l.SourceType, &l.SourceID); err != nil {
 			return nil, err
 		}
 		logs = append(logs, l)
@@ -830,6 +863,34 @@ func (db *DB) GetVariationLogs(ctx context.Context, variationID uuid.UUID, limit
 // GetRecentVariationLogs retrieves the most recent N logs for a variation.
 func (db *DB) GetRecentVariationLogs(ctx context.Context, variationID uuid.UUID, limit int) ([]domain.VariationLog, error) {
 	return db.GetVariationLogs(ctx, variationID, limit)
+}
+
+// GetVariationLogsByType retrieves logs for a variation filtered by source type.
+func (db *DB) GetVariationLogsByType(ctx context.Context, variationID uuid.UUID, sourceType domain.SourceType, limit int) ([]domain.VariationLog, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, variation_id, logged_at, level, message, source_type, source_id
+		FROM variation_logs
+		WHERE variation_id = $1 AND source_type = $2
+		ORDER BY logged_at DESC
+		LIMIT $3
+	`, variationID, string(sourceType), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []domain.VariationLog
+	for rows.Next() {
+		var l domain.VariationLog
+		if err := rows.Scan(&l.ID, &l.VariationID, &l.LoggedAt, &l.Level, &l.Message, &l.SourceType, &l.SourceID); err != nil {
+			return nil, err
+		}
+		logs = append(logs, l)
+	}
+	return logs, nil
 }
 
 // GetDecisionBySubjectAndKind retrieves a decision by subject and kind.
@@ -1492,37 +1553,53 @@ func (db *DB) CreateDemoInstance(ctx context.Context, di *domain.DemoInstance) e
 func (db *DB) GetDemoInstance(ctx context.Context, id uuid.UUID) (*domain.DemoInstance, error) {
 	var di domain.DemoInstance
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, variation_id, url, teardown_instructions, started_at, stopped_at, status, process_info, error_message, created_at
+		SELECT id, variation_id, url, teardown_instructions, started_at, stopped_at, status, process_info, error_message, suggested_fix, created_at
 		FROM demo_instances WHERE id = $1
-	`, id).Scan(&di.ID, &di.VariationID, &di.URL, &di.TeardownInstructions, &di.StartedAt, &di.StoppedAt, &di.Status, &di.ProcessInfo, &di.ErrorMessage, &di.CreatedAt)
+	`, id).Scan(&di.ID, &di.VariationID, &di.URL, &di.TeardownInstructions, &di.StartedAt, &di.StoppedAt, &di.Status, &di.ProcessInfo, &di.ErrorMessage, &di.SuggestedFix, &di.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 	return &di, nil
 }
 
-// GetRunningDemoByVariation retrieves the running demo instance for a variation (if any).
+// GetRunningDemoByVariation retrieves the running or starting demo instance for a variation (if any).
 func (db *DB) GetRunningDemoByVariation(ctx context.Context, variationID uuid.UUID) (*domain.DemoInstance, error) {
 	var di domain.DemoInstance
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, variation_id, url, teardown_instructions, started_at, stopped_at, status, process_info, error_message, created_at
+		SELECT id, variation_id, url, teardown_instructions, started_at, stopped_at, status, process_info, error_message, suggested_fix, created_at
 		FROM demo_instances
-		WHERE variation_id = $1 AND status = 'running'
+		WHERE variation_id = $1 AND status IN ('starting', 'running')
 		ORDER BY started_at DESC
 		LIMIT 1
-	`, variationID).Scan(&di.ID, &di.VariationID, &di.URL, &di.TeardownInstructions, &di.StartedAt, &di.StoppedAt, &di.Status, &di.ProcessInfo, &di.ErrorMessage, &di.CreatedAt)
+	`, variationID).Scan(&di.ID, &di.VariationID, &di.URL, &di.TeardownInstructions, &di.StartedAt, &di.StoppedAt, &di.Status, &di.ProcessInfo, &di.ErrorMessage, &di.SuggestedFix, &di.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 	return &di, nil
 }
 
-// GetAllRunningDemos retrieves all running demo instances (for cleanup on startup).
+// GetLatestDemoByVariation retrieves the most recent demo instance for a variation (any status).
+func (db *DB) GetLatestDemoByVariation(ctx context.Context, variationID uuid.UUID) (*domain.DemoInstance, error) {
+	var di domain.DemoInstance
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, variation_id, url, teardown_instructions, started_at, stopped_at, status, process_info, error_message, suggested_fix, created_at
+		FROM demo_instances
+		WHERE variation_id = $1
+		ORDER BY started_at DESC
+		LIMIT 1
+	`, variationID).Scan(&di.ID, &di.VariationID, &di.URL, &di.TeardownInstructions, &di.StartedAt, &di.StoppedAt, &di.Status, &di.ProcessInfo, &di.ErrorMessage, &di.SuggestedFix, &di.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &di, nil
+}
+
+// GetAllRunningDemos retrieves all running or starting demo instances (for cleanup on startup).
 func (db *DB) GetAllRunningDemos(ctx context.Context) ([]domain.DemoInstance, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, variation_id, url, teardown_instructions, started_at, stopped_at, status, process_info, error_message, created_at
+		SELECT id, variation_id, url, teardown_instructions, started_at, stopped_at, status, process_info, error_message, suggested_fix, created_at
 		FROM demo_instances
-		WHERE status = 'running'
+		WHERE status IN ('starting', 'running')
 		ORDER BY started_at ASC
 	`)
 	if err != nil {
@@ -1533,7 +1610,7 @@ func (db *DB) GetAllRunningDemos(ctx context.Context) ([]domain.DemoInstance, er
 	var demos []domain.DemoInstance
 	for rows.Next() {
 		var di domain.DemoInstance
-		if err := rows.Scan(&di.ID, &di.VariationID, &di.URL, &di.TeardownInstructions, &di.StartedAt, &di.StoppedAt, &di.Status, &di.ProcessInfo, &di.ErrorMessage, &di.CreatedAt); err != nil {
+		if err := rows.Scan(&di.ID, &di.VariationID, &di.URL, &di.TeardownInstructions, &di.StartedAt, &di.StoppedAt, &di.Status, &di.ProcessInfo, &di.ErrorMessage, &di.SuggestedFix, &di.CreatedAt); err != nil {
 			return nil, err
 		}
 		demos = append(demos, di)
@@ -1551,6 +1628,15 @@ func (db *DB) UpdateDemoInstanceStatus(ctx context.Context, id uuid.UUID, status
 	_, err := db.Pool.Exec(ctx, `
 		UPDATE demo_instances SET status = $2, stopped_at = $3, error_message = $4 WHERE id = $1
 	`, id, status, stoppedAt, errorMessage)
+	return err
+}
+
+// UpdateDemoInstanceWithSuggestedFix updates a demo instance with error status and a suggested fix.
+func (db *DB) UpdateDemoInstanceWithSuggestedFix(ctx context.Context, id uuid.UUID, errorMessage, suggestedFix string) error {
+	now := time.Now()
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE demo_instances SET status = $2, stopped_at = $3, error_message = $4, suggested_fix = $5 WHERE id = $1
+	`, id, domain.DemoInstanceStatusError, now, errorMessage, suggestedFix)
 	return err
 }
 

@@ -178,13 +178,24 @@ const (
 	LogLevelHeartbeat LogLevel = "heartbeat"
 )
 
-// VariationLog is a log entry for a variation's code generation process.
+// SourceType indicates what operation generated a log entry.
+type SourceType string
+
+const (
+	SourceTypeCodegen SourceType = "codegen"
+	SourceTypeDemo    SourceType = "demo"
+	SourceTypeFix     SourceType = "fix"
+)
+
+// VariationLog is a log entry for a variation operation (codegen, demo, fix).
 type VariationLog struct {
-	ID          uuid.UUID `json:"id"`
-	VariationID uuid.UUID `json:"variation_id"`
-	LoggedAt    time.Time `json:"logged_at"`
-	Level       LogLevel  `json:"level"`
-	Message     string    `json:"message"`
+	ID          uuid.UUID  `json:"id"`
+	VariationID uuid.UUID  `json:"variation_id"`
+	LoggedAt    time.Time  `json:"logged_at"`
+	Level       LogLevel   `json:"level"`
+	Message     string     `json:"message"`
+	SourceType  SourceType `json:"source_type"`
+	SourceID    *uuid.UUID `json:"source_id,omitempty"`
 }
 
 // VariationMigration represents a temporary schema migration for a variation.
@@ -205,9 +216,10 @@ type VariationMigration struct {
 type DemoInstanceStatus string
 
 const (
-	DemoInstanceStatusRunning DemoInstanceStatus = "running"
-	DemoInstanceStatusStopped DemoInstanceStatus = "stopped"
-	DemoInstanceStatusError   DemoInstanceStatus = "error"
+	DemoInstanceStatusStarting DemoInstanceStatus = "starting"
+	DemoInstanceStatusRunning  DemoInstanceStatus = "running"
+	DemoInstanceStatusStopped  DemoInstanceStatus = "stopped"
+	DemoInstanceStatusError    DemoInstanceStatus = "error"
 )
 
 // DemoInstance tracks a running demo of a variation.
@@ -222,6 +234,7 @@ type DemoInstance struct {
 	Status               DemoInstanceStatus `json:"status"`
 	ProcessInfo          json.RawMessage    `json:"process_info,omitempty"` // pid, port, container_id, etc.
 	ErrorMessage         *string            `json:"error_message,omitempty"`
+	SuggestedFix         *string            `json:"suggested_fix,omitempty"` // LLM-suggested fix prompt when status = error
 	CreatedAt            time.Time          `json:"created_at"`
 }
 

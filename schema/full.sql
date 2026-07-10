@@ -1,5 +1,5 @@
 -- MendelBuild Core Schema
--- This file represents the complete schema after all migrations (001-011).
+-- This file represents the complete schema after all migrations (001-011, including 011_variation_logs_source).
 -- It should be kept in sync with migrations for reference.
 --
 -- See DESIGN.md Section 2 for conceptual overview.
@@ -300,18 +300,23 @@ CREATE INDEX idx_variation_history ON variation_state_history(variation_id, tran
 --------------------------------------------------------------------------------
 -- VARIATION LOGS
 --------------------------------------------------------------------------------
--- Log entries for variation code generation process [added in 005]
+-- Log entries for variation operations (code generation, demos, fixes) [added in 005, extended in 011]
+-- source_type: what kind of operation generated this log (codegen, demo, fix)
+-- source_id: ID of the specific instance (e.g., demo_instance_id for demo logs)
 
 CREATE TABLE variation_logs (
     id UUID PRIMARY KEY,
     variation_id UUID NOT NULL REFERENCES variations(id) ON DELETE CASCADE,
     logged_at TIMESTAMP NOT NULL DEFAULT NOW(),
     level TEXT NOT NULL CHECK (level IN ('info', 'milestone', 'error', 'heartbeat')),
-    message TEXT NOT NULL
+    message TEXT NOT NULL,
+    source_type TEXT NOT NULL DEFAULT 'codegen' CHECK (source_type IN ('codegen', 'demo', 'fix')),
+    source_id UUID
 );
 
 CREATE INDEX idx_variation_logs_variation_id ON variation_logs(variation_id);
 CREATE INDEX idx_variation_logs_logged_at ON variation_logs(variation_id, logged_at DESC);
+CREATE INDEX idx_variation_logs_source ON variation_logs(source_type, source_id);
 
 --------------------------------------------------------------------------------
 -- DEMO INSTANCES
@@ -326,9 +331,10 @@ CREATE TABLE demo_instances (
     teardown_instructions TEXT NOT NULL,  -- shell commands to stop the demo
     started_at TIMESTAMP NOT NULL DEFAULT NOW(),
     stopped_at TIMESTAMP,
-    status TEXT NOT NULL DEFAULT 'running',  -- running, stopped, error
+    status TEXT NOT NULL DEFAULT 'starting',  -- starting, running, stopped, error
     process_info JSONB,  -- pid, port, container_id, etc - whatever is needed for teardown
     error_message TEXT,  -- populated if status = 'error'
+    suggested_fix TEXT,  -- LLM-suggested fix prompt when status = 'error' [added in 012]
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 

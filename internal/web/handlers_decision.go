@@ -1591,7 +1591,7 @@ func (s *Server) handleSelectWinner(w http.ResponseWriter, r *http.Request) {
 		s.db.UpdateVariation(ctx, &v)
 
 		// Revert migration for ALL variations (winner too - real migration is in merged code)
-		if err := s.revertVariationMigration(ctx, v.ID); err != nil {
+		if err := s.revertVariationMigration(ctx, projectID, v.ID); err != nil {
 			fmt.Printf("[selection] Warning: failed to revert migration for variation %s: %v\n", v.ID, err)
 		}
 

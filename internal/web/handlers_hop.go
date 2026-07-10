@@ -197,9 +197,11 @@ func (s *Server) handleProposeVariations(w http.ResponseWriter, r *http.Request)
 
 // VariationDetailView holds data for rendering the variation detail page.
 type VariationDetailView struct {
-	Variation *domain.Variation
-	Hop       *domain.Hop
-	Logs      []domain.VariationLog
+	Variation    *domain.Variation
+	Hop          *domain.Hop
+	Logs         []domain.VariationLog
+	DemoInstance *domain.DemoInstance // Current or recent demo instance
+	DemoLogs     []domain.VariationLog // Logs specific to the current demo
 }
 
 func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
@@ -224,12 +226,24 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logs, _ := s.db.GetVariationLogs(ctx, variationID, 100)
+	// Get codegen logs only (not demo logs)
+	logs, _ := s.db.GetVariationLogsByType(ctx, variationID, domain.SourceTypeCodegen, 100)
+
+	// Get the most recent demo instance (any status) for display
+	demoInstance, _ := s.db.GetLatestDemoByVariation(ctx, variationID)
+
+	// Get demo-specific logs if there's a demo instance
+	var demoLogs []domain.VariationLog
+	if demoInstance != nil {
+		demoLogs, _ = s.db.GetVariationLogsBySource(ctx, domain.SourceTypeDemo, demoInstance.ID, 200)
+	}
 
 	view := &VariationDetailView{
-		Variation: variation,
-		Hop:       hop,
-		Logs:      logs,
+		Variation:    variation,
+		Hop:          hop,
+		Logs:         logs,
+		DemoInstance: demoInstance,
+		DemoLogs:     demoLogs,
 	}
 
 	data := map[string]interface{}{
