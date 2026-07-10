@@ -46,6 +46,47 @@ func executeMigrationInstructions(ctx context.Context, workDir, instructions str
 	return nil
 }
 
+// generateMissingDockerPrompt creates a prompt for setting up Docker configuration from scratch.
+func generateMissingDockerPrompt() string {
+	return `The project needs Docker configuration for demos. Create two files in the .mendel/ directory.
+
+## Requirements
+
+### .mendel/docker-compose.yml
+
+This file must:
+1. Define a service that runs the application
+2. Include any dependencies (database, cache, etc.) the app needs
+3. Use healthchecks so "docker-compose up --wait" knows when services are ready
+4. Expose the app's port WITHOUT a fixed host mapping (e.g., "3000" not "3000:3000") — Mendel assigns the host port dynamically
+
+If the project already has a docker-compose.yml or Dockerfile, use/reference those. If not, create what's needed.
+
+Services should communicate via Docker networking (e.g., db:5432, not localhost:5432).
+
+### .mendel/demo-config.yml
+
+This file tells Mendel which service to expose:
+
+` + "```yaml" + `
+version: 1
+service: <name of the docker-compose service to expose>
+container_port: <port the app listens on inside the container>
+health_path: <HTTP path to check, e.g., "/", "/health", "/api/health">
+
+# Optional: commands to run after containers start (migrations, seed data)
+after_up:
+  - "docker-compose exec -T <service> <command>"
+` + "```" + `
+
+## Instructions
+
+1. Examine the project to understand its stack (look at package.json, requirements.txt, go.mod, Dockerfile, existing docker-compose.yml, etc.)
+2. Create .mendel/docker-compose.yml appropriate for this specific project
+3. Create .mendel/demo-config.yml pointing to the right service and port
+4. Commit the changes`
+}
+
 // generateFixPrompt creates a well-contextualized prompt for Claude Code to fix a Docker-based dev environment issue.
 func generateFixPrompt(errMsg string) string {
 	return fmt.Sprintf(`I'm trying to run the local development environment using Docker, but encountered an error.
@@ -56,18 +97,18 @@ func generateFixPrompt(errMsg string) string {
 ## Context
 The demo runs via Docker Compose from the .mendel/ directory:
 - .mendel/docker-compose.yml defines all services (app, database, etc.)
-- .mendel/demo.yaml specifies which service to expose and any setup scripts
+- .mendel/demo-config.yml specifies which service to expose and any setup scripts
 
 ## What to check
 1. Does .mendel/docker-compose.yml exist and define all needed services?
 2. Are service health checks configured correctly?
-3. Do after_up scripts in .mendel/demo.yaml work? (migrations, seed data)
+3. Do after_up scripts in .mendel/demo-config.yml work? (migrations, seed data)
 4. Are environment variables and connection strings correct for Docker networking?
    - Services communicate via service names (e.g., db:5432, not localhost:5432)
 
 ## What to do
 1. Diagnose the root cause from the error message
-2. Fix the Docker Compose or demo.yaml configuration
+2. Fix the Docker Compose or demo-config.yml configuration
 3. If the main app needs a Dockerfile, create/update it
 4. Make sure the fix is committed to this branch
 
@@ -75,7 +116,7 @@ The goal is a working Docker-based local dev environment.`, errMsg)
 }
 
 // handleStartDemo starts a demo instance for a variation using Docker.
-// Uses .mendel/docker-compose.yml and .mendel/demo.yaml for configuration.
+// Uses .mendel/docker-compose.yml and .mendel/demo-config.yml for configuration.
 // The actual startup runs in a background goroutine with output logged to variation_logs.
 func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -103,37 +144,18 @@ func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 	// Get the work directory for this variation
 	workDir := git.WorkDirForVariation(projectID, variationID.String())
 
-	// Check if work directory exists
-	if _, err := os.Stat(workDir); os.IsNotExist(err) {
-		http.Error(w, "variation work directory not found - code may not be generated yet", http.StatusBadRequest)
-		return
-	}
-
-	// Check for .mendel/docker-compose.yml
-	if !demo.HasDockerCompose(workDir) {
-		http.Error(w, "demo not configured: .mendel/docker-compose.yml not found", http.StatusBadRequest)
-		return
-	}
-
-	// Load demo config from .mendel/demo.yaml
-	cfg, err := demo.LoadConfig(workDir)
-	if err != nil {
-		http.Error(w, "demo config error: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
 	// Create demo instance with "starting" status immediately
+	// All validation happens in the background so errors get proper logging
 	demoInstanceID := uuid.New()
 
 	processInfo, _ := json.Marshal(map[string]interface{}{
 		"work_dir": workDir,
-		"service":  cfg.Service,
 	})
 
 	demoInstance := &domain.DemoInstance{
 		ID:                   demoInstanceID,
 		VariationID:          variationID,
-		URL:                  "", // Will be set once we know the port
+		URL:                  "",
 		TeardownInstructions: fmt.Sprintf("cd %s/.mendel && docker-compose down -v", workDir),
 		Status:               domain.DemoInstanceStatusStarting,
 		ProcessInfo:          processInfo,
@@ -144,15 +166,16 @@ func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Start the demo in a background goroutine
-	go s.runDemoStartup(projectID, variationID, demoInstanceID, workDir, cfg)
+	// Start the demo in a background goroutine - validation happens there
+	go s.runDemoStartup(projectID, variationID, demoInstanceID, workDir)
 
 	// Redirect immediately - user will see "starting" status
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
 }
 
 // runDemoStartup runs the Docker-based demo startup process in the background.
-func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uuid.UUID, workDir string, cfg *demo.Config) {
+// All validation happens here so errors get proper logging and suggested fixes.
+func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uuid.UUID, workDir string) {
 	ctx := context.Background()
 
 	// Helper to log with source tracking
@@ -166,6 +189,12 @@ func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uu
 		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelError, msg, domain.SourceTypeDemo, &demoInstanceID)
 	}
 
+	// Helper to handle failures with suggested fix
+	failDemoWithFix := func(errMsg, suggestedFix string) {
+		logError(errMsg)
+		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, suggestedFix)
+	}
+
 	// Helper to handle failures - tears down containers before recording error
 	failDemo := func(errMsg string) {
 		logError(errMsg)
@@ -175,6 +204,36 @@ func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uu
 		}
 		suggestedFix := generateFixPrompt(errMsg)
 		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, suggestedFix)
+	}
+
+	logMilestone("Checking demo configuration...")
+
+	// Check if work directory exists
+	if _, err := os.Stat(workDir); os.IsNotExist(err) {
+		failDemoWithFix(
+			"Variation work directory not found - code may not be generated yet",
+			"The variation's code hasn't been generated. Wait for code generation to complete, or check if there was an error during generation.",
+		)
+		return
+	}
+
+	// Check for .mendel/docker-compose.yml
+	if !demo.HasDockerCompose(workDir) {
+		failDemoWithFix(
+			"Docker configuration not found: .mendel/docker-compose.yml",
+			generateMissingDockerPrompt(),
+		)
+		return
+	}
+
+	// Load demo config from .mendel/demo-config.yml
+	cfg, err := demo.LoadConfig(workDir)
+	if err != nil {
+		failDemoWithFix(
+			fmt.Sprintf("Failed to load demo config: %v", err),
+			generateFixPrompt(fmt.Sprintf("Demo config error: %v", err)),
+		)
+		return
 	}
 
 	logMilestone("Starting Docker containers...")
@@ -570,7 +629,7 @@ services:
       retries: 30
 ` + "```" + `
 
-Also create .mendel/demo.yaml:
+Also create .mendel/demo-config.yml:
 
 ` + "```yaml" + `
 version: 1
@@ -723,32 +782,14 @@ func (s *Server) handleRestartDemo(w http.ResponseWriter, r *http.Request) {
 
 	// Get the work directory
 	workDir := git.WorkDirForVariation(projectID, variationID.String())
-	if _, err := os.Stat(workDir); os.IsNotExist(err) {
-		http.Error(w, "variation work directory not found", http.StatusBadRequest)
-		return
-	}
 
 	// Stop any existing containers first (ignore errors - may not be running)
 	demo.DockerComposeDown(workDir, true)
 
-	// Check for docker-compose
-	if !demo.HasDockerCompose(workDir) {
-		http.Error(w, "demo not configured: .mendel/docker-compose.yml not found", http.StatusBadRequest)
-		return
-	}
-
-	// Load demo config
-	cfg, err := demo.LoadConfig(workDir)
-	if err != nil {
-		http.Error(w, "demo config error: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	// Create new demo instance
+	// Create new demo instance - validation happens in background
 	demoInstanceID := uuid.New()
 	processInfo, _ := json.Marshal(map[string]interface{}{
 		"work_dir": workDir,
-		"service":  cfg.Service,
 	})
 
 	demoInstance := &domain.DemoInstance{
@@ -765,8 +806,8 @@ func (s *Server) handleRestartDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Start demo in background
-	go s.runDemoStartup(projectID, variationID, demoInstanceID, workDir, cfg)
+	// Start demo in background - validation happens there
+	go s.runDemoStartup(projectID, variationID, demoInstanceID, workDir)
 
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
 }

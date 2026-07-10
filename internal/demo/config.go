@@ -12,7 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config represents the .mendel/demo.yaml configuration file.
+// Config represents the .mendel/demo-config.yml configuration file.
 // This is a minimal config that works alongside .mendel/docker-compose.yml.
 type Config struct {
 	Version int `yaml:"version"`
@@ -42,14 +42,14 @@ type Config struct {
 	BeforeDown []string `yaml:"before_down"`
 }
 
-// LoadConfig reads and parses .mendel/demo.yaml from the given directory.
+// LoadConfig reads and parses .mendel/demo-config.yml from the given directory.
 func LoadConfig(workDir string) (*Config, error) {
-	configPath := filepath.Join(workDir, ".mendel", "demo.yaml")
+	configPath := filepath.Join(workDir, ".mendel", "demo-config.yml")
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("demo config not found: %s - create .mendel/demo.yaml and .mendel/docker-compose.yml", configPath)
+			return nil, fmt.Errorf("demo config not found: %s - create .mendel/demo-config.yml and .mendel/docker-compose.yml", configPath)
 		}
 		return nil, fmt.Errorf("read demo config: %w", err)
 	}

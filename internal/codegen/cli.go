@@ -328,7 +328,7 @@ func BuildImplementationPrompt(hopName, variationName, approach, testCommand str
 	prompt.WriteString("- Services communicate via service names (db:5432, not localhost:5432)\n")
 	prompt.WriteString("- Expose container ports without fixed host mapping (\"3000\" not \"3000:3000\")\n")
 	prompt.WriteString("- Add healthchecks so `docker-compose up --wait` knows when services are ready\n\n")
-	prompt.WriteString("### 2. `.mendel/demo.yaml`\n\n")
+	prompt.WriteString("### 2. `.mendel/demo-config.yml`\n\n")
 	prompt.WriteString("This tells Mendel which service to expose and any setup steps:\n\n")
 	prompt.WriteString("```yaml\n")
 	prompt.WriteString("version: 1\n")

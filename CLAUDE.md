@@ -11,7 +11,7 @@ User repositories should have **minimal to no awareness** of Mendel. This applie
 - **Documentation**: User repos should not need to document Mendel integration
 - **Docker images**: Use standard images (postgres, redis, node) not mendel/* images
 
-When Mendel-specific configuration is unavoidable (like `.mendel/demo.yaml`), keep it:
+When Mendel-specific configuration is unavoidable (like `.mendel/demo-config.yml`), keep it:
 - Self-contained (no references to external Mendel docs)
 - Using standard tooling under the hood (Docker, npm, etc.)
 - Optional when possible (sensible defaults)
