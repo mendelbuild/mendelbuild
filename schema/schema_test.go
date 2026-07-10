@@ -21,26 +21,26 @@ import (
 func TestMigrationsMatchFullSchema(t *testing.T) {
 	connString := os.Getenv("MENDEL_TEST_DB_URL")
 	if connString == "" {
-		t.Skip("MENDEL_TEST_DB_URL not set; skipping schema test")
+		t.Fatal("MENDEL_TEST_DB_URL not set; this test is required for schema changes")
 	}
 
 	ctx := context.Background()
 
 	// Ensure the test database exists
 	if err := ensureDatabase(ctx, connString); err != nil {
-		t.Skipf("could not ensure database exists (skipping): %v", err)
+		t.Fatalf("could not ensure database exists: %v", err)
 	}
 
 	// Connect to the database
 	pool, err := pgxpool.New(ctx, connString)
 	if err != nil {
-		t.Skipf("could not connect to database (skipping): %v", err)
+		t.Fatalf("could not connect to database: %v", err)
 	}
 	defer pool.Close()
 
 	// Verify we can actually ping the database
 	if err := pool.Ping(ctx); err != nil {
-		t.Skipf("could not ping database (skipping): %v", err)
+		t.Fatalf("could not ping database: %v", err)
 	}
 
 	// Create two separate schemas for comparison

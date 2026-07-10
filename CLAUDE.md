@@ -141,9 +141,9 @@ Migration files live in `schema/migrations/` and are read at runtime. The `full.
 
 **IMPORTANT:** After ANY change to `schema/migrations/` or `schema/full.sql`, you MUST run:
 ```bash
-go test ./schema/...
+MENDEL_TEST_DB_URL="postgres://bhs:@localhost:5432/mendel_test?sslmode=disable" go test ./schema/...
 ```
-This validates that migrations apply correctly and match full.sql.
+This validates that migrations apply correctly and match full.sql. The test requires a real PostgreSQL connection and will fail (not skip) if it cannot connect.
 
 Example: To add a NOT NULL constraint to an existing column:
 ```sql
