@@ -18,6 +18,53 @@ When Mendel-specific configuration is unavoidable (like `.mendel/demo-config.yml
 
 The goal: if a user stops using Mendel, their repository should work exactly the same without cleanup.
 
+### `.mendel/` Directory Structure
+
+User repositories have a `.mendel/` directory for Mendel configuration. **Only these files are allowed:**
+
+```
+.mendel/
+  docker-compose.demo.yml   # Demo infrastructure
+  docker-compose.test.yml   # Test infrastructure (optional)
+  demo-config.yml           # Demo settings
+  test-config.yml           # Test settings (optional)
+  migration.json            # Migration instructions (optional)
+```
+
+**DO NOT create any other files in `.mendel/`** - no documentation. Docs belong in repo root or `docs/`.
+
+### `demo-config.yml` Spec
+
+Defined in `internal/demo/config.go`:
+
+```yaml
+version: 1
+service: app              # Which docker-compose service to expose (required)
+container_port: 3000      # Port inside the container (required)
+health_path: /health      # Endpoint to check for readiness
+health_timeout: 60        # Seconds to wait for health check
+health_interval: 2        # Seconds between health check attempts
+after_up:                 # Commands to run after containers start
+  - "docker-compose exec app npm run migrate"
+before_down:              # Commands to run before teardown
+  - "..."
+```
+
+### `test-config.yml` Spec
+
+Defined in `internal/test/config.go`. Tests run **inside Docker**, not on the host:
+
+```yaml
+version: 1
+service: app              # Which container to run tests in (required)
+test_command: npm test    # Command to run inside the container (required)
+startup_timeout: 60       # Seconds to wait for test services
+```
+
+Flow: `docker-compose.test.yml up` → `exec <service> <test_command>` → check exit code → `down`
+
+Codegen prompts instruct Claude Code to follow these rules.
+
 ## Structured LLM API Conventions
 
 All LLM API calls in MendelBuild use Anthropic's **structured outputs** feature for guaranteed JSON compliance. Schemas are generated from Go struct tags.
@@ -158,7 +205,7 @@ ALTER TABLE hops ALTER COLUMN commentary DROP NOT NULL;
 
 - `MENDEL_DB_URL`: PostgreSQL connection string
 - `ANTHROPIC_API_KEY`: Anthropic API key for agent calls
-- `MENDEL_WORK_DIR`: Working directory for git clones (default: `/tmp/mendel`)
+- `MENDEL_WORK_DIR`: Working directory for git clones (default: `~/.mendel/work`)
 
 ## Development Plans
 

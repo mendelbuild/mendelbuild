@@ -58,7 +58,7 @@ Commands:
 Environment:
   MENDEL_DB_URL       Postgres connection string (default: postgres://localhost:5432/mendelbuild?sslmode=disable)
   ANTHROPIC_API_KEY   API key for Anthropic Claude (required for propose-roadmap, generate)
-  MENDEL_WORK_DIR     Working directory for git clones (default: /tmp/mendel)
+  MENDEL_WORK_DIR     Working directory for git clones (default: ~/.mendel/work)
 
 Run 'mendel <command> -h' for more information on a command.`)
 }

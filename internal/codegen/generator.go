@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/db"
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/bhs/mendelbuild/internal/git"
+	"github.com/bhs/mendelbuild/internal/test"
 	"github.com/google/uuid"
 )
 
@@ -21,7 +21,6 @@ type GeneratorConfig struct {
 	RepositoryURL string
 	MainBranch    string
 	AuthToken     string
-	TestCommand   string
 	APIKey        string
 }
 
@@ -94,7 +93,7 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 
 	// 3. Run Claude CLI
 	cli := NewCLI(workDir, g.config.APIKey).WithLogger(logger)
-	prompt := BuildImplementationPrompt(hopName, variation.Name, variation.Approach, g.config.TestCommand)
+	prompt := BuildImplementationPrompt(hopName, variation.Name, variation.Approach)
 
 	cliResult, err := cli.Run(ctx, prompt)
 	if err != nil {
@@ -122,26 +121,19 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 	}
 
 	// 6. Run tests
-	if g.config.TestCommand != "" {
-		logger(domain.LogLevelInfo, fmt.Sprintf("Running tests: %s", g.config.TestCommand))
-		testsPassed, testErr := g.runTests(ctx, workDir)
-		result.TestsPassed = testsPassed
+	testsPassed, testErr := g.runTests(ctx, workDir, logger)
+	result.TestsPassed = testsPassed
 
-		if !testsPassed {
-			// Tests failed - code issue, not retryable
-			reason := "tests failed"
-			if testErr != "" {
-				reason = fmt.Sprintf("tests failed: %s", testErr)
-			}
-			result.Error = reason
-			logger(domain.LogLevelError, reason)
-			g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusTerminated, reason)
-			return result, nil
+	if !testsPassed {
+		// Tests failed - code issue, not retryable
+		reason := "tests failed"
+		if testErr != "" {
+			reason = fmt.Sprintf("tests failed: %s", testErr)
 		}
-		logger(domain.LogLevelMilestone, "Tests passed")
-	} else {
-		result.TestsPassed = true // No tests configured
-		logger(domain.LogLevelInfo, "No test command configured, skipping tests")
+		result.Error = reason
+		logger(domain.LogLevelError, reason)
+		g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusTerminated, reason)
+		return result, nil
 	}
 
 	// 8. Commit changes
@@ -195,17 +187,54 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 	return result, nil
 }
 
-// runTests executes the test command and returns whether tests passed.
-func (g *Generator) runTests(ctx context.Context, workDir string) (bool, string) {
-	// Parse test command (simple split for now)
-	cmd := exec.CommandContext(ctx, "sh", "-c", g.config.TestCommand)
-	cmd.Dir = workDir
-
-	output, err := cmd.CombinedOutput()
+// runTests executes tests in Docker and returns whether they passed.
+// If no test config exists, creates a default one that passes.
+func (g *Generator) runTests(ctx context.Context, workDir string, logger func(domain.LogLevel, string)) (bool, string) {
+	// Ensure test config exists
+	testCfg, err := test.LoadConfig(workDir)
 	if err != nil {
-		return false, string(output)
+		logger(domain.LogLevelError, fmt.Sprintf("Invalid test config: %v", err))
+		return false, err.Error()
 	}
-	return true, ""
+
+	// Create default test config if none exists
+	if testCfg == nil {
+		logger(domain.LogLevelInfo, "No test config found, creating default (tests will pass)")
+		if err := test.CreateDefaultConfig(workDir); err != nil {
+			logger(domain.LogLevelError, fmt.Sprintf("Failed to create default test config: %v", err))
+			return false, err.Error()
+		}
+		testCfg, _ = test.LoadConfig(workDir)
+	}
+
+	// Ensure docker-compose.test.yml exists
+	if !test.HasTestCompose(workDir) {
+		logger(domain.LogLevelInfo, "No docker-compose.test.yml found, creating default")
+		if err := test.CreateDefaultCompose(workDir); err != nil {
+			logger(domain.LogLevelError, fmt.Sprintf("Failed to create default docker-compose.test.yml: %v", err))
+			return false, err.Error()
+		}
+	}
+
+	// Run Docker-based tests
+	logger(domain.LogLevelMilestone, "Running tests in Docker...")
+	logger(domain.LogLevelInfo, fmt.Sprintf("Test command: %s (in container '%s')", testCfg.TestCommand, testCfg.Service))
+
+	testResult := test.RunTestsWithOutput(workDir, testCfg)
+	if testResult.Output != "" {
+		// Truncate long output
+		output := testResult.Output
+		if len(output) > 4000 {
+			output = output[:2000] + "\n...(truncated)...\n" + output[len(output)-1500:]
+		}
+		logger(domain.LogLevelInfo, output)
+	}
+
+	if testResult.Passed {
+		logger(domain.LogLevelMilestone, "Tests passed")
+		return true, ""
+	}
+	return false, testResult.Error
 }
 
 // MigrationInstructions is the structure written to .mendel/migration.json

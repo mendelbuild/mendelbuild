@@ -63,9 +63,8 @@ func (o *Orchestrator) Orchestrate(ctx context.Context, hopID uuid.UUID, proposa
 
 	// Parse repository config
 	var repoConfig struct {
-		MainBranch  string `json:"main_branch"`
-		AuthToken   string `json:"auth_token"`
-		TestCommand string `json:"test_command"`
+		MainBranch string `json:"main_branch"`
+		AuthToken  string `json:"auth_token"`
 	}
 	if repo.Config != nil {
 		json.Unmarshal(repo.Config, &repoConfig)
@@ -95,9 +94,6 @@ func (o *Orchestrator) Orchestrate(ctx context.Context, hopID uuid.UUID, proposa
 	}
 	if config.AuthToken == "" {
 		config.AuthToken = repoConfig.AuthToken
-	}
-	if config.TestCommand == "" {
-		config.TestCommand = repoConfig.TestCommand
 	}
 	if config.APIKey == "" {
 		config.APIKey = projectConfig.AnthropicAPIKey
@@ -276,9 +272,8 @@ func (o *Orchestrator) buildConfig(ctx context.Context, strategyID uuid.UUID) (G
 
 	// Parse repository config
 	var repoConfig struct {
-		MainBranch  string `json:"main_branch"`
-		AuthToken   string `json:"auth_token"`
-		TestCommand string `json:"test_command"`
+		MainBranch string `json:"main_branch"`
+		AuthToken  string `json:"auth_token"`
 	}
 	if repo.Config != nil {
 		json.Unmarshal(repo.Config, &repoConfig)
@@ -305,7 +300,6 @@ func (o *Orchestrator) buildConfig(ctx context.Context, strategyID uuid.UUID) (G
 		config.MainBranch = "main"
 	}
 	config.AuthToken = repoConfig.AuthToken
-	config.TestCommand = repoConfig.TestCommand
 	config.APIKey = projectConfig.AnthropicAPIKey
 
 	return config, nil

@@ -38,7 +38,14 @@ func (c *Client) Clone(ctx context.Context, repoURL, branch, authToken string) e
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git clone: %w: %s", err, stderr.String())
+		stderrStr := stderr.String()
+		if isGitHubAuthError(stderrStr, repoURL) {
+			return &GitHubAuthError{
+				RemoteURL: repoURL,
+				RawError:  stderrStr,
+			}
+		}
+		return fmt.Errorf("git clone: %w: %s", err, stderrStr)
 	}
 	return nil
 }
@@ -149,7 +156,15 @@ func (c *Client) Push(ctx context.Context, authToken string) error {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git push: %w: %s", err, stderr.String())
+		stderrStr := stderr.String()
+		// Detect GitHub auth failures and provide helpful message
+		if isGitHubAuthError(stderrStr, remoteURL) {
+			return &GitHubAuthError{
+				RemoteURL: remoteURL,
+				RawError:  stderrStr,
+			}
+		}
+		return fmt.Errorf("git push: %w: %s", err, stderrStr)
 	}
 	return nil
 }
@@ -200,7 +215,14 @@ func (c *Client) Fetch(ctx context.Context, authToken string) error {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git fetch: %w: %s", err, stderr.String())
+		stderrStr := stderr.String()
+		if isGitHubAuthError(stderrStr, remoteURL) {
+			return &GitHubAuthError{
+				RemoteURL: remoteURL,
+				RawError:  stderrStr,
+			}
+		}
+		return fmt.Errorf("git fetch: %w: %s", err, stderrStr)
 	}
 	return nil
 }
@@ -279,7 +301,14 @@ func (c *Client) FetchBranch(ctx context.Context, branchName, authToken string) 
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git fetch origin %s: %w: %s", branchName, err, stderr.String())
+		stderrStr := stderr.String()
+		if isGitHubAuthError(stderrStr, remoteURL) {
+			return &GitHubAuthError{
+				RemoteURL: remoteURL,
+				RawError:  stderrStr,
+			}
+		}
+		return fmt.Errorf("git fetch origin %s: %w: %s", branchName, err, stderrStr)
 	}
 	return nil
 }
@@ -294,7 +323,12 @@ func (c *Client) GetWorkDir() string {
 func WorkDirForVariation(projectID, variationID string) string {
 	baseDir := os.Getenv("MENDEL_WORK_DIR")
 	if baseDir == "" {
-		baseDir = "/tmp/mendel"
+		// Default to ~/.mendel/work for persistence (macOS clears /tmp/ periodically)
+		if home, err := os.UserHomeDir(); err == nil {
+			baseDir = filepath.Join(home, ".mendel", "work")
+		} else {
+			baseDir = "/tmp/mendel"
+		}
 	}
 	return filepath.Join(baseDir, projectID, variationID)
 }
@@ -311,12 +345,47 @@ func embedAuthToken(repoURL, token string) string {
 		return repoURL
 	}
 
-	// Format: https://token@host/path
-	u.User = url.User(token)
+	// GitHub fine-grained PATs (github_pat_*) and classic PATs (ghp_*) both work
+	// with the x-access-token format. GitLab and others also support this.
+	// Format: https://x-access-token:token@host/path
+	u.User = url.UserPassword("x-access-token", token)
 	return u.String()
 }
 
 // Cleanup removes the work directory.
 func (c *Client) Cleanup() error {
 	return os.RemoveAll(c.workDir)
+}
+
+// GitHubAuthError represents an authentication failure with GitHub.
+type GitHubAuthError struct {
+	RemoteURL string
+	RawError  string
+}
+
+func (e *GitHubAuthError) Error() string {
+	return fmt.Sprintf("GitHub authentication failed. Your token may be expired or lack push permissions.\n\n"+
+		"To fix: Update your GitHub token at https://github.com/settings/tokens\n"+
+		"Then update the token in Mendel project settings.\n\n"+
+		"Raw error: %s", e.RawError)
+}
+
+// isGitHubAuthError checks if a git error is a GitHub authentication failure.
+func isGitHubAuthError(stderr, remoteURL string) bool {
+	if !strings.Contains(remoteURL, "github.com") {
+		return false
+	}
+	authErrorPatterns := []string{
+		"Invalid username or token",
+		"Authentication failed",
+		"could not read Password",
+		"invalid credentials",
+		"Bad credentials",
+	}
+	for _, pattern := range authErrorPatterns {
+		if strings.Contains(stderr, pattern) {
+			return true
+		}
+	}
+	return false
 }

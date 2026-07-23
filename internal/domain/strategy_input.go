@@ -52,6 +52,5 @@ type RepositoryDef struct {
 
 // RepoConfig holds repository-specific configuration.
 type RepoConfig struct {
-	TestCommand string `json:"test_command,omitempty"`
-	AuthToken   string `json:"auth_token,omitempty"` // Git auth token (works for GitHub, GitLab, etc.)
+	AuthToken string `json:"auth_token,omitempty"` // Git auth token (works for GitHub, GitLab, etc.)
 }

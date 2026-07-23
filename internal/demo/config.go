@@ -13,7 +13,7 @@ import (
 )
 
 // Config represents the .mendel/demo-config.yml configuration file.
-// This is a minimal config that works alongside .mendel/docker-compose.yml.
+// This is a minimal config that works alongside .mendel/docker-compose.demo.yml.
 type Config struct {
 	Version int `yaml:"version"`
 
@@ -49,7 +49,7 @@ func LoadConfig(workDir string) (*Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("demo config not found: %s - create .mendel/demo-config.yml and .mendel/docker-compose.yml", configPath)
+			return nil, fmt.Errorf("demo config not found: %s - create .mendel/demo-config.yml and .mendel/docker-compose.demo.yml", configPath)
 		}
 		return nil, fmt.Errorf("read demo config: %w", err)
 	}
@@ -94,9 +94,9 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// HasDockerCompose checks if .mendel/docker-compose.yml exists.
+// HasDockerCompose checks if .mendel/docker-compose.demo.yml exists.
 func HasDockerCompose(workDir string) bool {
-	composePath := filepath.Join(workDir, ".mendel", "docker-compose.yml")
+	composePath := filepath.Join(workDir, ".mendel", "docker-compose.demo.yml")
 	_, err := os.Stat(composePath)
 	return err == nil
 }
@@ -104,7 +104,7 @@ func HasDockerCompose(workDir string) bool {
 // DockerComposeUp runs docker-compose up in the .mendel directory.
 func DockerComposeUp(workDir string) (string, error) {
 	mendelDir := filepath.Join(workDir, ".mendel")
-	cmd := exec.Command("docker-compose", "up", "-d", "--build", "--wait")
+	cmd := exec.Command("docker-compose", "-f", "docker-compose.demo.yml", "up", "-d", "--build", "--wait")
 	cmd.Dir = mendelDir
 	output, err := cmd.CombinedOutput()
 	return string(output), err
@@ -113,7 +113,7 @@ func DockerComposeUp(workDir string) (string, error) {
 // DockerComposeDown runs docker-compose down in the .mendel directory.
 func DockerComposeDown(workDir string, removeVolumes bool) (string, error) {
 	mendelDir := filepath.Join(workDir, ".mendel")
-	args := []string{"down"}
+	args := []string{"-f", "docker-compose.demo.yml", "down"}
 	if removeVolumes {
 		args = append(args, "-v")
 	}
@@ -127,7 +127,7 @@ func DockerComposeDown(workDir string, removeVolumes bool) (string, error) {
 func GetServicePort(workDir, serviceName string, containerPort int) (int, error) {
 	mendelDir := filepath.Join(workDir, ".mendel")
 	// docker-compose port <service> <container_port> returns "0.0.0.0:12345" or similar
-	cmd := exec.Command("docker-compose", "port", serviceName, strconv.Itoa(containerPort))
+	cmd := exec.Command("docker-compose", "-f", "docker-compose.demo.yml", "port", serviceName, strconv.Itoa(containerPort))
 	cmd.Dir = mendelDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -177,4 +177,24 @@ func ExtractURL(output, pattern string) string {
 
 	match := re.FindString(output)
 	return match
+}
+
+// IsComposeRunning checks if any containers are running for the docker-compose project
+// in the .mendel directory. Returns true if at least one container is "running".
+func IsComposeRunning(workDir string) bool {
+	mendelDir := filepath.Join(workDir, ".mendel")
+	if _, err := os.Stat(mendelDir); os.IsNotExist(err) {
+		return false
+	}
+
+	// docker-compose ps -q returns container IDs if running
+	cmd := exec.Command("docker-compose", "-f", "docker-compose.demo.yml", "ps", "-q")
+	cmd.Dir = mendelDir
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+
+	// If there's any output, containers exist
+	return len(strings.TrimSpace(string(output))) > 0
 }

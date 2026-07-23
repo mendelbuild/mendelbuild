@@ -52,7 +52,7 @@ func generateMissingDockerPrompt() string {
 
 ## Requirements
 
-### .mendel/docker-compose.yml
+### .mendel/docker-compose.demo.yml
 
 This file must:
 1. Define a service that runs the application
@@ -82,7 +82,7 @@ after_up:
 ## Instructions
 
 1. Examine the project to understand its stack (look at package.json, requirements.txt, go.mod, Dockerfile, existing docker-compose.yml, etc.)
-2. Create .mendel/docker-compose.yml appropriate for this specific project
+2. Create .mendel/docker-compose.demo.yml appropriate for this specific project
 3. Create .mendel/demo-config.yml pointing to the right service and port
 4. Commit the changes`
 }
@@ -96,11 +96,11 @@ func generateFixPrompt(errMsg string) string {
 
 ## Context
 The demo runs via Docker Compose from the .mendel/ directory:
-- .mendel/docker-compose.yml defines all services (app, database, etc.)
+- .mendel/docker-compose.demo.yml defines all services (app, database, etc.)
 - .mendel/demo-config.yml specifies which service to expose and any setup scripts
 
 ## What to check
-1. Does .mendel/docker-compose.yml exist and define all needed services?
+1. Does .mendel/docker-compose.demo.yml exist and define all needed services?
 2. Are service health checks configured correctly?
 3. Do after_up scripts in .mendel/demo-config.yml work? (migrations, seed data)
 4. Are environment variables and connection strings correct for Docker networking?
@@ -116,7 +116,7 @@ The goal is a working Docker-based local dev environment.`, errMsg)
 }
 
 // handleStartDemo starts a demo instance for a variation using Docker.
-// Uses .mendel/docker-compose.yml and .mendel/demo-config.yml for configuration.
+// Uses .mendel/docker-compose.demo.yml and .mendel/demo-config.yml for configuration.
 // The actual startup runs in a background goroutine with output logged to variation_logs.
 func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -156,7 +156,7 @@ func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 		ID:                   demoInstanceID,
 		VariationID:          variationID,
 		URL:                  "",
-		TeardownInstructions: fmt.Sprintf("cd %s/.mendel && docker-compose down -v", workDir),
+		TeardownInstructions: fmt.Sprintf("cd %s/.mendel && docker-compose -f docker-compose.demo.yml down -v", workDir),
 		Status:               domain.DemoInstanceStatusStarting,
 		ProcessInfo:          processInfo,
 	}
@@ -208,19 +208,71 @@ func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uu
 
 	logMilestone("Checking demo configuration...")
 
-	// Check if work directory exists
+	// Check if work directory exists - if not, try to recover from remote
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
-		failDemoWithFix(
-			"Variation work directory not found - code may not be generated yet",
-			"The variation's code hasn't been generated. Wait for code generation to complete, or check if there was an error during generation.",
-		)
-		return
+		// Check if the variation has a commit ref (was successfully pushed)
+		variation, err := s.db.GetVariation(ctx, variationID)
+		if err != nil || variation.CommitRef == nil || *variation.CommitRef == "" {
+			failDemoWithFix(
+				"Variation work directory not found - code may not be generated yet",
+				"The variation's code hasn't been generated. Wait for code generation to complete, or check if there was an error during generation.",
+			)
+			return
+		}
+
+		// Code exists on remote - try to re-clone it
+		logMilestone("Re-cloning variation branch from remote...")
+
+		hop, err := s.db.GetHop(ctx, variation.HopID)
+		if err != nil {
+			failDemoWithFix(
+				"Failed to look up hop for variation",
+				"Internal error - try refreshing the page.",
+			)
+			return
+		}
+
+		projID, err := uuid.Parse(projectID)
+		if err != nil {
+			failDemoWithFix("Invalid project ID", "Internal error.")
+			return
+		}
+
+		repo, err := s.db.GetRepositoryByProject(ctx, projID)
+		if err != nil || repo.URL == nil {
+			failDemoWithFix(
+				"Repository URL not found",
+				"Configure the repository URL in project settings.",
+			)
+			return
+		}
+
+		// Parse repo config for auth token
+		var repoConfig struct {
+			AuthToken string `json:"auth_token"`
+		}
+		if repo.Config != nil {
+			json.Unmarshal(repo.Config, &repoConfig)
+		}
+
+		branchName := fmt.Sprintf("mendel/%s/%s", sanitizeBranchName(hop.Name), sanitizeBranchName(variation.Name))
+		logInfo(fmt.Sprintf("Cloning branch %s...", branchName))
+
+		gitClient := git.NewClient(workDir)
+		if err := gitClient.Clone(ctx, *repo.URL, branchName, repoConfig.AuthToken); err != nil {
+			failDemoWithFix(
+				fmt.Sprintf("Failed to clone branch: %v", err),
+				"The branch may have been deleted from the remote repository. You may need to regenerate this variation.",
+			)
+			return
+		}
+		logMilestone("Branch cloned successfully")
 	}
 
-	// Check for .mendel/docker-compose.yml
+	// Check for .mendel/docker-compose.demo.yml
 	if !demo.HasDockerCompose(workDir) {
 		failDemoWithFix(
-			"Docker configuration not found: .mendel/docker-compose.yml",
+			"Docker configuration not found: .mendel/docker-compose.demo.yml",
 			generateMissingDockerPrompt(),
 		)
 		return
@@ -318,7 +370,7 @@ func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uu
 		UPDATE demo_instances
 		SET url = $2, teardown_instructions = $3, status = $4, process_info = $5
 		WHERE id = $1
-	`, demoInstanceID, demoURL, fmt.Sprintf("cd %s/.mendel && docker-compose down -v", workDir), domain.DemoInstanceStatusRunning, processInfo)
+	`, demoInstanceID, demoURL, fmt.Sprintf("cd %s/.mendel && docker-compose -f docker-compose.demo.yml down -v", workDir), domain.DemoInstanceStatusRunning, processInfo)
 }
 
 // truncateOutput truncates output to maxLen characters, keeping both beginning and end.
@@ -515,7 +567,15 @@ func (s *Server) handleRetryDemo(w http.ResponseWriter, r *http.Request) {
 	// Get work directory for this variation
 	workDir := git.WorkDirForVariation(projectID, variationID.String())
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
-		http.Error(w, "variation work directory not found", http.StatusBadRequest)
+		// Try to re-clone from remote if the variation has a commit ref
+		variation, err := s.db.GetVariation(ctx, variationID)
+		if err != nil || variation.CommitRef == nil || *variation.CommitRef == "" {
+			http.Error(w, "variation work directory not found and code not available on remote", http.StatusBadRequest)
+			return
+		}
+
+		// Need to re-clone - redirect to restart which handles this
+		http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s/restart-demo", projectID, variationID), http.StatusSeeOther)
 		return
 	}
 
@@ -563,7 +623,13 @@ func (s *Server) runFixAndDemo(projectID string, variationID, demoInstanceID uui
 	cmd := exec.CommandContext(ctx, "claude", "--print", "--dangerously-skip-permissions", fixPrompt)
 	cmd.Dir = workDir
 
+	// Start progress monitor in background
+	done := make(chan struct{})
+	go monitorClaudeProgress(workDir, logInfo, done)
+
 	output, err := cmd.CombinedOutput()
+	close(done) // Stop the monitor
+
 	if len(output) > 0 {
 		// Log output in chunks if very long
 		outStr := string(output)
@@ -584,14 +650,14 @@ func (s *Server) runFixAndDemo(projectID string, variationID, demoInstanceID uui
 
 	// Check for docker-compose
 	if !demo.HasDockerCompose(workDir) {
-		errMsg := "Docker configuration not found: .mendel/docker-compose.yml"
+		errMsg := "Docker configuration not found: .mendel/docker-compose.demo.yml"
 		logError(errMsg)
 		missingDockerPrompt := `The project needs Docker configuration for demos.
 
-Create .mendel/docker-compose.yml that defines all services needed to run the application. Example:
+Create .mendel/docker-compose.demo.yml that defines all services needed to run the application. Example:
 
 ` + "```yaml" + `
-# .mendel/docker-compose.yml
+# .mendel/docker-compose.demo.yml
 
 # Include the project's existing docker-compose if it has one
 # include:
@@ -761,7 +827,7 @@ func (s *Server) continueDemoStartup(ctx context.Context, projectID string, vari
 		"port":     port,
 	})
 
-	teardownCmd := fmt.Sprintf("cd %s/.mendel && docker-compose down -v", workDir)
+	teardownCmd := fmt.Sprintf("cd %s/.mendel && docker-compose -f docker-compose.demo.yml down -v", workDir)
 	s.db.Pool.Exec(ctx, `
 		UPDATE demo_instances
 		SET url = $2, teardown_instructions = $3, status = $4, process_info = $5
@@ -796,7 +862,7 @@ func (s *Server) handleRestartDemo(w http.ResponseWriter, r *http.Request) {
 		ID:                   demoInstanceID,
 		VariationID:          variationID,
 		URL:                  "",
-		TeardownInstructions: fmt.Sprintf("cd %s/.mendel && docker-compose down -v", workDir),
+		TeardownInstructions: fmt.Sprintf("cd %s/.mendel && docker-compose -f docker-compose.demo.yml down -v", workDir),
 		Status:               domain.DemoInstanceStatusStarting,
 		ProcessInfo:          processInfo,
 	}
@@ -810,4 +876,130 @@ func (s *Server) handleRestartDemo(w http.ResponseWriter, r *http.Request) {
 	go s.runDemoStartup(projectID, variationID, demoInstanceID, workDir)
 
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
+}
+
+// monitorClaudeProgress observes file system and git activity while Claude Code runs,
+// logging progress updates every 2 seconds until the done channel is closed.
+func monitorClaudeProgress(workDir string, logInfo func(string), done <-chan struct{}) {
+	startTime := time.Now()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	// Track state for change detection
+	lastCommit := getGitHead(workDir)
+	lastModTimes := make(map[string]time.Time)
+
+	for {
+		select {
+		case <-done:
+			elapsed := time.Since(startTime).Round(time.Second)
+			logInfo(fmt.Sprintf("Claude Code completed (%s)", elapsed))
+			return
+		case <-ticker.C:
+			elapsed := time.Since(startTime).Round(time.Second)
+			var updates []string
+
+			// Check for new commits
+			currentCommit := getGitHead(workDir)
+			if currentCommit != lastCommit && currentCommit != "" {
+				commitMsg := getGitCommitMessage(workDir, currentCommit)
+				if commitMsg != "" {
+					updates = append(updates, fmt.Sprintf("committed: %s", commitMsg))
+				}
+				lastCommit = currentCommit
+			}
+
+			// Check for recently modified files (ignore .git directory)
+			modifiedFiles := getRecentlyModifiedFiles(workDir, lastModTimes)
+			if len(modifiedFiles) > 0 {
+				if len(modifiedFiles) <= 3 {
+					updates = append(updates, fmt.Sprintf("modified: %s", strings.Join(modifiedFiles, ", ")))
+				} else {
+					updates = append(updates, fmt.Sprintf("modified: %s (+%d more)", strings.Join(modifiedFiles[:3], ", "), len(modifiedFiles)-3))
+				}
+			}
+
+			// Log progress if there are updates, or every 30s as a heartbeat
+			if len(updates) > 0 {
+				logInfo(fmt.Sprintf("Claude Code running (%s): %s", elapsed, strings.Join(updates, "; ")))
+			} else if elapsed.Seconds() > 0 && int(elapsed.Seconds())%30 == 0 {
+				logInfo(fmt.Sprintf("Claude Code still running (%s)...", elapsed))
+			}
+		}
+	}
+}
+
+// getGitHead returns the current HEAD commit hash.
+func getGitHead(workDir string) string {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = workDir
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+// getGitCommitMessage returns the first line of a commit message.
+func getGitCommitMessage(workDir, commitHash string) string {
+	cmd := exec.Command("git", "log", "-1", "--format=%s", commitHash)
+	cmd.Dir = workDir
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	msg := strings.TrimSpace(string(output))
+	if len(msg) > 60 {
+		msg = msg[:57] + "..."
+	}
+	return msg
+}
+
+// getRecentlyModifiedFiles returns files modified since last check, updating lastModTimes.
+func getRecentlyModifiedFiles(workDir string, lastModTimes map[string]time.Time) []string {
+	var modified []string
+
+	// Walk top-level files and one level of subdirectories (skip .git)
+	entries, err := os.ReadDir(workDir)
+	if err != nil {
+		return nil
+	}
+
+	checkFile := func(path, name string) {
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			return
+		}
+		modTime := info.ModTime()
+		if lastTime, exists := lastModTimes[path]; !exists || modTime.After(lastTime) {
+			if exists { // Only report if we've seen it before (skip initial scan)
+				modified = append(modified, name)
+			}
+			lastModTimes[path] = modTime
+		}
+	}
+
+	for _, entry := range entries {
+		if entry.Name() == ".git" {
+			continue
+		}
+		path := fmt.Sprintf("%s/%s", workDir, entry.Name())
+		if entry.IsDir() {
+			// Check one level deep
+			subEntries, err := os.ReadDir(path)
+			if err != nil {
+				continue
+			}
+			for _, subEntry := range subEntries {
+				if !subEntry.IsDir() {
+					subPath := fmt.Sprintf("%s/%s", path, subEntry.Name())
+					checkFile(subPath, fmt.Sprintf("%s/%s", entry.Name(), subEntry.Name()))
+				}
+			}
+		} else {
+			checkFile(path, entry.Name())
+		}
+	}
+
+	return modified
 }

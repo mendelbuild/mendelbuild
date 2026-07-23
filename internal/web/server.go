@@ -10,7 +10,9 @@ import (
 	"github.com/bhs/mendelbuild/internal/agent"
 	"github.com/bhs/mendelbuild/internal/codegen"
 	"github.com/bhs/mendelbuild/internal/db"
+	"github.com/bhs/mendelbuild/internal/demo"
 	"github.com/bhs/mendelbuild/internal/domain"
+	"github.com/bhs/mendelbuild/internal/git"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
@@ -34,8 +36,50 @@ func NewServer(database *db.DB, addr string) *Server {
 		stopWorker:   make(chan struct{}),
 	}
 	s.setupRoutes()
+	s.cleanupStaleDemos()
 	s.startVariationWorker()
 	return s
+}
+
+// cleanupStaleDemos marks any demos that were "running" or "starting" before
+// a restart as stopped. This handles the case where the server restarts and
+// Docker containers are no longer running.
+func (s *Server) cleanupStaleDemos() {
+	ctx := context.Background()
+
+	demos, err := s.db.GetAllRunningDemos(ctx)
+	if err != nil {
+		fmt.Printf("[startup] Warning: could not check for stale demos: %v\n", err)
+		return
+	}
+
+	if len(demos) == 0 {
+		return
+	}
+
+	fmt.Printf("[startup] Checking %d demos marked as running/starting...\n", len(demos))
+
+	for _, d := range demos {
+		// Extract work_dir from process info
+		var processInfo map[string]interface{}
+		if d.ProcessInfo != nil {
+			json.Unmarshal(d.ProcessInfo, &processInfo)
+		}
+		workDir, _ := processInfo["work_dir"].(string)
+		if workDir == "" {
+			workDir = git.WorkDirForVariation("unknown", d.VariationID.String())
+		}
+
+		// Check if Docker containers are actually running
+		if demo.IsComposeRunning(workDir) {
+			fmt.Printf("[startup] Demo %s is still running\n", d.ID)
+			continue
+		}
+
+		// Not running - mark as stopped
+		fmt.Printf("[startup] Marking stale demo %s as stopped\n", d.ID)
+		s.db.UpdateDemoInstanceStatus(ctx, d.ID, domain.DemoInstanceStatusStopped, nil)
+	}
 }
 
 // startVariationWorker starts a background goroutine that polls for
