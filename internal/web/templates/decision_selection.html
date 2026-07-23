@@ -87,6 +87,9 @@
                             <a href="{{.BranchURL}}" target="_blank" style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; background: #24292e; color: white; text-decoration: none; border-radius: 4px; font-size: 0.8em;">
                                 View Branch
                             </a>
+                            {{if .DiffURL}}
+                            <a href="{{.DiffURL}}" target="_blank" style="margin-left: 4px; font-size: 0.8em; color: #666;">(diff)</a>
+                            {{end}}
                             {{else if .CommitRef}}
                             <code style="font-size: 0.8em;">{{slice .CommitRef 0 7}}</code>
                             {{else}}

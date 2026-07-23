@@ -804,7 +804,7 @@ func (db *DB) CreateVariationLogWithSource(ctx context.Context, variationID uuid
 	return err
 }
 
-// GetVariationLogs retrieves logs for a variation, most recent first.
+// GetVariationLogs retrieves logs for a variation in chronological order.
 func (db *DB) GetVariationLogs(ctx context.Context, variationID uuid.UUID, limit int) ([]domain.VariationLog, error) {
 	if limit <= 0 {
 		limit = 100
@@ -813,7 +813,7 @@ func (db *DB) GetVariationLogs(ctx context.Context, variationID uuid.UUID, limit
 		SELECT id, variation_id, logged_at, level, message, source_type, source_id
 		FROM variation_logs
 		WHERE variation_id = $1
-		ORDER BY logged_at DESC
+		ORDER BY logged_at ASC
 		LIMIT $2
 	`, variationID, limit)
 	if err != nil {
@@ -865,7 +865,7 @@ func (db *DB) GetRecentVariationLogs(ctx context.Context, variationID uuid.UUID,
 	return db.GetVariationLogs(ctx, variationID, limit)
 }
 
-// GetVariationLogsByType retrieves logs for a variation filtered by source type.
+// GetVariationLogsByType retrieves logs for a variation filtered by source type (chronological order).
 func (db *DB) GetVariationLogsByType(ctx context.Context, variationID uuid.UUID, sourceType domain.SourceType, limit int) ([]domain.VariationLog, error) {
 	if limit <= 0 {
 		limit = 100
@@ -874,7 +874,7 @@ func (db *DB) GetVariationLogsByType(ctx context.Context, variationID uuid.UUID,
 		SELECT id, variation_id, logged_at, level, message, source_type, source_id
 		FROM variation_logs
 		WHERE variation_id = $1 AND source_type = $2
-		ORDER BY logged_at DESC
+		ORDER BY logged_at ASC
 		LIMIT $3
 	`, variationID, string(sourceType), limit)
 	if err != nil {

@@ -68,10 +68,13 @@ func (c *CLI) Run(ctx context.Context, prompt string) (*CLIResult, error) {
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = c.workDir
 
-	// Set up environment
-	env := os.Environ()
-	if c.apiKey != "" {
-		env = append(env, fmt.Sprintf("ANTHROPIC_API_KEY=%s", c.apiKey))
+	// Set up environment - filter out ANTHROPIC_API_KEY since Claude Code
+	// should use its own claude.ai authentication, not our API key
+	var env []string
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "ANTHROPIC_API_KEY=") {
+			env = append(env, e)
+		}
 	}
 	cmd.Env = env
 

@@ -117,8 +117,8 @@ func (s *Server) processCreatingVariations() {
 	}
 
 	for _, hop := range hops {
-		// Check if hop is active (approved for generation)
-		if hop.Status != domain.HopStatusActive {
+		// Process hops that are active OR selecting (for retries of failed variations)
+		if hop.Status != domain.HopStatusActive && hop.Status != domain.HopStatusSelecting {
 			continue
 		}
 
@@ -538,6 +538,7 @@ func (s *Server) setupRoutes() {
 		// Variation routes
 		r.Get("/variations/{variationID}", s.handleVariationDetail)
 		r.Post("/variations/{variationID}/retry", s.handleRetryVariation)
+		r.Post("/variations/{variationID}/terminate", s.handleTerminateVariation)
 		r.Post("/variations/{variationID}/start-demo", s.handleStartDemo)
 		r.Post("/variations/{variationID}/stop-demo", s.handleStopDemo)
 		r.Post("/variations/{variationID}/retry-demo", s.handleRetryDemo)

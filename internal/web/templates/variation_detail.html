@@ -27,6 +27,9 @@
                         <a href="{{.GitHubURL}}" target="_blank" style="font-family: monospace;">
                             {{if .Variation.CommitRef}}{{slice .Variation.CommitRef 0 8}}{{else}}View on GitHub{{end}} ↗
                         </a>
+                        {{if .DiffURL}}
+                        <a href="{{.DiffURL}}" target="_blank" style="margin-left: 8px; font-size: 0.9em; color: #666;">(diff)</a>
+                        {{end}}
                     </td>
                 </tr>
                 {{else if .Variation.CommitRef}}
@@ -45,13 +48,24 @@
                 </tr>
             </table>
 
-            {{if eq .Variation.Status "error"}}
+            {{if or (eq .Variation.Status "error") (eq .Variation.Status "terminated")}}
             <div style="margin-top: 15px;">
                 <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry" style="display: inline;">
                     <button type="submit" style="padding: 8px 16px; background: #ffc107; color: #212529; border: none; border-radius: 4px; cursor: pointer;">
                         Retry
                     </button>
                 </form>
+            </div>
+            {{end}}
+
+            {{if eq .Variation.Status "creating"}}
+            <div style="margin-top: 15px;">
+                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/terminate" style="display: inline;">
+                    <button type="submit" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Terminate
+                    </button>
+                </form>
+                <span style="margin-left: 10px; color: #666; font-size: 0.9em;">Stop this stuck generation</span>
             </div>
             {{end}}
         </div>
@@ -132,13 +146,30 @@
                     <span style="color: #666; font-size: 0.85em;">Auto-refreshing...</span>
                     {{end}}
                 </div>
-                <div id="demo-logs" style="max-height: 300px; overflow-y: auto; background: #f8f9fa; border-radius: 4px; padding: 10px; font-family: monospace; font-size: 0.8em;">
-                    {{range .DemoLogs}}
-                    <div style="margin-bottom: 4px; {{if eq .Level "error"}}color: #dc3545;{{else if eq .Level "milestone"}}color: #28a745; font-weight: bold;{{else}}color: #333;{{end}}">
-                        <span style="color: #999;">{{.LoggedAt.Format "15:04:05"}}</span>
-                        {{.Message}}
-                    </div>
-                    {{end}}
+                <div id="demo-logs" class="log-container" style="max-height: 300px; overflow-y: auto; background: #f8f9fa; border-radius: 4px; padding: 10px;">
+                    <table style="font-family: monospace; font-size: 0.85em; width: 100%;">
+                        <tbody>
+                            {{range .DemoLogs}}
+                            <tr>
+                                <td style="white-space: nowrap; color: #999; padding-right: 10px; vertical-align: top;">
+                                    {{.LoggedAt.Format "15:04:05"}}
+                                </td>
+                                <td style="padding-right: 8px; vertical-align: top;">
+                                    {{if eq .Level "milestone"}}
+                                    <span style="color: #28a745; font-weight: bold;">[MILESTONE]</span>
+                                    {{else if eq .Level "error"}}
+                                    <span style="color: #dc3545; font-weight: bold;">[ERROR]</span>
+                                    {{else if eq .Level "info"}}
+                                    <span style="color: #007bff;">[INFO]</span>
+                                    {{else}}
+                                    <span style="color: #6c757d;">[{{.Level}}]</span>
+                                    {{end}}
+                                </td>
+                                <td style="word-break: break-word;">{{.Message}}</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
                 </div>
             </div>
             {{end}}
@@ -167,16 +198,16 @@
                 {{end}}
             </div>
 
-            <div id="logs-container" style="margin-top: 15px; max-height: 500px; overflow-y: auto;">
+            <div id="codegen-logs" class="log-container" style="margin-top: 15px; max-height: 500px; overflow-y: auto; background: #f8f9fa; border-radius: 4px; padding: 10px;">
                 {{if .Logs}}
-                <table style="font-family: monospace; font-size: 0.9em;">
+                <table style="font-family: monospace; font-size: 0.85em; width: 100%;">
                     <tbody>
                         {{range .Logs}}
                         <tr>
-                            <td style="white-space: nowrap; color: #666; padding-right: 15px; vertical-align: top;">
+                            <td style="white-space: nowrap; color: #999; padding-right: 10px; vertical-align: top;">
                                 {{.LoggedAt.Format "15:04:05"}}
                             </td>
-                            <td style="padding-right: 10px; vertical-align: top;">
+                            <td style="padding-right: 8px; vertical-align: top;">
                                 {{if eq .Level "milestone"}}
                                 <span style="color: #28a745; font-weight: bold;">[MILESTONE]</span>
                                 {{else if eq .Level "error"}}
@@ -216,5 +247,14 @@ let refreshInterval = setInterval(function() {
 }, 3000);
 </script>
 {{end}}
+
+<script>
+// Scroll all log containers to the bottom on page load
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.log-container').forEach(function(container) {
+        container.scrollTop = container.scrollHeight;
+    });
+});
+</script>
 {{end}}
 {{end}}

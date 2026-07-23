@@ -39,6 +39,22 @@ func buildGitHubBranchURL(repoURL, branchName string, commitRef *string) string 
 	return fmt.Sprintf("%s/tree/%s", base, branchName)
 }
 
+// buildGitHubDiffURL constructs a GitHub compare URL (main...branch).
+func buildGitHubDiffURL(repoURL, mainBranch, branchName string) string {
+	base := repoURL
+	base = strings.TrimSuffix(base, ".git")
+
+	if strings.HasPrefix(base, "git@github.com:") {
+		base = strings.Replace(base, "git@github.com:", "https://github.com/", 1)
+	}
+
+	if !strings.Contains(base, "github.com") {
+		return ""
+	}
+
+	return fmt.Sprintf("%s/compare/%s...%s", base, mainBranch, branchName)
+}
+
 // VariationWithLogs holds a variation and its recent logs.
 type VariationWithLogs struct {
 	Variation  domain.Variation
@@ -231,6 +247,7 @@ type VariationDetailView struct {
 	DemoInstance *domain.DemoInstance  // Current or recent demo instance
 	DemoLogs     []domain.VariationLog // Logs specific to the current demo
 	GitHubURL    string                // Link to branch on GitHub (if applicable)
+	DiffURL      string                // Link to GitHub compare (main...branch)
 }
 
 func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
@@ -273,9 +290,20 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 
 	// Build GitHub URL for the branch
 	branchName := fmt.Sprintf("mendel/%s/%s", hop.Name, variation.Name)
-	var githubURL string
+	var githubURL, diffURL string
 	if repo, err := s.db.GetRepositoryByProject(ctx, projectID); err == nil && repo != nil && repo.URL != nil {
 		githubURL = buildGitHubBranchURL(*repo.URL, branchName, variation.CommitRef)
+		// Get main branch for diff URL
+		mainBranch := "main"
+		if repo.Config != nil {
+			var repoConfig struct {
+				MainBranch string `json:"main_branch"`
+			}
+			if err := json.Unmarshal(repo.Config, &repoConfig); err == nil && repoConfig.MainBranch != "" {
+				mainBranch = repoConfig.MainBranch
+			}
+		}
+		diffURL = buildGitHubDiffURL(*repo.URL, mainBranch, branchName)
 	}
 
 	view := &VariationDetailView{
@@ -285,6 +313,7 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		DemoInstance: demoInstance,
 		DemoLogs:     demoLogs,
 		GitHubURL:    githubURL,
+		DiffURL:      diffURL,
 	}
 
 	data := map[string]interface{}{
@@ -314,11 +343,13 @@ func (s *Server) handleRetryVariation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only allow retry for error status
-	if variation.Status != domain.VariationStatusError {
-		http.Error(w, "can only retry variations in error status", http.StatusBadRequest)
+	// Only allow retry for error or terminated status
+	if variation.Status != domain.VariationStatusError && variation.Status != domain.VariationStatusTerminated {
+		http.Error(w, "can only retry variations in error or terminated status", http.StatusBadRequest)
 		return
 	}
+
+	oldStatus := variation.Status
 
 	// Reset status to creating - background worker will pick it up
 	variation.Status = domain.VariationStatusCreating
@@ -329,8 +360,45 @@ func (s *Server) handleRetryVariation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record state transition
-	s.db.CreateVariationStateTransition(ctx, variationID, string(domain.VariationStatusError), string(domain.VariationStatusCreating), "manual retry")
+	s.db.CreateVariationStateTransition(ctx, variationID, string(oldStatus), string(domain.VariationStatusCreating), "manual retry")
 
-	// Redirect back to hop detail
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/hops/%s", projectID, variation.HopID), http.StatusSeeOther)
+	// Redirect back to variation detail to watch progress
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
+}
+
+func (s *Server) handleTerminateVariation(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID := chi.URLParam(r, "projectID")
+
+	variationID, err := uuid.Parse(chi.URLParam(r, "variationID"))
+	if err != nil {
+		http.Error(w, "invalid variation ID", http.StatusBadRequest)
+		return
+	}
+
+	variation, err := s.db.GetVariation(ctx, variationID)
+	if err != nil {
+		http.Error(w, "variation not found", http.StatusNotFound)
+		return
+	}
+
+	// Only allow terminate for creating status (stuck generations)
+	if variation.Status != domain.VariationStatusCreating {
+		http.Error(w, "can only terminate variations in creating status", http.StatusBadRequest)
+		return
+	}
+
+	// Set status to terminated
+	variation.Status = domain.VariationStatusTerminated
+	variation.UpdatedAt = time.Now()
+	if err := s.db.UpdateVariation(ctx, variation); err != nil {
+		http.Error(w, "error updating variation: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Record state transition
+	s.db.CreateVariationStateTransition(ctx, variationID, string(domain.VariationStatusCreating), string(domain.VariationStatusTerminated), "manual termination")
+
+	// Redirect back to variation detail
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
 }

@@ -72,6 +72,17 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 	// Infrastructure failures use "error" status (retryable)
 	// Code/test failures use "terminated" status (not retryable)
 
+	// Clean up any existing work directory from a previous attempt
+	if _, err := os.Stat(workDir); err == nil {
+		logger(domain.LogLevelInfo, "Cleaning up existing work directory from previous attempt")
+		if err := os.RemoveAll(workDir); err != nil {
+			result.Error = fmt.Sprintf("failed to clean up work directory: %v", err)
+			logger(domain.LogLevelError, result.Error)
+			g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusError, result.Error)
+			return result, nil
+		}
+	}
+
 	logger(domain.LogLevelInfo, fmt.Sprintf("Cloning repository to %s", workDir))
 	if err := gitClient.Clone(ctx, g.config.RepositoryURL, g.config.MainBranch, g.config.AuthToken); err != nil {
 		result.Error = fmt.Sprintf("clone failed: %v", err)

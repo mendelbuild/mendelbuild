@@ -77,6 +77,7 @@ type SelectionVariationView struct {
 	Status    string
 	CommitRef string
 	BranchURL string             // GitHub branch URL
+	DiffURL   string             // GitHub compare URL (main...branch)
 	DemoURL   string             // Running demo URL (if any)
 	Grades    map[string]float64 // Criterion name -> score (0.0-1.0)
 }
@@ -286,11 +287,23 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 				// Get strategy and repository for branch URLs
 				strategy, _ := s.db.GetStrategy(ctx, view.Hop.StrategyID)
 				var repoURL string
+				var mainBranch string
 				if strategy != nil {
 					repo, _ := s.db.GetRepositoryByProject(ctx, strategy.ProjectID)
 					if repo != nil && repo.URL != nil {
 						repoURL = *repo.URL
 					}
+					if repo != nil && repo.Config != nil {
+						var repoConfig struct {
+							MainBranch string `json:"main_branch"`
+						}
+						if err := json.Unmarshal(repo.Config, &repoConfig); err == nil {
+							mainBranch = repoConfig.MainBranch
+						}
+					}
+				}
+				if mainBranch == "" {
+					mainBranch = "main"
 				}
 
 				// Get variations
@@ -327,10 +340,11 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 						sv.DemoURL = demo.URL
 					}
 
-					// Construct branch URL
+					// Construct branch and diff URLs
 					if repoURL != "" {
 						branchName := fmt.Sprintf("mendel/%s/%s", sanitizeBranchName(view.Hop.Name), sanitizeBranchName(v.Name))
 						sv.BranchURL = constructGitHubBranchURL(repoURL, branchName)
+						sv.DiffURL = constructGitHubDiffURL(repoURL, mainBranch, branchName)
 					}
 
 					selectionData.Variations = append(selectionData.Variations, sv)
@@ -2026,6 +2040,28 @@ func constructGitHubBranchURL(repoURL, branchName string) string {
 	}
 
 	return url + "/tree/" + branchName
+}
+
+// constructGitHubDiffURL constructs a GitHub compare URL (main...branch).
+func constructGitHubDiffURL(repoURL, mainBranch, branchName string) string {
+	url := repoURL
+
+	// Remove .git suffix
+	if len(url) > 4 && url[len(url)-4:] == ".git" {
+		url = url[:len(url)-4]
+	}
+
+	// Convert SSH URLs to HTTPS
+	if len(url) > 15 && url[:15] == "git@github.com:" {
+		url = "https://github.com/" + url[15:]
+	}
+
+	// Ensure HTTPS
+	if len(url) > 4 && url[:4] != "http" {
+		return "" // Unsupported format
+	}
+
+	return url + "/compare/" + mainBranch + "..." + branchName
 }
 
 // handlePruneVariation marks a variation as pruned, removing it from selection consideration.
