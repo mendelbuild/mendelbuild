@@ -21,41 +21,6 @@
             <form id="reject-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/reject" style="display: none;"></form>
         </div>
 
-        {{if .Roadmap}}
-        <div class="card">
-            <h2>Hops Summary</h2>
-            {{if .Roadmap.Hops}}
-            <table>
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Kind</th>
-                        <th>Dependencies</th>
-                        <th>Objectives</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {{range .Roadmap.Hops}}
-                    <tr>
-                        <td><strong>{{.Name}}</strong></td>
-                        <td>{{.Kind}}</td>
-                        <td>{{if .DependsOn}}{{range $i, $d := .DependsOn}}{{if $i}}, {{end}}{{$d}}{{end}}{{else}}<span class="empty">none</span>{{end}}</td>
-                        <td>{{len .ObjectiveIDs}} objective(s)</td>
-                    </tr>
-                    {{end}}
-                </tbody>
-            </table>
-            {{else}}
-            <p class="empty">No hops in proposal.</p>
-            {{end}}
-
-            {{if .Roadmap.FeasibilityNotes}}
-            <div style="margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 4px;">
-                <strong>Feasibility Notes:</strong> {{.Roadmap.FeasibilityNotes}}
-            </div>
-            {{end}}
-        </div>
-        {{end}}
     </div>
 
     {{/* Right column: Chat history */}}
@@ -135,5 +100,155 @@
         </div>
     </div>
 </div>
+
+{{/* Full-width Hops DAG and Summary below the two-column layout */}}
+{{if .Roadmap}}
+{{if .Roadmap.Hops}}
+<div class="card" style="margin-top: 20px;">
+    <h2>Dependency Graph</h2>
+    <div id="roadmap-dag" style="min-height: 200px; overflow-x: auto;"></div>
+</div>
+{{end}}
+
+<div class="card" style="margin-top: 20px;">
+    <h2>Hops Summary</h2>
+    <div style="margin-bottom: 10px; font-size: 0.85em;">
+        <span style="display: inline-block; width: 12px; height: 12px; background: #d4edda; border: 1px solid #28a745; margin-right: 4px; vertical-align: middle;"></span> Done
+        <span style="margin-left: 15px; display: inline-block; width: 12px; height: 12px; background: #f8d7da; border: 1px solid #dc3545; margin-right: 4px; vertical-align: middle;"></span> Rejected
+        <span style="margin-left: 15px; display: inline-block; width: 12px; height: 12px; background: #cce5ff; border: 1px solid #007bff; margin-right: 4px; vertical-align: middle;"></span> In Progress
+        <span style="margin-left: 15px; display: inline-block; width: 12px; height: 12px; background: #fff; border: 1px solid #28a745; border-style: dashed; margin-right: 4px; vertical-align: middle;"></span> New
+    </div>
+    {{if .Roadmap.Hops}}
+    <table style="width: 100%;">
+        <thead>
+            <tr>
+                <th style="width: 180px;">Name</th>
+                <th style="width: 80px;">Status</th>
+                <th>Commentary</th>
+                <th style="width: 150px;">Dependencies</th>
+                <th style="width: 100px;">Objectives</th>
+            </tr>
+        </thead>
+        <tbody id="hops-table-body">
+            {{range .Roadmap.Hops}}
+            <tr data-hop-name="{{.Name}}" data-objective-ids="{{range $i, $id := .ObjectiveIDs}}{{if $i}},{{end}}{{$id}}{{end}}">
+                <td><strong>{{.Name}}</strong></td>
+                <td class="hop-status"></td>
+                <td style="font-size: 0.9em; color: #666;">{{.Commentary}}</td>
+                <td>{{if .DependsOn}}{{range $i, $d := .DependsOn}}{{if $i}}, {{end}}{{$d}}{{end}}{{else}}<span class="empty">none</span>{{end}}</td>
+                <td class="hop-objectives"></td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{else}}
+    <p class="empty">No hops in proposal.</p>
+    {{end}}
+
+    {{if .Roadmap.FeasibilityNotes}}
+    <div style="margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 4px;">
+        <strong>Feasibility Notes:</strong> {{.Roadmap.FeasibilityNotes}}
+    </div>
+    {{end}}
+</div>
+
+<script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+<script src="/static/js/dag.js"></script>
+<script>
+(function() {
+    const existingHops = {{if and .ExistingHopsJSON (ne .ExistingHopsJSON "")}}{{.ExistingHopsJSON}}{{else}}[]{{end}};
+    const objectives = {{if and .ObjectivesJSON (ne .ObjectivesJSON "")}}{{.ObjectivesJSON}}{{else}}{}{{end}};
+    const proposedHops = {{if .Roadmap}}{{if .Roadmap.Hops}}[
+        {{range $i, $h := .Roadmap.Hops}}{{if $i}},{{end}}{
+            "name": "{{$h.Name}}",
+            "depends_on": [{{range $j, $d := $h.DependsOn}}{{if $j}},{{end}}"{{$d}}"{{end}}]
+        }{{end}}
+    ]{{else}}[]{{end}}{{else}}[]{{end}};
+
+    // Build lookup for existing hops
+    const existingByName = {};
+    existingHops.forEach(h => { existingByName[h.name] = h; });
+
+    // Sort table rows: new hops first, then existing
+    const tbody = document.getElementById('hops-table-body');
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    rows.sort((a, b) => {
+        const aExisting = existingByName[a.dataset.hopName];
+        const bExisting = existingByName[b.dataset.hopName];
+        if (!aExisting && bExisting) return -1;
+        if (aExisting && !bExisting) return 1;
+        return 0;
+    });
+    rows.forEach(row => tbody.appendChild(row));
+
+    // Update table rows with status badges
+    rows.forEach(row => {
+        const name = row.dataset.hopName;
+        const statusCell = row.querySelector('.hop-status');
+        const existing = existingByName[name];
+
+        if (existing) {
+            if (existing.status === 'rejected') {
+                statusCell.innerHTML = '<span style="display: inline-block; padding: 2px 8px; background: #f8d7da; color: #721c24; border-radius: 3px; font-size: 0.8em;">rejected</span>';
+                row.style.background = '#fff8f8';
+            } else if (existing.status === 'abandoned') {
+                statusCell.innerHTML = '<span style="display: inline-block; padding: 2px 8px; background: #e2e3e5; color: #383d41; border-radius: 3px; font-size: 0.8em;">abandoned</span>';
+                row.style.background = '#fafafa';
+            } else if (existing.is_terminal) {
+                statusCell.innerHTML = '<span style="display: inline-block; padding: 2px 8px; background: #d4edda; color: #155724; border-radius: 3px; font-size: 0.8em;">done</span>';
+                row.style.background = '#f8fff9';
+            } else {
+                statusCell.innerHTML = '<span style="display: inline-block; padding: 2px 8px; background: #cce5ff; color: #004085; border-radius: 3px; font-size: 0.8em;">' + existing.status + '</span>';
+                row.style.background = '#f8fbff';
+            }
+        } else {
+            statusCell.innerHTML = '<span style="display: inline-block; padding: 2px 8px; background: #fff; color: #28a745; border: 1px dashed #28a745; border-radius: 3px; font-size: 0.8em;">new</span>';
+        }
+
+        // Populate objectives column
+        const objCell = row.querySelector('.hop-objectives');
+        const objIds = row.dataset.objectiveIds ? row.dataset.objectiveIds.split(',').filter(id => id) : [];
+        if (objIds.length > 0) {
+            const objNames = objIds.map(id => {
+                const desc = objectives[id];
+                if (!desc) return null;
+                // Truncate long descriptions
+                return desc.length > 40 ? desc.substring(0, 38) + '...' : desc;
+            }).filter(n => n);
+            objCell.innerHTML = objNames.map(n => '<div style="font-size: 0.85em; color: #666; margin: 2px 0;">' + n + '</div>').join('');
+        } else {
+            objCell.innerHTML = '<span class="empty">none</span>';
+        }
+    });
+
+    // Build nodes and edges for DAG
+    const nodes = proposedHops.map(h => {
+        const existing = existingByName[h.name];
+        return {
+            id: h.name,
+            name: h.name,
+            status: existing ? existing.status : null,
+            isTerminal: existing ? existing.is_terminal : false,
+            isNew: !existing
+        };
+    });
+
+    const edges = [];
+    proposedHops.forEach(h => {
+        if (h.depends_on) {
+            h.depends_on.forEach(dep => {
+                edges.push({ from: dep, to: h.name });
+            });
+        }
+    });
+
+    // Render DAG using shared library
+    const container = document.getElementById('roadmap-dag');
+    if (container && nodes.length > 0) {
+        RoadmapDAG.renderSimple(container, nodes, edges);
+    }
+})();
+</script>
+{{end}}
 {{end}}
 {{end}}

@@ -124,15 +124,14 @@
             {{end}}
         </div>
 
-        {{if $.RecentDecisions}}
+        {{if $.PendingDecisions}}
         <div class="card">
-            <h2>Recent Decisions</h2>
-            {{range $.RecentDecisions}}
+            <h2>Pending Decisions</h2>
+            {{range $.PendingDecisions}}
             <div style="padding: 8px 0; border-bottom: 1px solid #eee;">
                 <a href="/p/{{$.ProjectID}}/decisions/{{.ID}}">{{.Title}}</a>
                 <div style="font-size: 0.8em;">
                     <span class="status status-{{.Status}}">{{.Status}}</span>
-                    {{if .Resolution}} - {{.Resolution}}{{end}}
                 </div>
             </div>
             {{end}}

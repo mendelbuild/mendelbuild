@@ -15,6 +15,9 @@ import (
 //go:embed templates/*.html
 var templatesFS embed.FS
 
+//go:embed static/js/*.js
+var staticFS embed.FS
+
 // templateFuncs provides custom functions for templates.
 var templateFuncs = template.FuncMap{
 	"tuneScoreClass": func(score *float64) string {
@@ -127,23 +130,24 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 	// Get decisions for sidebar
 	decisions, _ := s.db.GetDecisionsByProject(ctx, projectID)
 	var pendingDecision *domain.Decision
-	var recentDecisions []domain.Decision
+	var pendingDecisions []domain.Decision
 	for i := range decisions {
 		d := &decisions[i]
 		if d.Kind == domain.DecisionKindRoadmapReview && d.Status != domain.DecisionStatusResolved {
 			pendingDecision = d
 		}
-		if len(recentDecisions) < 5 {
-			recentDecisions = append(recentDecisions, *d)
+		// Collect all non-resolved decisions
+		if d.Status != domain.DecisionStatusResolved && len(pendingDecisions) < 5 {
+			pendingDecisions = append(pendingDecisions, *d)
 		}
 	}
 
 	data := map[string]interface{}{
-		"Title":           "Strategy: " + view.Strategy.Name,
-		"ProjectID":       projectID,
-		"Strategy":        view,
-		"PendingDecision": pendingDecision,
-		"RecentDecisions": recentDecisions,
+		"Title":            "Strategy: " + view.Strategy.Name,
+		"ProjectID":        projectID,
+		"Strategy":         view,
+		"PendingDecision":  pendingDecision,
+		"PendingDecisions": pendingDecisions,
 	}
 
 	if err := renderPage(w, "strategy.html", data); err != nil {

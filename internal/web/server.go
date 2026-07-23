@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/agent"
@@ -20,20 +22,23 @@ import (
 
 // Server is the HTTP server for the MendelBuild webapp.
 type Server struct {
-	db           *db.DB
-	addr         string
-	router       chi.Router
-	orchestrator *codegen.Orchestrator
-	stopWorker   chan struct{}
+	db                  *db.DB
+	addr                string
+	router              chi.Router
+	orchestrator        *codegen.Orchestrator
+	stopWorker          chan struct{}
+	processingHops      map[uuid.UUID]bool // tracks hops currently being processed
+	processingHopsMutex sync.Mutex
 }
 
 // NewServer creates a new Server.
 func NewServer(database *db.DB, addr string) *Server {
 	s := &Server{
-		db:           database,
-		addr:         addr,
-		orchestrator: codegen.NewOrchestrator(database, codegen.DefaultConcurrency),
-		stopWorker:   make(chan struct{}),
+		db:             database,
+		addr:           addr,
+		orchestrator:   codegen.NewOrchestrator(database, codegen.DefaultConcurrency),
+		stopWorker:     make(chan struct{}),
+		processingHops: make(map[uuid.UUID]bool),
 	}
 	s.setupRoutes()
 	s.cleanupStaleDemos()
@@ -122,14 +127,32 @@ func (s *Server) processCreatingVariations() {
 			continue
 		}
 
-		fmt.Printf("[worker] Starting code generation for hop '%s'\n", hop.Name)
-		result, err := s.orchestrator.RunForExistingVariations(ctx, hop.ID)
-		if err != nil {
-			fmt.Printf("[worker] Error generating variations for hop '%s': %v\n", hop.Name, err)
-			continue
+		// Check if this hop is already being processed
+		s.processingHopsMutex.Lock()
+		if s.processingHops[hop.ID] {
+			s.processingHopsMutex.Unlock()
+			continue // Skip - already being processed
 		}
-		fmt.Printf("[worker] Completed code generation for hop '%s': %d succeeded, %d failed\n",
-			hop.Name, result.SuccessCount, result.FailureCount)
+		s.processingHops[hop.ID] = true
+		s.processingHopsMutex.Unlock()
+
+		// Run in goroutine so we don't block the worker
+		go func(h domain.Hop) {
+			defer func() {
+				s.processingHopsMutex.Lock()
+				delete(s.processingHops, h.ID)
+				s.processingHopsMutex.Unlock()
+			}()
+
+			fmt.Printf("[worker] Starting code generation for hop '%s'\n", h.Name)
+			result, err := s.orchestrator.RunForExistingVariations(ctx, h.ID)
+			if err != nil {
+				fmt.Printf("[worker] Error generating variations for hop '%s': %v\n", h.Name, err)
+				return
+			}
+			fmt.Printf("[worker] Completed code generation for hop '%s': %d succeeded, %d failed\n",
+				h.Name, result.SuccessCount, result.FailureCount)
+		}(hop)
 	}
 }
 
@@ -507,6 +530,10 @@ func (s *Server) setupRoutes() {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+
+	// Static files (embedded)
+	staticSubFS, _ := fs.Sub(staticFS, "static")
+	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(staticSubFS))))
 
 	// Global pages
 	r.Get("/", s.handleDashboard)

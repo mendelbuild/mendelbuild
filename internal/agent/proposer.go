@@ -21,11 +21,19 @@ Guidelines:
 
 const revisionSystemPrompt = `You are a strategic roadmap proposer for MendelBuild. You are revising an existing roadmap based on user feedback.
 
-Apply the user's feedback to modify the roadmap. You may:
-- Add, remove, or modify hops
-- Adjust estimated costs
-- Change dependencies
-- Update the feasibility notes
+CRITICAL: If existing_hops is provided, hops marked is_terminal=true are IMMUTABLE:
+- You MUST include them in the output exactly as they appear (same name, same commentary)
+- You CANNOT remove, rename, or modify terminal hops in any way
+- You CAN add new hops that depend on terminal hops
+- Terminal hops represent completed historical work and must remain in the record
+
+For non-terminal hops, you may:
+- Modify or remove them based on feedback
+- Change their dependencies or costs
+
+For new hops, you may:
+- Add them freely
+- Set dependencies on any existing hop (terminal or not)
 
 Guidelines:
 1. Each hop should clearly advance one or more strategic objectives

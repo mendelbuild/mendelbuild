@@ -1,5 +1,23 @@
 # MendelBuild Development Guidelines
 
+## Prototype Stage
+
+Mendel is currently in **prototype stage** — it's not yet running continuously in a cloud environment with a stable domain. Until that changes:
+
+- **Prioritize clean code over backwards compatibility.** Don't add migration shims, fallback paths, or compatibility layers for old data formats.
+- **It's OK to break existing Mendel app state.** If a schema change or refactor would require complex migration code, just make the clean change and reset/regenerate affected data.
+- **Avoid accumulating technical debt** to preserve prototype artifacts.
+
+This guidance will change once Mendel is deployed to production with real users.
+
+## Template Data Conventions
+
+When passing JSON data to HTML templates for use in JavaScript:
+
+- **Use `template.JS` type**, not `string` — Go's html/template HTML-escapes strings, which breaks JSON parsing in JavaScript
+- Example: `view.DataJSON = template.JS(jsonBytes)` not `view.DataJSON = string(jsonBytes)`
+- See `handlers.go` `HopsJSON`/`EdgesJSON` for the correct pattern
+
 ## Core Design Principles
 
 ### Minimize User Repository Dependencies on Mendel

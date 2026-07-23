@@ -79,9 +79,18 @@ type StrategyContext struct {
 	Funding    []ResourceEstimate `json:"funding" desc:"Available budget by resource type"`
 }
 
+// ExistingHop represents a hop already in the database with its current status.
+type ExistingHop struct {
+	Name       string `json:"name" desc:"The hop's name (kebab-case identifier)"`
+	Commentary string `json:"commentary" desc:"What this hop achieves"`
+	Status     string `json:"status" desc:"Current status: pending, active, selecting, completed, rejected, or abandoned"`
+	IsTerminal bool   `json:"is_terminal" desc:"True if status is completed/rejected/abandoned - these hops are IMMUTABLE"`
+}
+
 // RevisionRequest is the structured input for roadmap revision.
 type RevisionRequest struct {
 	CurrentRoadmap ProposedRoadmap `json:"current_roadmap" desc:"The existing roadmap to revise"`
+	ExistingHops   []ExistingHop   `json:"existing_hops,omitempty" desc:"Hops already in the database with their statuses. Terminal hops (is_terminal=true) MUST remain unchanged."`
 	Feedback       string          `json:"feedback" desc:"User's requested changes to the roadmap"`
 	Strategy       StrategyContext `json:"strategy" desc:"Full strategy context for reference"`
 }

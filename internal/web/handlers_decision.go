@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"time"
 
@@ -31,7 +32,9 @@ type DecisionDetailView struct {
 	FailedCount        int
 	TotalCount         int
 	HopBudget          int    // Total token budget for the hop
-	Resolution         string // Dereferenced resolution for template comparison
+	Resolution         string       // Dereferenced resolution for template comparison
+	ExistingHopsJSON   template.JS  // JSON of existing hops for DAG rendering (template.JS to avoid HTML escaping)
+	ObjectivesJSON     template.JS  // JSON map of objective ID to description
 }
 
 // ExistingVariationView holds an existing variation for display in variation review.
@@ -145,9 +148,45 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 				view.Roadmap = &rm
 			}
 		}
-		// Load strategy
+		// Load strategy and existing hops
 		if decision.SubjectType != nil && *decision.SubjectType == "strategy" && decision.SubjectID != nil {
 			view.Strategy, _ = s.db.GetStrategy(ctx, *decision.SubjectID)
+
+			// Load existing hops with their statuses for DAG rendering
+			existingHops, _ := s.db.GetHopsByStrategy(ctx, *decision.SubjectID)
+			if len(existingHops) > 0 {
+				type ExistingHopInfo struct {
+					Name       string `json:"name"`
+					Status     string `json:"status"`
+					IsTerminal bool   `json:"is_terminal"`
+				}
+				var hopInfos []ExistingHopInfo
+				for _, h := range existingHops {
+					isTerminal := h.Status == domain.HopStatusCompleted ||
+						h.Status == domain.HopStatusRejected ||
+						h.Status == domain.HopStatusAbandoned
+					hopInfos = append(hopInfos, ExistingHopInfo{
+						Name:       h.Name,
+						Status:     string(h.Status),
+						IsTerminal: isTerminal,
+					})
+				}
+				if jsonBytes, err := json.Marshal(hopInfos); err == nil {
+					view.ExistingHopsJSON = template.JS(jsonBytes)
+				}
+			}
+
+			// Load objectives for displaying names
+			objectives, _ := s.db.GetObjectivesByStrategy(ctx, *decision.SubjectID)
+			if len(objectives) > 0 {
+				objMap := make(map[string]string)
+				for _, obj := range objectives {
+					objMap[obj.ID.String()] = obj.Description
+				}
+				if jsonBytes, err := json.Marshal(objMap); err == nil {
+					view.ObjectivesJSON = template.JS(jsonBytes)
+				}
+			}
 		}
 
 	case domain.DecisionKindVariationReview:
@@ -1076,12 +1115,44 @@ func (s *Server) approveRoadmap(w http.ResponseWriter, r *http.Request, decision
 		return
 	}
 
-	// Create hops and dependencies in transaction
+	// Get existing hops to check for terminal ones that must be preserved
+	existingHops, _ := s.db.GetHopsByStrategy(ctx, *decision.SubjectID)
+	existingHopsByName := make(map[string]*domain.Hop)
+	terminalHops := make(map[string]bool)
+	for i := range existingHops {
+		h := &existingHops[i]
+		existingHopsByName[h.Name] = h
+		if h.Status == domain.HopStatusCompleted || h.Status == domain.HopStatusRejected || h.Status == domain.HopStatusAbandoned {
+			terminalHops[h.Name] = true
+		}
+	}
+
+	// Validate that all terminal hops are present in the proposal
+	proposedNames := make(map[string]bool)
+	for _, ph := range roadmap.Hops {
+		proposedNames[ph.Name] = true
+	}
+	for name := range terminalHops {
+		if !proposedNames[name] {
+			http.Error(w, fmt.Sprintf("Terminal hop '%s' cannot be removed from roadmap", name), http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Create hops and dependencies
 	now := time.Now()
 	hopNameToID := make(map[string]uuid.UUID)
+	newHopCount := 0
 
-	// First pass: create all hops
+	// First pass: create new hops (skip existing ones)
 	for _, ph := range roadmap.Hops {
+		if existing, ok := existingHopsByName[ph.Name]; ok {
+			// Hop already exists - use its ID
+			hopNameToID[ph.Name] = existing.ID
+			continue
+		}
+
+		// New hop - create it
 		hopID := uuid.New()
 		hopNameToID[ph.Name] = hopID
 
@@ -1089,7 +1160,6 @@ func (s *Server) approveRoadmap(w http.ResponseWriter, r *http.Request, decision
 			"objective_ids": ph.ObjectiveIDs,
 		})
 
-		// Evaluation criteria will be generated later during variation proposal
 		hop := &domain.Hop{
 			ID:         hopID,
 			StrategyID: *decision.SubjectID,
@@ -1105,6 +1175,7 @@ func (s *Server) approveRoadmap(w http.ResponseWriter, r *http.Request, decision
 			http.Error(w, "error creating hop: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		newHopCount++
 
 		// Create budget allocations
 		for _, cost := range ph.EstimatedCosts {
@@ -1116,8 +1187,11 @@ func (s *Server) approveRoadmap(w http.ResponseWriter, r *http.Request, decision
 		}
 	}
 
-	// Second pass: create dependencies
+	// Second pass: create dependencies for new hops only
 	for _, ph := range roadmap.Hops {
+		if _, existed := existingHopsByName[ph.Name]; existed {
+			continue // Skip existing hops - their dependencies are already set
+		}
 		hopID := hopNameToID[ph.Name]
 		for _, depName := range ph.DependsOn {
 			depID, ok := hopNameToID[depName]
@@ -1142,11 +1216,17 @@ func (s *Server) approveRoadmap(w http.ResponseWriter, r *http.Request, decision
 	}
 
 	// Save system message
+	var msgContent string
+	if newHopCount == len(roadmap.Hops) {
+		msgContent = fmt.Sprintf("Roadmap approved. Created %d hops.", newHopCount)
+	} else {
+		msgContent = fmt.Sprintf("Roadmap approved. Created %d new hops (%d existing preserved).", newHopCount, len(existingHops))
+	}
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
 		DecisionID: decision.ID,
 		Role:       "system",
-		Content:    fmt.Sprintf("Roadmap approved. Created %d hops.", len(roadmap.Hops)),
+		Content:    msgContent,
 		CreatedAt:  time.Now(),
 	}
 	s.db.CreateDecisionMessage(ctx, sysMsg)
@@ -1436,7 +1516,9 @@ func (s *Server) handleProposeRoadmap(w http.ResponseWriter, r *http.Request) {
 		Funding:    fundingEstimates,
 	}
 
-	// Generate proposal
+	// Check for existing hops
+	existingHops, _ := s.db.GetHopsByStrategy(ctx, strategy.ID)
+
 	client, err := agent.NewClient("")
 	if err != nil {
 		http.Error(w, "error creating agent client: "+err.Error(), http.StatusInternalServerError)
@@ -1444,10 +1526,52 @@ func (s *Server) handleProposeRoadmap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proposer := agent.NewProposer(client)
-	roadmap, tokens, err := proposer.ProposeRoadmap(ctx, strategyContext)
-	if err != nil {
-		http.Error(w, "error generating roadmap: "+err.Error(), http.StatusInternalServerError)
-		return
+	var roadmap *agent.ProposedRoadmap
+	var tokens int
+
+	if len(existingHops) > 0 {
+		// Build existing hop info with terminal status
+		var existingHopInfos []agent.ExistingHop
+		var currentHops []agent.ProposedHop
+		for _, h := range existingHops {
+			isTerminal := h.Status == domain.HopStatusCompleted ||
+				h.Status == domain.HopStatusRejected ||
+				h.Status == domain.HopStatusAbandoned
+
+			existingHopInfos = append(existingHopInfos, agent.ExistingHop{
+				Name:       h.Name,
+				Commentary: h.Commentary,
+				Status:     string(h.Status),
+				IsTerminal: isTerminal,
+			})
+
+			// Build current roadmap from existing hops
+			currentHops = append(currentHops, agent.ProposedHop{
+				Name:       h.Name,
+				Commentary: h.Commentary,
+			})
+		}
+
+		// Use revision flow with existing hops context
+		revReq := agent.RevisionRequest{
+			CurrentRoadmap: agent.ProposedRoadmap{Hops: currentHops},
+			ExistingHops:   existingHopInfos,
+			Feedback:       "Propose improvements or additions to the roadmap while preserving all terminal (completed/rejected/abandoned) hops exactly as they are.",
+			Strategy:       strategyContext,
+		}
+
+		roadmap, tokens, err = proposer.ReviseRoadmap(ctx, revReq)
+		if err != nil {
+			http.Error(w, "error revising roadmap: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// No existing hops - generate from scratch
+		roadmap, tokens, err = proposer.ProposeRoadmap(ctx, strategyContext)
+		if err != nil {
+			http.Error(w, "error generating roadmap: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Create decision
@@ -1476,11 +1600,23 @@ func (s *Server) handleProposeRoadmap(w http.ResponseWriter, r *http.Request) {
 
 	// Create agent message
 	tokensUsed := tokens
+	msgContent := fmt.Sprintf("Generated roadmap proposal with %d hops.", len(roadmap.Hops))
+	if len(existingHops) > 0 {
+		terminalCount := 0
+		for _, h := range existingHops {
+			if h.Status == domain.HopStatusCompleted || h.Status == domain.HopStatusRejected || h.Status == domain.HopStatusAbandoned {
+				terminalCount++
+			}
+		}
+		if terminalCount > 0 {
+			msgContent = fmt.Sprintf("Revised roadmap proposal with %d hops (%d terminal hops preserved).", len(roadmap.Hops), terminalCount)
+		}
+	}
 	agentMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
 		DecisionID: decision.ID,
 		Role:       "agent",
-		Content:    fmt.Sprintf("Generated roadmap proposal with %d hops.", len(roadmap.Hops)),
+		Content:    msgContent,
 		TokensUsed: &tokensUsed,
 		CreatedAt:  now,
 	}
