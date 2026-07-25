@@ -1761,3 +1761,380 @@ func (db *DB) ClearDecisionCacheBySubject(ctx context.Context, subjectType strin
 	return err
 }
 
+// =====================================================
+// Project Credential Queries (added in 015)
+// =====================================================
+
+// CreateProjectCredential creates a new encrypted credential.
+func (db *DB) CreateProjectCredential(ctx context.Context, cred *domain.ProjectCredential) error {
+	now := time.Now()
+	if cred.ID == uuid.Nil {
+		cred.ID = uuid.New()
+	}
+	cred.CreatedAt = now
+	cred.UpdatedAt = now
+
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO project_credentials (id, project_id, name, encrypted_value, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, cred.ID, cred.ProjectID, cred.Name, cred.EncryptedValue, cred.CreatedAt, cred.UpdatedAt)
+	return err
+}
+
+// GetProjectCredential retrieves a credential by project and name.
+func (db *DB) GetProjectCredential(ctx context.Context, projectID uuid.UUID, name string) (*domain.ProjectCredential, error) {
+	var cred domain.ProjectCredential
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, project_id, name, encrypted_value, created_at, updated_at
+		FROM project_credentials
+		WHERE project_id = $1 AND name = $2
+	`, projectID, name).Scan(&cred.ID, &cred.ProjectID, &cred.Name, &cred.EncryptedValue, &cred.CreatedAt, &cred.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &cred, nil
+}
+
+// GetProjectCredentialByID retrieves a credential by ID.
+func (db *DB) GetProjectCredentialByID(ctx context.Context, id uuid.UUID) (*domain.ProjectCredential, error) {
+	var cred domain.ProjectCredential
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, project_id, name, encrypted_value, created_at, updated_at
+		FROM project_credentials
+		WHERE id = $1
+	`, id).Scan(&cred.ID, &cred.ProjectID, &cred.Name, &cred.EncryptedValue, &cred.CreatedAt, &cred.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &cred, nil
+}
+
+// ListProjectCredentials lists all credentials for a project (names only, not values).
+func (db *DB) ListProjectCredentials(ctx context.Context, projectID uuid.UUID) ([]domain.ProjectCredential, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, project_id, name, created_at, updated_at
+		FROM project_credentials
+		WHERE project_id = $1
+		ORDER BY name
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var creds []domain.ProjectCredential
+	for rows.Next() {
+		var cred domain.ProjectCredential
+		if err := rows.Scan(&cred.ID, &cred.ProjectID, &cred.Name, &cred.CreatedAt, &cred.UpdatedAt); err != nil {
+			return nil, err
+		}
+		creds = append(creds, cred)
+	}
+	return creds, nil
+}
+
+// UpdateProjectCredential updates an existing credential's encrypted value.
+func (db *DB) UpdateProjectCredential(ctx context.Context, id uuid.UUID, encryptedValue []byte) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE project_credentials
+		SET encrypted_value = $2, updated_at = NOW()
+		WHERE id = $1
+	`, id, encryptedValue)
+	return err
+}
+
+// DeleteProjectCredential deletes a credential.
+func (db *DB) DeleteProjectCredential(ctx context.Context, id uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		DELETE FROM project_credentials WHERE id = $1
+	`, id)
+	return err
+}
+
+// =====================================================
+// Deployed Instance Queries (added in 015)
+// =====================================================
+
+// CreateDeployedInstance creates a new deployed instance record.
+func (db *DB) CreateDeployedInstance(ctx context.Context, di *domain.DeployedInstance) error {
+	now := time.Now()
+	if di.ID == uuid.Nil {
+		di.ID = uuid.New()
+	}
+	di.DeployedAt = now
+	di.CreatedAt = now
+
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO deployed_instances (id, variation_id, cloud_ecosystem, url, public_url, instance_info, deployed_at, status, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, di.ID, di.VariationID, di.CloudEcosystem, di.URL, di.PublicURL, di.InstanceInfo, di.DeployedAt, di.Status, di.CreatedAt)
+	return err
+}
+
+// GetDeployedInstance retrieves a deployed instance by ID.
+func (db *DB) GetDeployedInstance(ctx context.Context, id uuid.UUID) (*domain.DeployedInstance, error) {
+	var di domain.DeployedInstance
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, variation_id, cloud_ecosystem, url, public_url, instance_info, deployed_at, status, error_message, created_at
+		FROM deployed_instances WHERE id = $1
+	`, id).Scan(&di.ID, &di.VariationID, &di.CloudEcosystem, &di.URL, &di.PublicURL, &di.InstanceInfo, &di.DeployedAt, &di.Status, &di.ErrorMessage, &di.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &di, nil
+}
+
+// GetDeployedInstanceByVariation retrieves the latest deployed instance for a variation.
+func (db *DB) GetDeployedInstanceByVariation(ctx context.Context, variationID uuid.UUID) (*domain.DeployedInstance, error) {
+	var di domain.DeployedInstance
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, variation_id, cloud_ecosystem, url, public_url, instance_info, deployed_at, status, error_message, created_at
+		FROM deployed_instances
+		WHERE variation_id = $1
+		ORDER BY deployed_at DESC
+		LIMIT 1
+	`, variationID).Scan(&di.ID, &di.VariationID, &di.CloudEcosystem, &di.URL, &di.PublicURL, &di.InstanceInfo, &di.DeployedAt, &di.Status, &di.ErrorMessage, &di.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &di, nil
+}
+
+// ListDeployedInstancesByStatus lists all deployed instances with a given status.
+func (db *DB) ListDeployedInstancesByStatus(ctx context.Context, status domain.DeployedInstanceStatus) ([]domain.DeployedInstance, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, variation_id, cloud_ecosystem, url, public_url, instance_info, deployed_at, status, error_message, created_at
+		FROM deployed_instances
+		WHERE status = $1
+		ORDER BY deployed_at DESC
+	`, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var instances []domain.DeployedInstance
+	for rows.Next() {
+		var di domain.DeployedInstance
+		if err := rows.Scan(&di.ID, &di.VariationID, &di.CloudEcosystem, &di.URL, &di.PublicURL, &di.InstanceInfo, &di.DeployedAt, &di.Status, &di.ErrorMessage, &di.CreatedAt); err != nil {
+			return nil, err
+		}
+		instances = append(instances, di)
+	}
+	return instances, nil
+}
+
+// UpdateDeployedInstanceStatus updates the status (and optionally error message) of a deployed instance.
+func (db *DB) UpdateDeployedInstanceStatus(ctx context.Context, id uuid.UUID, status domain.DeployedInstanceStatus, errorMessage *string) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE deployed_instances
+		SET status = $2, error_message = $3
+		WHERE id = $1
+	`, id, status, errorMessage)
+	return err
+}
+
+// =====================================================
+// Traffic Allocation Queries (added in 015)
+// =====================================================
+
+// CreateTrafficAllocation creates a new traffic allocation for a hop.
+func (db *DB) CreateTrafficAllocation(ctx context.Context, ta *domain.TrafficAllocation) error {
+	now := time.Now()
+	if ta.ID == uuid.Nil {
+		ta.ID = uuid.New()
+	}
+	ta.CreatedAt = now
+	ta.UpdatedAt = now
+
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO traffic_allocations (id, hop_id, bucket_salt, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, ta.ID, ta.HopID, ta.BucketSalt, ta.CreatedAt, ta.UpdatedAt)
+	return err
+}
+
+// GetTrafficAllocationByHop retrieves the traffic allocation for a hop.
+func (db *DB) GetTrafficAllocationByHop(ctx context.Context, hopID uuid.UUID) (*domain.TrafficAllocation, error) {
+	var ta domain.TrafficAllocation
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, hop_id, bucket_salt, created_at, updated_at
+		FROM traffic_allocations
+		WHERE hop_id = $1
+	`, hopID).Scan(&ta.ID, &ta.HopID, &ta.BucketSalt, &ta.CreatedAt, &ta.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &ta, nil
+}
+
+// CreateTrafficAllocationSlice creates a new traffic allocation slice.
+func (db *DB) CreateTrafficAllocationSlice(ctx context.Context, slice *domain.TrafficAllocationSlice) error {
+	now := time.Now()
+	if slice.ID == uuid.Nil {
+		slice.ID = uuid.New()
+	}
+	slice.CreatedAt = now
+
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO traffic_allocation_slices (id, traffic_allocation_id, variation_id, fraction, bucket_order, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, slice.ID, slice.TrafficAllocationID, slice.VariationID, slice.Fraction, slice.BucketOrder, slice.CreatedAt)
+	return err
+}
+
+// GetTrafficAllocationSlices retrieves all slices for a traffic allocation, ordered by bucket_order.
+func (db *DB) GetTrafficAllocationSlices(ctx context.Context, allocationID uuid.UUID) ([]domain.TrafficAllocationSlice, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, traffic_allocation_id, variation_id, fraction, bucket_order, created_at
+		FROM traffic_allocation_slices
+		WHERE traffic_allocation_id = $1
+		ORDER BY bucket_order
+	`, allocationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var slices []domain.TrafficAllocationSlice
+	for rows.Next() {
+		var s domain.TrafficAllocationSlice
+		if err := rows.Scan(&s.ID, &s.TrafficAllocationID, &s.VariationID, &s.Fraction, &s.BucketOrder, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		slices = append(slices, s)
+	}
+	return slices, nil
+}
+
+// UpdateTrafficAllocationSlice updates the fraction for a slice.
+func (db *DB) UpdateTrafficAllocationSlice(ctx context.Context, id uuid.UUID, fraction float64) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE traffic_allocation_slices SET fraction = $2 WHERE id = $1
+	`, id, fraction)
+	return err
+}
+
+// DeleteTrafficAllocationSlice deletes a traffic allocation slice.
+func (db *DB) DeleteTrafficAllocationSlice(ctx context.Context, id uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		DELETE FROM traffic_allocation_slices WHERE id = $1
+	`, id)
+	return err
+}
+
+// ReplaceTrafficAllocationSlices replaces all slices for an allocation atomically.
+func (db *DB) ReplaceTrafficAllocationSlices(ctx context.Context, allocationID uuid.UUID, slices []domain.TrafficAllocationSlice) error {
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Delete existing slices
+	_, err = tx.Exec(ctx, `DELETE FROM traffic_allocation_slices WHERE traffic_allocation_id = $1`, allocationID)
+	if err != nil {
+		return err
+	}
+
+	// Insert new slices
+	now := time.Now()
+	for i := range slices {
+		s := &slices[i]
+		if s.ID == uuid.Nil {
+			s.ID = uuid.New()
+		}
+		s.TrafficAllocationID = allocationID
+		s.CreatedAt = now
+
+		_, err = tx.Exec(ctx, `
+			INSERT INTO traffic_allocation_slices (id, traffic_allocation_id, variation_id, fraction, bucket_order, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, s.ID, s.TrafficAllocationID, s.VariationID, s.Fraction, s.BucketOrder, s.CreatedAt)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Update allocation timestamp
+	_, err = tx.Exec(ctx, `UPDATE traffic_allocations SET updated_at = NOW() WHERE id = $1`, allocationID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+// =====================================================
+// Traffic Allocation Envoy Config Queries (added in 015)
+// =====================================================
+
+// CreateEnvoyConfig stores a generated Envoy configuration.
+func (db *DB) CreateEnvoyConfig(ctx context.Context, config *domain.TrafficAllocationEnvoyConfig) error {
+	now := time.Now()
+	if config.ID == uuid.Nil {
+		config.ID = uuid.New()
+	}
+	config.GeneratedAt = now
+
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO traffic_allocation_envoy_configs (id, project_id, config_yaml, generated_at)
+		VALUES ($1, $2, $3, $4)
+	`, config.ID, config.ProjectID, config.ConfigYAML, config.GeneratedAt)
+	return err
+}
+
+// GetLatestEnvoyConfig retrieves the most recent Envoy config for a project.
+func (db *DB) GetLatestEnvoyConfig(ctx context.Context, projectID uuid.UUID) (*domain.TrafficAllocationEnvoyConfig, error) {
+	var config domain.TrafficAllocationEnvoyConfig
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, project_id, config_yaml, generated_at, applied_at, superseded_at
+		FROM traffic_allocation_envoy_configs
+		WHERE project_id = $1
+		ORDER BY generated_at DESC
+		LIMIT 1
+	`, projectID).Scan(&config.ID, &config.ProjectID, &config.ConfigYAML, &config.GeneratedAt, &config.AppliedAt, &config.SupersededAt)
+	if err != nil {
+		return nil, err
+	}
+	return &config, nil
+}
+
+// MarkEnvoyConfigApplied marks an Envoy config as applied and supersedes previous configs.
+func (db *DB) MarkEnvoyConfigApplied(ctx context.Context, id uuid.UUID) error {
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Get the project_id for this config
+	var projectID uuid.UUID
+	err = tx.QueryRow(ctx, `SELECT project_id FROM traffic_allocation_envoy_configs WHERE id = $1`, id).Scan(&projectID)
+	if err != nil {
+		return err
+	}
+
+	// Mark previous applied configs as superseded
+	_, err = tx.Exec(ctx, `
+		UPDATE traffic_allocation_envoy_configs
+		SET superseded_at = NOW()
+		WHERE project_id = $1 AND applied_at IS NOT NULL AND superseded_at IS NULL AND id != $2
+	`, projectID, id)
+	if err != nil {
+		return err
+	}
+
+	// Mark this config as applied
+	_, err = tx.Exec(ctx, `
+		UPDATE traffic_allocation_envoy_configs
+		SET applied_at = NOW()
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+

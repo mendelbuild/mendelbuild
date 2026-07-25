@@ -343,3 +343,66 @@ type Ecosystem struct {
 	CreatedAt     time.Time       `json:"created_at"`
 	UpdatedAt     time.Time       `json:"updated_at"`
 }
+
+// ProjectCredential stores an encrypted credential for cloud deployments.
+type ProjectCredential struct {
+	ID             uuid.UUID `json:"id"`
+	ProjectID      uuid.UUID `json:"project_id"`
+	Name           string    `json:"name"`
+	EncryptedValue []byte    `json:"-"` // Never serialize to JSON
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// DeployedInstanceStatus represents the lifecycle state of a deployed instance.
+type DeployedInstanceStatus string
+
+const (
+	DeployedInstanceStatusDeploying  DeployedInstanceStatus = "deploying"
+	DeployedInstanceStatusRunning    DeployedInstanceStatus = "running"
+	DeployedInstanceStatusFailed     DeployedInstanceStatus = "failed"
+	DeployedInstanceStatusTerminated DeployedInstanceStatus = "terminated"
+)
+
+// DeployedInstance tracks a variation deployed to a cloud environment.
+type DeployedInstance struct {
+	ID             uuid.UUID              `json:"id"`
+	VariationID    uuid.UUID              `json:"variation_id"`
+	CloudEcosystem string                 `json:"cloud_ecosystem"`
+	URL            string                 `json:"url"`
+	PublicURL      *string                `json:"public_url,omitempty"`
+	InstanceInfo   json.RawMessage        `json:"instance_info,omitempty"`
+	DeployedAt     time.Time              `json:"deployed_at"`
+	Status         DeployedInstanceStatus `json:"status"`
+	ErrorMessage   *string                `json:"error_message,omitempty"`
+	CreatedAt      time.Time              `json:"created_at"`
+}
+
+// TrafficAllocation defines how traffic is split for a hop.
+type TrafficAllocation struct {
+	ID         uuid.UUID `json:"id"`
+	HopID      uuid.UUID `json:"hop_id"`
+	BucketSalt string    `json:"bucket_salt"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// TrafficAllocationSlice defines a portion of traffic for a variation.
+type TrafficAllocationSlice struct {
+	ID                    uuid.UUID `json:"id"`
+	TrafficAllocationID   uuid.UUID `json:"traffic_allocation_id"`
+	VariationID           uuid.UUID `json:"variation_id"`
+	Fraction              float64   `json:"fraction"`
+	BucketOrder           int       `json:"bucket_order"`
+	CreatedAt             time.Time `json:"created_at"`
+}
+
+// TrafficAllocationEnvoyConfig stores a generated Envoy configuration.
+type TrafficAllocationEnvoyConfig struct {
+	ID           uuid.UUID  `json:"id"`
+	ProjectID    uuid.UUID  `json:"project_id"`
+	ConfigYAML   string     `json:"config_yaml"`
+	GeneratedAt  time.Time  `json:"generated_at"`
+	AppliedAt    *time.Time `json:"applied_at,omitempty"`
+	SupersededAt *time.Time `json:"superseded_at,omitempty"`
+}

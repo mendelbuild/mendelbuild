@@ -1,5 +1,5 @@
 -- MendelBuild Core Schema
--- This file represents the complete schema after all migrations (001-011, including 011_variation_logs_source).
+-- This file represents the complete schema after all migrations (001-015).
 -- It should be kept in sync with migrations for reference.
 --
 -- See DESIGN.md Section 2 for conceptual overview.
@@ -21,6 +21,24 @@ CREATE TABLE projects (
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+--------------------------------------------------------------------------------
+-- PROJECT CREDENTIALS
+--------------------------------------------------------------------------------
+-- Encrypted credentials for cloud deployments [added in 015]
+-- Separate from project.config JSONB to support proper encryption and audit
+
+CREATE TABLE project_credentials (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    encrypted_value BYTEA NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(project_id, name)
+);
+
+CREATE INDEX idx_project_credentials_project ON project_credentials(project_id);
 
 --------------------------------------------------------------------------------
 -- STRATEGIES
@@ -342,6 +360,29 @@ CREATE INDEX idx_demo_instances_variation ON demo_instances(variation_id);
 CREATE INDEX idx_demo_instances_status ON demo_instances(status) WHERE status = 'running';
 
 --------------------------------------------------------------------------------
+-- DEPLOYED INSTANCES
+--------------------------------------------------------------------------------
+-- Deployed variation instances in cloud environments [added in 015]
+-- Tracks variations deployed to production/staging cloud environments
+
+CREATE TABLE deployed_instances (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    variation_id UUID NOT NULL REFERENCES variations(id) ON DELETE CASCADE,
+    cloud_ecosystem TEXT NOT NULL,     -- 'gcp-cloudrun', 'aws-ecs', 'vercel', etc.
+    url TEXT NOT NULL,                 -- internal service URL for Envoy routing
+    public_url TEXT,                   -- optional external URL for direct access
+    instance_info JSONB,               -- cloud-specific: project, region, service name, etc.
+    deployed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    status TEXT NOT NULL DEFAULT 'deploying'
+        CHECK (status IN ('deploying', 'running', 'failed', 'terminated')),
+    error_message TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_deployed_instances_variation ON deployed_instances(variation_id);
+CREATE INDEX idx_deployed_instances_status ON deployed_instances(status);
+
+--------------------------------------------------------------------------------
 -- VARIATION MIGRATIONS
 --------------------------------------------------------------------------------
 -- Schema/storage changes that are specific to a Variation.
@@ -515,38 +556,63 @@ ALTER TABLE variations
 -- TRAFFIC ALLOCATION
 --------------------------------------------------------------------------------
 -- How traffic is split across Variations within a Hop.
--- The SDK reads this to make consistent bucketing decisions.
+-- Envoy proxy reads this (via generated config) for consistent bucketing.
+-- Base tables from 001_initial, constraints added in 015.
 
 CREATE TABLE traffic_allocations (
     id UUID PRIMARY KEY,
     hop_id UUID NOT NULL REFERENCES hops(id),
-
-    -- Salt used for bucketing (combined with hopID and routingKey)
     bucket_salt TEXT NOT NULL,
-
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
--- Individual allocation slices
+-- Individual allocation slices (base from 001_initial)
 CREATE TABLE traffic_allocation_slices (
     id UUID PRIMARY KEY,
     traffic_allocation_id UUID NOT NULL REFERENCES traffic_allocations(id),
-    -- The variation_id must be associated with the traffic_allocation's hop_id
     variation_id UUID NOT NULL REFERENCES variations(id),
-
-    -- Percentage of traffic (0.0 to 1.0); all slices for any given
-    -- traffic_allocation should sum to 1.0.
-    --
-    -- If the numbers do not sum to 1.0, all fractions will be normalized such
-    -- that the sum is indeed exactly 1.0.
     fraction REAL NOT NULL CHECK (fraction >= 0 AND fraction <= 1),
-
-    -- Ordering matters for deterministic bucketing. The SDK walks slices in
-    -- bucket_order, accumulating fractions until the user's bucket_pct is exceeded.
-    -- Without consistent ordering, the same bucket_pct could map to different variations.
     bucket_order INTEGER NOT NULL
 );
+
+-- Modifications from 015_cloud_deployment:
+-- Add UNIQUE constraint to hop_id
+ALTER TABLE traffic_allocations ADD CONSTRAINT traffic_allocations_hop_id_key UNIQUE (hop_id);
+
+-- Add ON DELETE CASCADE to FKs
+ALTER TABLE traffic_allocation_slices DROP CONSTRAINT traffic_allocation_slices_traffic_allocation_id_fkey;
+ALTER TABLE traffic_allocation_slices ADD CONSTRAINT traffic_allocation_slices_traffic_allocation_id_fkey
+    FOREIGN KEY (traffic_allocation_id) REFERENCES traffic_allocations(id) ON DELETE CASCADE;
+
+ALTER TABLE traffic_allocation_slices DROP CONSTRAINT traffic_allocation_slices_variation_id_fkey;
+ALTER TABLE traffic_allocation_slices ADD CONSTRAINT traffic_allocation_slices_variation_id_fkey
+    FOREIGN KEY (variation_id) REFERENCES variations(id) ON DELETE CASCADE;
+
+-- Add created_at column
+ALTER TABLE traffic_allocation_slices ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT NOW();
+
+-- Add unique constraints for deterministic bucketing
+ALTER TABLE traffic_allocation_slices ADD CONSTRAINT traffic_allocation_slices_allocation_variation_key
+    UNIQUE (traffic_allocation_id, variation_id);
+ALTER TABLE traffic_allocation_slices ADD CONSTRAINT traffic_allocation_slices_allocation_order_key
+    UNIQUE (traffic_allocation_id, bucket_order);
+
+--------------------------------------------------------------------------------
+-- TRAFFIC ALLOCATION ENVOY CONFIGS
+--------------------------------------------------------------------------------
+-- Generated Envoy configs for audit/rollback [added in 015]
+
+CREATE TABLE traffic_allocation_envoy_configs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    config_yaml TEXT NOT NULL,
+    generated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    applied_at TIMESTAMP,             -- null until user confirms deployment
+    superseded_at TIMESTAMP           -- set when newer config is applied
+);
+
+CREATE INDEX idx_traffic_allocation_envoy_configs_project ON traffic_allocation_envoy_configs(project_id);
 
 --------------------------------------------------------------------------------
 -- ADDITIONAL INDEXES
