@@ -17,7 +17,14 @@ Guidelines:
 4. Budget estimates should be realistic for Claude token consumption during implementation
 5. Each approach should be self-contained and independently implementable
 6. Use kebab-case for variation names (e.g., 'redis-cache', 'postgresql-native')
-7. Differentiation should explain trade-offs clearly (performance vs simplicity, etc.)`
+7. Differentiation should explain trade-offs clearly (performance vs simplicity, etc.)
+
+IMPORTANT - Respecting Completed Dependencies:
+If completed_dependencies is provided, these represent decisions from prior Hops that are ALREADY IMPLEMENTED in the codebase. You MUST:
+- Build upon these existing choices, not contradict them
+- Use the same infrastructure, libraries, and patterns they established
+- Not propose alternatives to decisions already made (e.g., if a dependency chose Render for hosting, don't propose AWS)
+- Reference these dependencies when relevant to explain why certain choices are constrained`
 
 const variationRevisionSystemPrompt = `You are a variation proposer for MendelBuild. You are revising existing variation proposals based on user feedback.
 
@@ -34,7 +41,14 @@ Guidelines:
 4. Budget estimates should be realistic for Claude token consumption during implementation
 5. Each approach should be self-contained and independently implementable
 6. Use kebab-case for variation names (e.g., 'redis-cache', 'postgresql-native')
-7. Differentiation should explain trade-offs clearly (performance vs simplicity, etc.)`
+7. Differentiation should explain trade-offs clearly (performance vs simplicity, etc.)
+
+IMPORTANT - Respecting Completed Dependencies:
+If completed_dependencies is provided, these represent decisions from prior Hops that are ALREADY IMPLEMENTED in the codebase. You MUST:
+- Build upon these existing choices, not contradict them
+- Use the same infrastructure, libraries, and patterns they established
+- Not propose alternatives to decisions already made
+- Reference these dependencies when relevant to explain why certain choices are constrained`
 
 // VariationProposer generates variation proposals for hops.
 type VariationProposer struct {

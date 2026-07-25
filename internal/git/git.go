@@ -318,6 +318,79 @@ func (c *Client) GetWorkDir() string {
 	return c.workDir
 }
 
+// DiffStats holds statistics about differences between two refs.
+type DiffStats struct {
+	FilesChanged int
+	Additions    int
+	Deletions    int
+}
+
+// parseDiffNumstat parses the output of git diff --numstat.
+// Format: additions<TAB>deletions<TAB>filename (one per line)
+// Binary files show "-" for additions/deletions.
+func parseDiffNumstat(output string) *DiffStats {
+	stats := &DiffStats{}
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 3 {
+			continue
+		}
+		stats.FilesChanged++
+
+		// Binary files show "-" for additions/deletions
+		if parts[0] != "-" {
+			var add int
+			fmt.Sscanf(parts[0], "%d", &add)
+			stats.Additions += add
+		}
+		if parts[1] != "-" {
+			var del int
+			fmt.Sscanf(parts[1], "%d", &del)
+			stats.Deletions += del
+		}
+	}
+	return stats
+}
+
+// GetDiffStats returns diff statistics between a base ref and the current HEAD.
+// Useful for comparing a variation branch against main.
+func (c *Client) GetDiffStats(ctx context.Context, baseRef string) (*DiffStats, error) {
+	cmd := exec.CommandContext(ctx, "git", "diff", "--numstat", baseRef+"...HEAD")
+	cmd.Dir = c.workDir
+
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff --numstat: %w", err)
+	}
+
+	return parseDiffNumstat(string(output)), nil
+}
+
+// GetDiffStatsForBranch fetches a remote branch and returns diff stats against base.
+// This is useful when you don't have the branch checked out locally.
+func (c *Client) GetDiffStatsForBranch(ctx context.Context, branchName, baseRef, authToken string) (*DiffStats, error) {
+	// Fetch the branch first
+	if err := c.FetchBranch(ctx, branchName, authToken); err != nil {
+		return nil, fmt.Errorf("fetch branch: %w", err)
+	}
+
+	// Compare base to the remote tracking branch
+	remoteBranch := fmt.Sprintf("origin/%s", branchName)
+	cmd := exec.CommandContext(ctx, "git", "diff", "--numstat", baseRef+"..."+remoteBranch)
+	cmd.Dir = c.workDir
+
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff --numstat: %w", err)
+	}
+
+	return parseDiffNumstat(string(output)), nil
+}
+
 // WorkDirForVariation returns the working directory path for a variation.
 // Path structure: {MENDEL_WORK_DIR}/{projectID}/{variationID}/
 func WorkDirForVariation(projectID, variationID string) string {

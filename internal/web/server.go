@@ -276,11 +276,24 @@ func (s *Server) proposeVariationsForHop(ctx context.Context, hop *domain.Hop) e
 		repoURL = *repo.URL
 	}
 
+	// Get completed transitive dependencies for context
+	completedDeps, _ := s.db.GetCompletedTransitiveDependencies(ctx, hop.ID)
+	var completedDependencies []agent.CompletedDependencyHop
+	for _, dep := range completedDeps {
+		completedDependencies = append(completedDependencies, agent.CompletedDependencyHop{
+			HopName:           dep.HopName,
+			HopCommentary:     dep.HopCommentary,
+			VariationName:     dep.VariationName,
+			VariationApproach: dep.VariationApproach,
+		})
+	}
+
 	input := agent.VariationProposerInput{
-		Hop:             hopContext,
-		RepositoryURL:   repoURL,
-		AvailableBudget: availableBudget,
-		NumVariations:   2, // Start with 2 variations
+		Hop:                   hopContext,
+		RepositoryURL:         repoURL,
+		AvailableBudget:       availableBudget,
+		NumVariations:         2, // Start with 2 variations
+		CompletedDependencies: completedDependencies,
 	}
 
 	// Call variation proposer

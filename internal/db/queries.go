@@ -616,9 +616,11 @@ func (db *DB) CreateVariation(ctx context.Context, v *domain.Variation) error {
 func (db *DB) GetVariation(ctx context.Context, id uuid.UUID) (*domain.Variation, error) {
 	var v domain.Variation
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref, status, created_at, updated_at
+		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref,
+		       diff_files_changed, diff_additions, diff_deletions, evaluation_scores, status, created_at, updated_at
 		FROM variations WHERE id = $1
-	`, id).Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef, &v.Status, &v.CreatedAt, &v.UpdatedAt)
+	`, id).Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef,
+		&v.DiffFilesChanged, &v.DiffAdditions, &v.DiffDeletions, &v.EvaluationScores, &v.Status, &v.CreatedAt, &v.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -636,10 +638,29 @@ func (db *DB) UpdateVariation(ctx context.Context, v *domain.Variation) error {
 	return err
 }
 
+// UpdateVariationDiffStats updates the diff stats for a variation.
+func (db *DB) UpdateVariationDiffStats(ctx context.Context, variationID uuid.UUID, filesChanged, additions, deletions int) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE variations SET
+			diff_files_changed = $2, diff_additions = $3, diff_deletions = $4, updated_at = NOW()
+		WHERE id = $1
+	`, variationID, filesChanged, additions, deletions)
+	return err
+}
+
+// UpdateVariationEvaluationScores updates the cached evaluation scores for a variation.
+func (db *DB) UpdateVariationEvaluationScores(ctx context.Context, variationID uuid.UUID, scores json.RawMessage) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE variations SET evaluation_scores = $2, updated_at = NOW() WHERE id = $1
+	`, variationID, scores)
+	return err
+}
+
 // GetVariationsByHop retrieves all variations for a hop.
 func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain.Variation, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref, status, created_at, updated_at
+		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref,
+		       diff_files_changed, diff_additions, diff_deletions, evaluation_scores, status, created_at, updated_at
 		FROM variations
 		WHERE hop_id = $1
 		ORDER BY created_at ASC
@@ -652,7 +673,8 @@ func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain
 	var variations []domain.Variation
 	for rows.Next() {
 		var v domain.Variation
-		if err := rows.Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef, &v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef,
+			&v.DiffFilesChanged, &v.DiffAdditions, &v.DiffDeletions, &v.EvaluationScores, &v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
 		variations = append(variations, v)
@@ -1034,6 +1056,64 @@ func (db *DB) GetHopDependsOn(ctx context.Context, hopID uuid.UUID) ([]uuid.UUID
 			return nil, err
 		}
 		deps = append(deps, id)
+	}
+	return deps, nil
+}
+
+// CompletedDependencyInfo holds info about a completed dependency hop and its selected variation.
+type CompletedDependencyInfo struct {
+	HopID             uuid.UUID
+	HopName           string
+	HopCommentary     string
+	VariationID       uuid.UUID
+	VariationName     string
+	VariationApproach string
+}
+
+// GetCompletedTransitiveDependencies returns all completed dependency hops (transitive closure)
+// with their selected/merged variations. This is used to provide context when proposing new variations.
+func (db *DB) GetCompletedTransitiveDependencies(ctx context.Context, hopID uuid.UUID) ([]CompletedDependencyInfo, error) {
+	rows, err := db.Pool.Query(ctx, `
+		WITH RECURSIVE transitive_deps AS (
+			-- Base case: direct dependencies
+			SELECT depends_on_hop_id as hop_id, 1 as depth
+			FROM hop_dependencies
+			WHERE hop_id = $1
+
+			UNION
+
+			-- Recursive case: dependencies of dependencies
+			SELECT hd.depends_on_hop_id, td.depth + 1
+			FROM hop_dependencies hd
+			JOIN transitive_deps td ON hd.hop_id = td.hop_id
+			WHERE td.depth < 100  -- Safety limit to prevent infinite recursion
+		)
+		SELECT DISTINCT
+			h.id as hop_id,
+			h.name as hop_name,
+			h.commentary as hop_commentary,
+			v.id as variation_id,
+			v.name as variation_name,
+			v.approach as variation_approach
+		FROM transitive_deps td
+		JOIN hops h ON h.id = td.hop_id
+		JOIN variations v ON v.hop_id = h.id
+		WHERE h.status = 'completed'
+		  AND v.status IN ('merged', 'selected')
+		ORDER BY h.name
+	`, hopID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var deps []CompletedDependencyInfo
+	for rows.Next() {
+		var d CompletedDependencyInfo
+		if err := rows.Scan(&d.HopID, &d.HopName, &d.HopCommentary, &d.VariationID, &d.VariationName, &d.VariationApproach); err != nil {
+			return nil, err
+		}
+		deps = append(deps, d)
 	}
 	return deps, nil
 }

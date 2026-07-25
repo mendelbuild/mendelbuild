@@ -74,15 +74,18 @@ type SelectionDataView struct {
 
 // SelectionVariationView holds a single variation for selection.
 type SelectionVariationView struct {
-	ID        string
-	Name      string
-	Approach  string
-	Status    string
-	CommitRef string
-	BranchURL string             // GitHub branch URL
-	DiffURL   string             // GitHub compare URL (main...branch)
-	DemoURL   string             // Running demo URL (if any)
-	Grades    map[string]float64 // Criterion name -> score (0.0-1.0)
+	ID           string
+	Name         string
+	Approach     string
+	Status       string
+	CommitRef    string
+	BranchURL    string             // GitHub branch URL
+	DiffURL      string             // GitHub compare URL (main...branch)
+	DemoURL      string             // Running demo URL (if any)
+	Grades       map[string]float64 // Criterion name -> score (0.0-1.0)
+	FilesChanged int                // Number of files changed vs main
+	Additions    int                // Lines added vs main
+	Deletions    int                // Lines deleted vs main
 }
 
 // VariationGrade holds a score with rationale for display.
@@ -372,6 +375,15 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 					}
 					if v.CommitRef != nil {
 						sv.CommitRef = *v.CommitRef
+					}
+					if v.DiffFilesChanged != nil {
+						sv.FilesChanged = *v.DiffFilesChanged
+					}
+					if v.DiffAdditions != nil {
+						sv.Additions = *v.DiffAdditions
+					}
+					if v.DiffDeletions != nil {
+						sv.Deletions = *v.DiffDeletions
 					}
 
 					// Look up running demo URL from demo_instances
@@ -921,6 +933,18 @@ func (s *Server) regenerateVariations(w http.ResponseWriter, r *http.Request, de
 		}
 	}
 
+	// Get completed transitive dependencies for context
+	completedDeps, _ := s.db.GetCompletedTransitiveDependencies(ctx, hop.ID)
+	var completedDependencies []agent.CompletedDependencyHop
+	for _, dep := range completedDeps {
+		completedDependencies = append(completedDependencies, agent.CompletedDependencyHop{
+			HopName:           dep.HopName,
+			HopCommentary:     dep.HopCommentary,
+			VariationName:     dep.VariationName,
+			VariationApproach: dep.VariationApproach,
+		})
+	}
+
 	input := agent.VariationProposerInput{
 		Hop: agent.HopContext{
 			ID:         hop.ID.String(),
@@ -928,9 +952,10 @@ func (s *Server) regenerateVariations(w http.ResponseWriter, r *http.Request, de
 			Commentary: hop.Commentary,
 			Objectives: objectiveDescs,
 		},
-		RepositoryURL:   repoURL,
-		AvailableBudget: availableBudget,
-		NumVariations:   2,
+		RepositoryURL:         repoURL,
+		AvailableBudget:       availableBudget,
+		NumVariations:         2,
+		CompletedDependencies: completedDependencies,
 	}
 
 	// Generate new proposal
@@ -2027,7 +2052,7 @@ func (s *Server) mergeWinnerToMain(ctx context.Context, hop *domain.Hop, winner 
 }
 
 // apiEvaluateVariations evaluates variations for a hop and returns JSON.
-// Scores are cached in the decision's cache field to avoid repeated LLM calls.
+// Scores are cached per-variation to avoid re-evaluating when new variations complete.
 func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	hopID, err := uuid.Parse(chi.URLParam(r, "hopID"))
@@ -2067,50 +2092,50 @@ func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build list of pending variations
-	var pendingVariations []agent.VariationForEvaluation
+	// Split pending variations into cached vs needing evaluation
+	var cachedEvaluations []agent.VariationEvaluation
+	var needsEvaluation []agent.VariationForEvaluation
+
 	for _, v := range variations {
-		if v.Status == domain.VariationStatusPending {
-			pendingVariations = append(pendingVariations, agent.VariationForEvaluation{
-				ID:       v.ID.String(),
-				Name:     v.Name,
-				Approach: v.Approach,
-			})
+		if v.Status != domain.VariationStatusPending {
+			continue
 		}
+
+		if len(v.EvaluationScores) > 0 {
+			// Has cached scores - parse and use
+			var scores []agent.VariationScore
+			if err := json.Unmarshal(v.EvaluationScores, &scores); err == nil {
+				cachedEvaluations = append(cachedEvaluations, agent.VariationEvaluation{
+					VariationID: v.ID.String(),
+					Scores:      scores,
+				})
+				continue
+			}
+		}
+
+		// Needs evaluation
+		needsEvaluation = append(needsEvaluation, agent.VariationForEvaluation{
+			ID:       v.ID.String(),
+			Name:     v.Name,
+			Approach: v.Approach,
+		})
 	}
 
-	if len(pendingVariations) == 0 {
+	// If everything is cached, return immediately
+	if len(needsEvaluation) == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"evaluations": []interface{}{},
+			"evaluations": cachedEvaluations,
 			"summary":     "",
 		})
 		return
 	}
 
-	// Find the variation_selection decision for this hop to check/store cache
-	decision, err := s.db.GetDecisionBySubjectAndKind(ctx, "hop", hopID, domain.DecisionKindVariationSelection)
-	if err != nil {
-		// No decision found - evaluate without caching
-		decision = nil
-	}
-
-	// Check cache
-	if decision != nil {
-		cacheData, err := s.db.GetDecisionCache(ctx, decision.ID)
-		if err == nil && len(cacheData) > 0 {
-			// Return cached data directly
-			w.Header().Set("Content-Type", "application/json")
-			w.Write(cacheData)
-			return
-		}
-	}
-
-	// No cache - call LLM
+	// Call LLM for variations needing evaluation
 	evalInput := agent.VariationEvaluationInput{
 		HopName:    hop.Name,
 		Criteria:   criteria.Criteria,
-		Variations: pendingVariations,
+		Variations: needsEvaluation,
 	}
 
 	client, err := agent.NewClient("")
@@ -2126,16 +2151,27 @@ func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cache the result
-	if decision != nil {
-		cacheJSON, err := json.Marshal(evalResult)
-		if err == nil {
-			s.db.SetDecisionCache(ctx, decision.ID, cacheJSON)
+	// Cache new scores on each variation
+	for _, eval := range evalResult.Evaluations {
+		varID, err := uuid.Parse(eval.VariationID)
+		if err != nil {
+			continue
 		}
+		scoresJSON, err := json.Marshal(eval.Scores)
+		if err != nil {
+			continue
+		}
+		s.db.UpdateVariationEvaluationScores(ctx, varID, scoresJSON)
 	}
 
+	// Combine cached + new evaluations
+	allEvaluations := append(cachedEvaluations, evalResult.Evaluations...)
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(evalResult)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"evaluations": allEvaluations,
+		"summary":     evalResult.Summary,
+	})
 }
 
 // sanitizeBranchName converts a name to a git-safe branch name component.

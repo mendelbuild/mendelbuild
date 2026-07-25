@@ -99,6 +99,24 @@
                         {{end}}
                     </tr>
 
+                    {{/* Changes row */}}
+                    <tr>
+                        <td class="row-header">Changes</td>
+                        {{range .SelectionData.Variations}}
+                        <td style="text-align: center;">
+                            {{if or .FilesChanged .Additions .Deletions}}
+                            <span style="font-size: 0.85em;">
+                                {{.FilesChanged}} files
+                                <span style="color: #28a745;">+{{.Additions}}</span>
+                                <span style="color: #dc3545;">-{{.Deletions}}</span>
+                            </span>
+                            {{else}}
+                            <span style="color: #999;">-</span>
+                            {{end}}
+                        </td>
+                        {{end}}
+                    </tr>
+
                     {{/* Demo row */}}
                     <tr>
                         <td class="row-header">Demo</td>

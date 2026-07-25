@@ -1,5 +1,5 @@
 -- MendelBuild Core Schema
--- This file represents the complete schema after all migrations (001-015).
+-- This file represents the complete schema after all migrations (001-016).
 -- It should be kept in sync with migrations for reference.
 --
 -- See DESIGN.md Section 2 for conceptual overview.
@@ -291,6 +291,14 @@ CREATE TABLE variations (
     -- Ecosystem deployment (nullable if not yet deployed)
     ecosystem_id UUID,   -- FK added below after ecosystems table
     deployment_ref TEXT, -- e.g., pod name, URL, etc.
+
+    -- Diff stats vs main branch [added in 016]
+    diff_files_changed INTEGER,
+    diff_additions INTEGER,
+    diff_deletions INTEGER,
+
+    -- Cached evaluation scores [added in 017]
+    evaluation_scores JSONB,
 
     status TEXT NOT NULL DEFAULT 'creating'
         CHECK (status IN ('creating', 'pending', 'migrating', 'active', 'draining',
