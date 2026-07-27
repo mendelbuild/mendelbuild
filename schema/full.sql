@@ -305,7 +305,7 @@ CREATE TABLE variations (
     evaluation_scores JSONB,
 
     status TEXT NOT NULL DEFAULT 'creating'
-        CHECK (status IN ('creating', 'pending', 'migrating', 'active', 'draining',
+        CHECK (status IN ('creating', 'pending', 'blocked', 'migrating', 'active', 'draining',
                           'error', 'terminated', 'pruned', 'selected', 'merged', 'rejected')),
 
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -438,6 +438,9 @@ CREATE TABLE variation_migrations (
 CREATE TABLE input_requests (
     id UUID PRIMARY KEY,
 
+    -- Which project does this belong to? Denormalized for query simplicity.
+    project_id UUID NOT NULL REFERENCES projects(id),
+
     -- What kind of input is needed?
     --   'pass_fail'           - Binary yes/no decision
     --   'choose_one'          - Select exactly one option (e.g., pick winning Variation)
@@ -501,6 +504,8 @@ CREATE TABLE input_requests (
 
 CREATE INDEX idx_input_requests_status ON input_requests(status);
 CREATE INDEX idx_input_requests_subject ON input_requests(subject_type, subject_id);
+CREATE INDEX idx_input_requests_project ON input_requests(project_id);
+CREATE INDEX idx_input_requests_project_status ON input_requests(project_id, status);
 
 --------------------------------------------------------------------------------
 -- INPUT REQUEST MESSAGES

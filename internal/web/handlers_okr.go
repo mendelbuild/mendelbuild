@@ -81,7 +81,7 @@ func (s *Server) handleOKREditor(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"Title":     "Edit OKRs",
-		"ProjectID": projectID,
+		"ProjectID": projectID.String(),
 		"OKR": OKREditorView{
 			Project:    project,
 			Strategy:   &strategy,
@@ -89,6 +89,7 @@ func (s *Server) handleOKREditor(w http.ResponseWriter, r *http.Request) {
 			ParentID:   nil,
 		},
 	}
+	s.addOpenInputCount(ctx, data)
 
 	if err := renderPage(w, "okr_editor.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -181,7 +182,7 @@ func (s *Server) handleObjectiveDetail(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"Title":            "Edit OKRs - " + truncateString(objective.Description, 50),
-		"ProjectID":        projectID,
+		"ProjectID":        projectID.String(),
 		"CurrentObjective": currentObjView,
 		"OKR": OKREditorView{
 			Project:      project,
@@ -192,6 +193,7 @@ func (s *Server) handleObjectiveDetail(w http.ResponseWriter, r *http.Request) {
 			AvailableKRs: availableKRs,
 		},
 	}
+	s.addOpenInputCount(ctx, data)
 
 	if err := renderPage(w, "okr_editor.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

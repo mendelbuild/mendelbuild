@@ -120,7 +120,7 @@
             {{if $.PendingDecision}}
             <div style="padding: 15px; background: #cce5ff; border-radius: 4px; margin-bottom: 15px;">
                 <strong>Pending Review</strong><br>
-                <a href="/p/{{$.ProjectID}}/decisions/{{$.PendingDecision.ID}}">{{$.PendingDecision.Title}}</a>
+                <a href="/p/{{$.ProjectID}}/inputs/{{$.PendingDecision.ID}}">{{$.PendingDecision.Title}}</a>
                 <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
                     Created {{$.PendingDecision.CreatedAt.Format "Jan 2, 2006"}}
                 </div>
@@ -150,10 +150,10 @@
 
         {{if $.PendingDecisions}}
         <div class="card">
-            <h2>Pending Decisions</h2>
+            <h2>Input Needed</h2>
             {{range $.PendingDecisions}}
             <div style="padding: 8px 0; border-bottom: 1px solid #eee;">
-                <a href="/p/{{$.ProjectID}}/decisions/{{.ID}}">{{.Title}}</a>
+                <a href="/p/{{$.ProjectID}}/inputs/{{.ID}}">{{.Title}}</a>
                 <div style="font-size: 0.8em;">
                     <span class="status status-{{.Status}}">{{.Status}}</span>
                 </div>

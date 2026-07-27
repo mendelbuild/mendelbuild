@@ -175,6 +175,7 @@ func (s *Server) handleProjectSettings(w http.ResponseWriter, r *http.Request) {
 		"RequiredCredentials": requiredCredentials,
 		"Success":             success,
 	}
+	s.addOpenInputCount(ctx, data)
 
 	if err := renderPage(w, "project_settings.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -286,6 +287,9 @@ func (s *Server) handleAddCloudCredential(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Auto-resolve any credential_request InputRequests that were waiting for this credential
+	_ = s.db.ResolveCredentialRequestsByName(ctx, projectID, name)
+
 	http.Redirect(w, r, "/p/"+projectID.String()+"/settings?success=1", http.StatusSeeOther)
 }
 
@@ -327,6 +331,15 @@ func (s *Server) handleUpdateCloudCredential(w http.ResponseWriter, r *http.Requ
 	if err := s.db.UpdateProjectCredential(ctx, credID, encryptedValue); err != nil {
 		renderSettingsWithError(w, projectID, "Failed to update credential: "+err.Error())
 		return
+	}
+
+	// Get the credential name to resolve matching InputRequests
+	creds, _ := s.db.ListProjectCredentials(ctx, projectID)
+	for _, c := range creds {
+		if c.ID == credID {
+			_ = s.db.ResolveCredentialRequestsByName(ctx, projectID, c.Name)
+			break
+		}
 	}
 
 	http.Redirect(w, r, "/p/"+projectID.String()+"/settings?success=1", http.StatusSeeOther)

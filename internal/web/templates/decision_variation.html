@@ -91,7 +91,7 @@
             {{if .VariationProposal.Variations}}
             <h3 style="color: #28a745; margin-bottom: 10px;">{{if .ExistingVariations}}New {{end}}Proposed Variations</h3>
             {{end}}
-            <form id="approve-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/approve">
+            <form id="approve-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/approve">
             {{range $i, $v := .VariationProposal.Variations}}
             <div class="variation-card" style="border: 2px solid #28a745; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: #f8f9fa;">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
@@ -137,7 +137,7 @@
             <h2>Raw Proposal (JSON)</h2>
             <details>
                 <summary style="cursor: pointer; color: #007bff;">View/Edit JSON</summary>
-                <form method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/roadmap">
+                <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/roadmap">
                     <textarea name="roadmap" style="width: 100%; height: 300px; font-family: monospace; font-size: 12px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; margin-top: 10px;">{{.Decision.Details}}</textarea>
                     <button type="submit" style="margin-top: 10px; padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Save Changes</button>
                 </form>
@@ -160,7 +160,7 @@
             <p style="font-size: 0.85em; color: #666; margin-bottom: 15px;">
                 Prune conflicting variations until no conflicts remain. You can also use the feedback form to request revised variations that avoid these conflicts.
             </p>
-            <form method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/resolve-conflicts">
+            <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/resolve-conflicts">
                 <button type="submit" style="width: 100%; padding: 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
                     Conflicts Resolved - Proceed to Selection
                 </button>
@@ -213,7 +213,7 @@
             {{else if eq .Resolution "rejected"}}
             <div style="padding: 15px; background: #f8d7da; border-radius: 4px; text-align: center;">
                 <strong>Proposal Rejected</strong><br>
-                <a href="/p/{{$.ProjectID}}/decisions">Back to Decisions</a>
+                <a href="/p/{{$.ProjectID}}/inputs">Back to Input Needed</a>
             </div>
             {{else}}
             <div style="padding: 15px; background: #e2e3e5; border-radius: 4px; text-align: center;">
@@ -243,14 +243,14 @@
             </div>
 
             {{if ne .Decision.Status "resolved"}}
-            <form method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/message">
+            <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/message">
                 <textarea name="feedback" placeholder="Provide feedback on the variations..." style="width: 100%; height: 80px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical;"></textarea>
                 <div style="margin-top: 10px; display: flex; gap: 10px;">
                     <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Send Feedback</button>
                     <button type="button" onclick="document.getElementById('regenerate-form').submit()" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Regenerate</button>
                 </div>
             </form>
-            <form id="regenerate-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/regenerate" style="display: none;"></form>
+            <form id="regenerate-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/regenerate" style="display: none;"></form>
             {{end}}
         </div>
 

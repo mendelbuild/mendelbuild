@@ -280,6 +280,7 @@ func proposeRoadmap(args []string) {
 
 	decision := &domain.Decision{
 		ID:               uuid.New(),
+		ProjectID:        strategy.ProjectID,
 		Kind:             domain.DecisionKindRoadmapReview,
 		Title:            fmt.Sprintf("Roadmap Review: %s", strategy.Name),
 		Details:          &roadmapStr,
@@ -319,7 +320,7 @@ func proposeRoadmap(args []string) {
 	for i, hop := range roadmap.Hops {
 		fmt.Printf("  %d. %s\n", i+1, hop.Name)
 	}
-	fmt.Printf("\nView at: http://localhost:8080/p/<project-id>/decisions/%s\n", decision.ID)
+	fmt.Printf("\nView at: http://localhost:8080/p/<project-id>/inputs/%s\n", decision.ID)
 }
 
 func strPtr(s string) *string {

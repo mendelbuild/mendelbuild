@@ -66,6 +66,25 @@ func renderPage(w http.ResponseWriter, pageName string, data interface{}) error 
 	return t.ExecuteTemplate(w, "layout", data)
 }
 
+// addOpenInputCount adds the open input request count to template data for the nav badge.
+func (s *Server) addOpenInputCount(ctx context.Context, data map[string]interface{}) {
+	projectIDStr, ok := data["ProjectID"].(string)
+	if !ok || projectIDStr == "" {
+		return
+	}
+	projectID, err := uuid.Parse(projectIDStr)
+	if err != nil {
+		return
+	}
+	count, err := s.db.CountOpenDecisionsByProject(ctx, projectID)
+	if err != nil {
+		return
+	}
+	if count > 0 {
+		data["OpenInputCount"] = count
+	}
+}
+
 // StrategyView holds data for rendering the strategy page.
 type StrategyView struct {
 	Project    *domain.Project
@@ -157,13 +176,14 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"Title":               "Strategy: " + view.Strategy.Name,
-		"ProjectID":           projectID,
+		"ProjectID":           projectID.String(),
 		"Strategy":            view,
 		"PendingDecision":     pendingDecision,
 		"PendingDecisions":    pendingDecisions,
 		"ProductionURL":       productionURL,
 		"ProductionDeployedAt": productionDeployedAt,
 	}
+	s.addOpenInputCount(ctx, data)
 
 	if err := renderPage(w, "strategy.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -211,12 +231,13 @@ func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]interface{}{
-		"Title":             "Decisions",
-		"ProjectID":         projectID,
+		"Title":             "Input Needed",
+		"ProjectID":         projectID.String(),
 		"OpenDecisions":     openDecisions,
 		"ResolvedDecisions": resolvedDecisions,
 		"ActiveTab":         activeTab,
 	}
+	s.addOpenInputCount(ctx, data)
 
 	if err := renderPage(w, "decisions.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -339,12 +360,13 @@ func (s *Server) handleRoadmap(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"Title":     "Roadmap",
-		"ProjectID": projectID,
+		"ProjectID": projectID.String(),
 		"Project":   project,
 		"Strategy":  strategy,
 		"HopsJSON":  template.JS(hopsJSON),
 		"EdgesJSON": template.JS(edgesJSON),
 	}
+	s.addOpenInputCount(ctx, data)
 
 	if err := renderPage(w, "roadmap.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/agent"
+	"github.com/bhs/mendelbuild/internal/crypto"
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/bhs/mendelbuild/internal/git"
 	"github.com/go-chi/chi/v5"
@@ -22,6 +23,7 @@ type DecisionDetailView struct {
 	Roadmap                    *agent.ProposedRoadmap
 	Strategy                   *domain.Strategy
 	Hop                        *domain.Hop
+	Variation                  *domain.Variation        // For credential_request: the blocked variation
 	VariationProposal          *VariationProposalView
 	ExistingVariations         []ExistingVariationView // Already-created variations (immutable in review)
 	SelectionData              *SelectionDataView
@@ -313,6 +315,18 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+	case domain.InputRequestKindCredentialRequest:
+		templateName = "decision_credential.html"
+		// Load the blocked variation
+		if decision.SubjectType != nil && *decision.SubjectType == "variation" && decision.SubjectID != nil {
+			variation, err := s.db.GetVariation(ctx, *decision.SubjectID)
+			if err == nil {
+				view.Variation = variation
+				// Get hop for context
+				view.Hop, _ = s.db.GetHop(ctx, variation.HopID)
+			}
+		}
+
 	case domain.DecisionKindVariationSelection:
 		templateName = "decision_selection.html"
 		// Load hop and variations
@@ -434,10 +448,11 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]interface{}{
-		"Title":     "Decision: " + decision.Title,
+		"Title":     "Input: " + decision.Title,
 		"ProjectID": projectID,
 		"View":      view,
 	}
+	s.addOpenInputCount(ctx, data)
 
 	if err := renderPage(w, templateName, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -610,7 +625,7 @@ func (s *Server) sendMessageRoadmap(w http.ResponseWriter, r *http.Request, deci
 
 	// Redirect back to decision page
 	projectID := chi.URLParam(r, "projectID")
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decision.ID), http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, decision.ID), http.StatusSeeOther)
 }
 
 func (s *Server) sendMessageVariation(w http.ResponseWriter, r *http.Request, decision *domain.Decision, feedback string) {
@@ -744,7 +759,7 @@ func (s *Server) sendMessageVariation(w http.ResponseWriter, r *http.Request, de
 
 	// Redirect back to decision page
 	projectID := chi.URLParam(r, "projectID")
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decision.ID), http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, decision.ID), http.StatusSeeOther)
 }
 
 func (s *Server) handleRegenerate(w http.ResponseWriter, r *http.Request) {
@@ -874,7 +889,7 @@ func (s *Server) regenerateRoadmap(w http.ResponseWriter, r *http.Request, decis
 	s.db.CreateDecisionMessage(ctx, agentMsg)
 
 	projectID := chi.URLParam(r, "projectID")
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decision.ID), http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, decision.ID), http.StatusSeeOther)
 }
 
 func (s *Server) regenerateVariations(w http.ResponseWriter, r *http.Request, decision *domain.Decision) {
@@ -1041,7 +1056,7 @@ func (s *Server) regenerateVariations(w http.ResponseWriter, r *http.Request, de
 	s.db.CreateDecisionMessage(ctx, agentMsg)
 
 	projectID := chi.URLParam(r, "projectID")
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decision.ID), http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, decision.ID), http.StatusSeeOther)
 }
 
 func (s *Server) handleUpdateRoadmap(w http.ResponseWriter, r *http.Request) {
@@ -1096,7 +1111,7 @@ func (s *Server) handleUpdateRoadmap(w http.ResponseWriter, r *http.Request) {
 	s.db.CreateDecisionMessage(ctx, sysMsg)
 
 	projectID := chi.URLParam(r, "projectID")
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decisionID), http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, decisionID), http.StatusSeeOther)
 }
 
 func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
@@ -1624,6 +1639,7 @@ func (s *Server) handleProposeRoadmap(w http.ResponseWriter, r *http.Request) {
 
 	decision := &domain.Decision{
 		ID:               uuid.New(),
+		ProjectID:        strategy.ProjectID,
 		Kind:             domain.DecisionKindRoadmapReview,
 		Title:            fmt.Sprintf("Roadmap Review: %s", strategy.Name),
 		Details:          &roadmapStr,
@@ -1666,7 +1682,7 @@ func (s *Server) handleProposeRoadmap(w http.ResponseWriter, r *http.Request) {
 	s.db.CreateDecisionMessage(ctx, agentMsg)
 
 	// Redirect to decision page
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decision.ID), http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, decision.ID), http.StatusSeeOther)
 }
 
 func strPtr(s string) *string {
@@ -1712,7 +1728,7 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request) {
 	s.db.CreateDecisionMessage(ctx, sysMsg)
 
 	// Redirect to decisions list
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions", projectID), http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs", projectID), http.StatusSeeOther)
 }
 
 func (s *Server) handleSelectWinner(w http.ResponseWriter, r *http.Request) {
@@ -1958,6 +1974,13 @@ func (s *Server) handleRequestMoreVariations(w http.ResponseWriter, r *http.Requ
 
 // createMoreVariationsDecision creates a new VariationReview decision for proposing more variations.
 func (s *Server) createMoreVariationsDecision(ctx context.Context, w http.ResponseWriter, r *http.Request, oldDecision *domain.Decision, hop *domain.Hop, projectID string) {
+	// Get strategy for project ID
+	strategy, err := s.db.GetStrategy(ctx, hop.StrategyID)
+	if err != nil {
+		http.Error(w, "error getting strategy: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	now := time.Now()
 
 	// Create empty proposal - user will request new variations via feedback
@@ -1977,6 +2000,7 @@ func (s *Server) createMoreVariationsDecision(ctx context.Context, w http.Respon
 
 	newDecision := &domain.Decision{
 		ID:               uuid.New(),
+		ProjectID:        strategy.ProjectID,
 		Kind:             domain.DecisionKindVariationReview,
 		Title:            fmt.Sprintf("Variation Review: %s (additional)", hop.Name),
 		Details:          &proposalStr,
@@ -2014,7 +2038,7 @@ func (s *Server) createMoreVariationsDecision(ctx context.Context, w http.Respon
 	s.db.CreateDecisionMessage(ctx, sysMsg)
 
 	// Redirect to the new decision page
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, newDecision.ID), http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, newDecision.ID), http.StatusSeeOther)
 }
 
 // mergeWinnerToMain merges the winning variation's branch into main.
@@ -2190,6 +2214,96 @@ func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 		"evaluations": allEvaluations,
 		"summary":     evalResult.Summary,
 	})
+}
+
+// handleProvideCredential handles providing a credential inline from an InputRequest page.
+func (s *Server) handleProvideCredential(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	decisionID, err := uuid.Parse(chi.URLParam(r, "decisionID"))
+	if err != nil {
+		http.Error(w, "invalid decision ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	name := r.FormValue("credential_name")
+	value := r.FormValue("credential_value")
+
+	if name == "" {
+		http.Error(w, "credential name is required", http.StatusBadRequest)
+		return
+	}
+
+	// Get the decision
+	decision, err := s.db.GetDecision(ctx, decisionID)
+	if err != nil {
+		http.Error(w, "decision not found", http.StatusNotFound)
+		return
+	}
+
+	// Encrypt and save the credential
+	key, err := crypto.GetKey()
+	if err != nil {
+		http.Error(w, "encryption not configured: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	encryptedValue, err := crypto.Encrypt([]byte(value), key)
+	if err != nil {
+		http.Error(w, "failed to encrypt credential: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	cred := &domain.ProjectCredential{
+		ID:             uuid.New(),
+		ProjectID:      projectID,
+		Name:           name,
+		EncryptedValue: encryptedValue,
+	}
+
+	if err := s.db.CreateProjectCredential(ctx, cred); err != nil {
+		http.Error(w, "failed to save credential: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Resolve the decision
+	decision.Status = domain.DecisionStatusResolved
+	resolution := "credential_provided"
+	decision.Resolution = &resolution
+	now := time.Now()
+	decision.ResolvedAt = &now
+	decision.UpdatedAt = now
+
+	if err := s.db.UpdateDecision(ctx, decision); err != nil {
+		http.Error(w, "failed to update decision: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Auto-resolve any other credential requests for this credential name
+	_ = s.db.ResolveCredentialRequestsByName(ctx, projectID, name)
+
+	// Save system message
+	sysMsg := &domain.DecisionMessage{
+		ID:             uuid.New(),
+		InputRequestID: decisionID,
+		Role:           "system",
+		Content:        fmt.Sprintf("Credential '%s' provided. Blocked workflows will resume.", name),
+		CreatedAt:      now,
+	}
+	s.db.CreateDecisionMessage(ctx, sysMsg)
+
+	// Redirect back to the decision page (now resolved)
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, decisionID), http.StatusSeeOther)
 }
 
 // sanitizeBranchName converts a name to a git-safe branch name component.
@@ -2417,7 +2531,7 @@ func (s *Server) handleResolveConflicts(w http.ResponseWriter, r *http.Request) 
 			s.db.UpdateDecision(ctx, decision)
 
 			// Redirect back to decision with updated conflicts
-			http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decisionID), http.StatusSeeOther)
+			http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, decisionID), http.StatusSeeOther)
 			return
 		}
 	}

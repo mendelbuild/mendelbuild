@@ -112,7 +112,7 @@
             {{if .PendingReview}}
             <div style="padding: 15px; background: #cce5ff; border-radius: 4px; margin-bottom: 15px;">
                 <strong>Pending Review</strong><br>
-                <a href="/p/{{$.ProjectID}}/decisions/{{.PendingReview.ID}}">{{.PendingReview.Title}}</a>
+                <a href="/p/{{$.ProjectID}}/inputs/{{.PendingReview.ID}}">{{.PendingReview.Title}}</a>
                 <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
                     Review proposed variations before generating code.
                 </div>
@@ -120,7 +120,7 @@
             {{else if .PendingSelection}}
             <div style="padding: 15px; background: #fff3cd; border-radius: 4px; margin-bottom: 15px;">
                 <strong>Selection Ready</strong><br>
-                <a href="/p/{{$.ProjectID}}/decisions/{{.PendingSelection.ID}}">{{.PendingSelection.Title}}</a>
+                <a href="/p/{{$.ProjectID}}/inputs/{{.PendingSelection.ID}}">{{.PendingSelection.Title}}</a>
                 <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
                     Select a winner or request more variations.
                 </div>
@@ -168,7 +168,7 @@
             {{else if eq .Hop.Status "selecting"}}
             <div style="padding: 15px; background: #fff3cd; border-radius: 4px;">
                 <strong>Selecting Winner</strong><br>
-                <span style="color: #666;">All variations complete. Select a winner in the Decisions queue.</span>
+                <span style="color: #666;">All variations complete. Select a winner in the Input Needed queue.</span>
             </div>
             {{else if eq .Hop.Status "completed"}}
             <div style="padding: 15px; background: #d4edda; border-radius: 4px;">

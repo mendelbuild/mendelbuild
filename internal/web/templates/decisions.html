@@ -1,5 +1,5 @@
 {{define "page-content"}}
-<h1>Decisions</h1>
+<h1>Input Needed</h1>
 
 <div class="card">
     <div class="tabs">
@@ -34,13 +34,13 @@
                     <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
                     <td>{{printf "%.2f" .ImportanceScore}}</td>
                     <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
-                    <td><a href="/p/{{$.ProjectID}}/decisions/{{.ID}}">Review</a></td>
+                    <td><a href="/p/{{$.ProjectID}}/inputs/{{.ID}}">Review</a></td>
                 </tr>
                 {{end}}
             </tbody>
         </table>
         {{else}}
-        <p class="empty">No open decisions. All caught up!</p>
+        <p class="empty">No input needed. All caught up!</p>
         {{end}}
     {{else}}
         {{if .ResolvedDecisions}}
@@ -71,13 +71,13 @@
                     </td>
                     <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
                     <td>{{if .ResolvedAt}}{{.ResolvedAt.Format "2006-01-02 15:04"}}{{else}}-{{end}}</td>
-                    <td><a href="/p/{{$.ProjectID}}/decisions/{{.ID}}">View</a></td>
+                    <td><a href="/p/{{$.ProjectID}}/inputs/{{.ID}}">View</a></td>
                 </tr>
                 {{end}}
             </tbody>
         </table>
         {{else}}
-        <p class="empty">No resolved decisions yet.</p>
+        <p class="empty">No resolved items yet.</p>
         {{end}}
     {{end}}
 </div>

@@ -134,6 +134,7 @@ type VariationStatus string
 const (
 	VariationStatusCreating   VariationStatus = "creating"   // Code being generated
 	VariationStatusPending    VariationStatus = "pending"    // Code generated, awaiting selection
+	VariationStatusBlocked    VariationStatus = "blocked"    // Waiting for InputRequest (e.g., credentials)
 	VariationStatusMigrating  VariationStatus = "migrating"  // Data migrations in progress
 	VariationStatusActive     VariationStatus = "active"     // Live and receiving traffic
 	VariationStatusDraining   VariationStatus = "draining"   // Traffic being drained
@@ -291,6 +292,7 @@ const (
 // InputRequest is any input Mendel needs to proceed (decisions, credentials, confirmations, etc.).
 type InputRequest struct {
 	ID                   uuid.UUID          `json:"id"`
+	ProjectID            uuid.UUID          `json:"project_id"`
 	Kind                 InputRequestKind   `json:"kind"`
 	Title                string             `json:"title"`
 	Details              *string            `json:"details,omitempty"`

@@ -7,7 +7,7 @@
     <div style="flex: 1;">
         <div class="card">
             <h2>Proposed Roadmap</h2>
-            <form method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/roadmap">
+            <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/roadmap">
                 <textarea name="roadmap" style="width: 100%; height: 400px; font-family: monospace; font-size: 12px; padding: 10px; border: 1px solid #ccc; border-radius: 4px;">{{if .Decision.Details}}{{.Decision.Details}}{{end}}</textarea>
                 <div style="margin-top: 10px; display: flex; gap: 10px;">
                     <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Save Changes</button>
@@ -17,8 +17,8 @@
                     {{end}}
                 </div>
             </form>
-            <form id="approve-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/approve" style="display: none;"></form>
-            <form id="reject-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/reject" style="display: none;"></form>
+            <form id="approve-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/approve" style="display: none;"></form>
+            <form id="reject-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/reject" style="display: none;"></form>
         </div>
 
     </div>
@@ -46,14 +46,14 @@
             </div>
 
             {{if ne .Decision.Status "resolved"}}
-            <form method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/message">
+            <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/message">
                 <textarea name="feedback" placeholder="Enter your feedback for the agent..." style="width: 100%; height: 80px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical;"></textarea>
                 <div style="margin-top: 10px; display: flex; gap: 10px;">
                     <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Send Feedback</button>
                     <button type="button" onclick="document.getElementById('regenerate-form').submit()" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Regenerate</button>
                 </div>
             </form>
-            <form id="regenerate-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/regenerate" style="display: none;"></form>
+            <form id="regenerate-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/regenerate" style="display: none;"></form>
             {{else}}
             {{if eq .Resolution "approved"}}
             <div style="padding: 15px; background: #d4edda; border-radius: 4px; text-align: center;">
@@ -63,7 +63,7 @@
             {{else if eq .Resolution "rejected"}}
             <div style="padding: 15px; background: #f8d7da; border-radius: 4px; text-align: center;">
                 <strong>This roadmap was rejected.</strong><br>
-                <a href="/p/{{$.ProjectID}}/decisions">Back to Decisions</a>
+                <a href="/p/{{$.ProjectID}}/inputs">Back to Input Needed</a>
             </div>
             {{else}}
             <div style="padding: 15px; background: #e2e3e5; border-radius: 4px; text-align: center;">

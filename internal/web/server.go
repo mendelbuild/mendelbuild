@@ -351,6 +351,7 @@ func (s *Server) proposeVariationsForHop(ctx context.Context, hop *domain.Hop) e
 
 	decision := &domain.Decision{
 		ID:               uuid.New(),
+		ProjectID:        strategy.ProjectID,
 		Kind:             domain.DecisionKindVariationReview,
 		Title:            fmt.Sprintf("Variation Review: %s", hop.Name),
 		Details:          &proposalStr,
@@ -425,6 +426,12 @@ func (s *Server) createSelectionDecision(ctx context.Context, hop *domain.Hop) e
 // createConflictReviewDecision creates a variation_review decision when
 // migration conflicts are detected between variations.
 func (s *Server) createConflictReviewDecision(ctx context.Context, hop *domain.Hop, variations []domain.Variation, auditResult *agent.ConflictAuditResponse) error {
+	// Get strategy for project ID
+	strategy, err := s.db.GetStrategy(ctx, hop.StrategyID)
+	if err != nil {
+		return fmt.Errorf("get strategy: %w", err)
+	}
+
 	// Build conflict details for the decision
 	type conflictInfo struct {
 		VariationNames []string `json:"variation_names"`
@@ -460,6 +467,7 @@ func (s *Server) createConflictReviewDecision(ctx context.Context, hop *domain.H
 
 	decision := &domain.Decision{
 		ID:               uuid.New(),
+		ProjectID:        strategy.ProjectID,
 		Kind:             domain.DecisionKindVariationReview,
 		Title:            fmt.Sprintf("Migration Conflicts: %s", hop.Name),
 		Details:          &detailsStr,
@@ -479,6 +487,12 @@ func (s *Server) createConflictReviewDecision(ctx context.Context, hop *domain.H
 
 // createSelectionDecisionInternal creates the actual selection decision.
 func (s *Server) createSelectionDecisionInternal(ctx context.Context, hop *domain.Hop, variations []domain.Variation) error {
+	// Get strategy for project ID
+	strategy, err := s.db.GetStrategy(ctx, hop.StrategyID)
+	if err != nil {
+		return fmt.Errorf("get strategy: %w", err)
+	}
+
 	// Build details JSON with variation info
 	type variationInfo struct {
 		ID        string `json:"id"`
@@ -524,6 +538,7 @@ func (s *Server) createSelectionDecisionInternal(ctx context.Context, hop *domai
 
 	decision := &domain.Decision{
 		ID:               uuid.New(),
+		ProjectID:        strategy.ProjectID,
 		Kind:             domain.DecisionKindVariationSelection,
 		Title:            fmt.Sprintf("Select Variation: %s", hop.Name),
 		Details:          &detailsStr,
@@ -590,17 +605,18 @@ func (s *Server) setupRoutes() {
 		r.Post("/variations/{variationID}/prune", s.handlePruneVariation)
 
 		// Decision routes
-		r.Get("/decisions", s.handleDecisions)
-		r.Get("/decisions/{decisionID}", s.handleDecisionDetail)
-		r.Post("/decisions/{decisionID}/message", s.handleSendMessage)
-		r.Post("/decisions/{decisionID}/regenerate", s.handleRegenerate)
-		r.Post("/decisions/{decisionID}/roadmap", s.handleUpdateRoadmap)
-		r.Post("/decisions/{decisionID}/approve", s.handleApprove)
-		r.Post("/decisions/{decisionID}/reject", s.handleReject)
-		r.Post("/decisions/{decisionID}/select", s.handleSelectWinner)
-		r.Post("/decisions/{decisionID}/reject-all", s.handleRejectAllVariations)
-		r.Post("/decisions/{decisionID}/request-more-variations", s.handleRequestMoreVariations)
-		r.Post("/decisions/{decisionID}/resolve-conflicts", s.handleResolveConflicts)
+		r.Get("/inputs", s.handleDecisions)
+		r.Get("/inputs/{decisionID}", s.handleDecisionDetail)
+		r.Post("/inputs/{decisionID}/message", s.handleSendMessage)
+		r.Post("/inputs/{decisionID}/regenerate", s.handleRegenerate)
+		r.Post("/inputs/{decisionID}/roadmap", s.handleUpdateRoadmap)
+		r.Post("/inputs/{decisionID}/approve", s.handleApprove)
+		r.Post("/inputs/{decisionID}/reject", s.handleReject)
+		r.Post("/inputs/{decisionID}/select", s.handleSelectWinner)
+		r.Post("/inputs/{decisionID}/reject-all", s.handleRejectAllVariations)
+		r.Post("/inputs/{decisionID}/request-more-variations", s.handleRequestMoreVariations)
+		r.Post("/inputs/{decisionID}/resolve-conflicts", s.handleResolveConflicts)
+		r.Post("/inputs/{decisionID}/provide-credential", s.handleProvideCredential)
 		r.Post("/roadmap/propose", s.handleProposeRoadmap)
 	})
 

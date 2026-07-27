@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -17,6 +18,24 @@ import (
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/google/uuid"
 )
+
+// ErrMissingCredentials is returned when deployment fails due to missing credentials.
+type ErrMissingCredentials struct {
+	Missing []string
+}
+
+func (e *ErrMissingCredentials) Error() string {
+	return fmt.Sprintf("missing required credentials: %s", strings.Join(e.Missing, ", "))
+}
+
+// IsMissingCredentials checks if an error is due to missing credentials.
+func IsMissingCredentials(err error) (*ErrMissingCredentials, bool) {
+	var e *ErrMissingCredentials
+	if errors.As(err, &e) {
+		return e, true
+	}
+	return nil, false
+}
 
 // Runner executes deployment scripts inside Docker containers.
 type Runner struct {
@@ -73,7 +92,7 @@ func (r *Runner) Deploy(ctx context.Context, variation *domain.Variation, repoPa
 		return result, result.Error
 	}
 	if len(missingCreds) > 0 {
-		result.Error = fmt.Errorf("missing required credentials: %s (add them in Project Settings)", strings.Join(missingCreds, ", "))
+		result.Error = &ErrMissingCredentials{Missing: missingCreds}
 		return result, result.Error
 	}
 
@@ -336,4 +355,75 @@ func (r *Runner) CheckDockerImage(ctx context.Context) error {
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	return cmd.Run()
+}
+
+// CreateCredentialRequestAndBlockVariation creates an InputRequest for missing credentials
+// and sets the variation status to blocked. Called when deployment fails due to missing credentials.
+func (r *Runner) CreateCredentialRequestAndBlockVariation(ctx context.Context, variation *domain.Variation, missingCreds []string) error {
+	// Get hop and strategy for context
+	hop, err := r.db.GetHop(ctx, variation.HopID)
+	if err != nil {
+		return fmt.Errorf("get hop: %w", err)
+	}
+	strategy, err := r.db.GetStrategy(ctx, hop.StrategyID)
+	if err != nil {
+		return fmt.Errorf("get strategy: %w", err)
+	}
+
+	// Check if a credential request already exists for this variation
+	for _, credName := range missingCreds {
+		existing, err := r.db.GetCredentialRequestForVariation(ctx, variation.ID, credName)
+		if err == nil && existing != nil {
+			continue // Already exists
+		}
+
+		// Create InputRequest for this credential
+		now := time.Now()
+		details := fmt.Sprintf("Deployment for variation '%s' requires the '%s' credential.", variation.Name, credName)
+		instructions := fmt.Sprintf("1. Create the credential '%s' for your cloud provider\n2. Enter the value below or in Project Settings\n3. The deployment will automatically resume", credName)
+
+		inputRequest := &domain.InputRequest{
+			ID:                   uuid.New(),
+			ProjectID:            strategy.ProjectID,
+			Kind:                 domain.InputRequestKindCredentialRequest,
+			Title:                fmt.Sprintf("Credential Required: %s", credName),
+			Details:              &details,
+			Instructions:         &instructions,
+			RequiredCapabilities: []string{credName},
+			ObjectivityScore:     0.9, // Very objective - either have it or don't
+			ImportanceScore:      0.9, // Blocks deployment
+			Status:               domain.InputRequestStatusNeedsAssignment,
+			SubjectType:          strPtr("variation"),
+			SubjectID:            &variation.ID,
+			CreatedAt:            now,
+			UpdatedAt:            now,
+		}
+
+		if err := r.db.CreateDecision(ctx, inputRequest); err != nil {
+			return fmt.Errorf("create input request for %s: %w", credName, err)
+		}
+
+		// Create initial message
+		msg := &domain.InputRequestMessage{
+			ID:             uuid.New(),
+			InputRequestID: inputRequest.ID,
+			Role:           "system",
+			Content:        fmt.Sprintf("Deployment for hop '%s' variation '%s' requires credential '%s'.", hop.Name, variation.Name, credName),
+			CreatedAt:      now,
+		}
+		r.db.CreateDecisionMessage(ctx, msg)
+	}
+
+	// Block the variation
+	variation.Status = domain.VariationStatusBlocked
+	variation.UpdatedAt = time.Now()
+	if err := r.db.UpdateVariation(ctx, variation); err != nil {
+		return fmt.Errorf("update variation status: %w", err)
+	}
+
+	return nil
+}
+
+func strPtr(s string) *string {
+	return &s
 }

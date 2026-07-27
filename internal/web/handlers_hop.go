@@ -203,9 +203,10 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"Title":     "Hop: " + hop.Name,
-		"ProjectID": projectID,
+		"ProjectID": projectID.String(),
 		"View":      view,
 	}
+	s.addOpenInputCount(ctx, data)
 
 	if err := renderPage(w, "hop_detail.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -247,7 +248,7 @@ func (s *Server) handleProposeVariations(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Redirect to decision page
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decision.ID), http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, decision.ID), http.StatusSeeOther)
 }
 
 // VariationDetailView holds data for rendering the variation detail page.
@@ -329,9 +330,10 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"Title":     "Variation: " + variation.Name,
-		"ProjectID": projectID,
+		"ProjectID": projectID.String(),
 		"View":      view,
 	}
+	s.addOpenInputCount(ctx, data)
 
 	if err := renderPage(w, "variation_detail.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
