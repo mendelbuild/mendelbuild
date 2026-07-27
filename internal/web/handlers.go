@@ -142,12 +142,27 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Get production deployment info
+	var productionURL string
+	var productionDeployedAt string
+	deployment, err := s.db.GetLatestRunningDeploymentByProject(ctx, projectID)
+	if err == nil && deployment != nil {
+		if deployment.PublicURL != nil {
+			productionURL = *deployment.PublicURL
+		} else {
+			productionURL = deployment.URL
+		}
+		productionDeployedAt = deployment.DeployedAt.Format("2006-01-02 15:04")
+	}
+
 	data := map[string]interface{}{
-		"Title":            "Strategy: " + view.Strategy.Name,
-		"ProjectID":        projectID,
-		"Strategy":         view,
-		"PendingDecision":  pendingDecision,
-		"PendingDecisions": pendingDecisions,
+		"Title":               "Strategy: " + view.Strategy.Name,
+		"ProjectID":           projectID,
+		"Strategy":            view,
+		"PendingDecision":     pendingDecision,
+		"PendingDecisions":    pendingDecisions,
+		"ProductionURL":       productionURL,
+		"ProductionDeployedAt": productionDeployedAt,
 	}
 
 	if err := renderPage(w, "strategy.html", data); err != nil {

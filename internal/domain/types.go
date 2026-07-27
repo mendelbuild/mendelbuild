@@ -115,6 +115,8 @@ type Hop struct {
 	Commentary         string          `json:"commentary"`
 	Params             json.RawMessage `json:"params,omitempty"`              // Stores objective_ids and other hop metadata
 	EvaluationCriteria json.RawMessage `json:"evaluation_criteria,omitempty"` // AI-generated structured criteria for comparing Variations (JSONB)
+	RequiresDemo       bool            `json:"requires_demo"`                 // Variations need clickable demos
+	RequiresProduction bool            `json:"requires_production"`           // Variations need production traffic
 	Status             HopStatus       `json:"status"`
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`

@@ -63,17 +63,18 @@ type VariationWithLogs struct {
 
 // HopDetailView holds data for rendering the hop detail page.
 type HopDetailView struct {
-	Hop                   *domain.Hop
-	Strategy              *domain.Strategy
-	Project               *domain.Project
-	Variations            []VariationWithLogs
-	Objectives            []domain.Objective
-	Allocations           []domain.BudgetAllocation
-	PendingReview         *domain.Decision
-	PendingSelection      *domain.Decision
-	HasCreatingVariations bool
-	HasPendingVariations  bool
-	IsStuck               bool // No pending variations and no unresolved decisions
+	Hop                      *domain.Hop
+	Strategy                 *domain.Strategy
+	Project                  *domain.Project
+	Variations               []VariationWithLogs
+	Objectives               []domain.Objective
+	Allocations              []domain.BudgetAllocation
+	PendingReview            *domain.Decision
+	PendingSelection         *domain.Decision
+	HasCreatingVariations    bool
+	HasPendingVariations     bool
+	IsStuck                  bool // No pending variations and no unresolved decisions
+	NeedsProductionCredentials bool // requires_production but no credentials configured
 }
 
 func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
@@ -176,18 +177,28 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 	// Detect stuck state: has variations but none pending/creating, no unresolved decisions
 	isStuck := len(variations) > 0 && !hasCreatingVariations && !hasPendingVariations && pendingReview == nil && pendingSelection == nil
 
+	// Check if production credentials are needed but missing
+	needsProductionCredentials := false
+	if hop.RequiresProduction {
+		creds, err := s.db.ListProjectCredentials(ctx, projectID)
+		if err != nil || len(creds) == 0 {
+			needsProductionCredentials = true
+		}
+	}
+
 	view := &HopDetailView{
-		Hop:                   hop,
-		Strategy:              strategy,
-		Project:               project,
-		Variations:            variations,
-		Objectives:            objectives,
-		Allocations:           allocations,
-		PendingReview:         pendingReview,
-		PendingSelection:      pendingSelection,
-		HasCreatingVariations: hasCreatingVariations,
-		HasPendingVariations:  hasPendingVariations,
-		IsStuck:               isStuck,
+		Hop:                        hop,
+		Strategy:                   strategy,
+		Project:                    project,
+		Variations:                 variations,
+		Objectives:                 objectives,
+		Allocations:                allocations,
+		PendingReview:              pendingReview,
+		PendingSelection:           pendingSelection,
+		HasCreatingVariations:      hasCreatingVariations,
+		HasPendingVariations:       hasPendingVariations,
+		IsStuck:                    isStuck,
+		NeedsProductionCredentials: needsProductionCredentials,
 	}
 
 	data := map[string]interface{}{

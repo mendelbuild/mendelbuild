@@ -17,24 +17,25 @@ import (
 
 // DecisionDetailView holds data for rendering a decision detail page.
 type DecisionDetailView struct {
-	Decision           *domain.Decision
-	Messages           []domain.DecisionMessage
-	Roadmap            *agent.ProposedRoadmap
-	Strategy           *domain.Strategy
-	Hop                *domain.Hop
-	VariationProposal  *VariationProposalView
-	ExistingVariations []ExistingVariationView // Already-created variations (immutable in review)
-	SelectionData      *SelectionDataView
-	EvaluationCriteria *agent.EvaluationCriteria
-	ConflictInfo       *ConflictInfoView // Migration conflicts if detected
-	CanSelect          bool              // True if all variations are done and user can pick winner
-	PendingCount       int
-	FailedCount        int
-	TotalCount         int
-	HopBudget          int    // Total token budget for the hop
-	Resolution         string       // Dereferenced resolution for template comparison
-	ExistingHopsJSON   template.JS  // JSON of existing hops for DAG rendering (template.JS to avoid HTML escaping)
-	ObjectivesJSON     template.JS  // JSON map of objective ID to description
+	Decision                   *domain.Decision
+	Messages                   []domain.DecisionMessage
+	Roadmap                    *agent.ProposedRoadmap
+	Strategy                   *domain.Strategy
+	Hop                        *domain.Hop
+	VariationProposal          *VariationProposalView
+	ExistingVariations         []ExistingVariationView // Already-created variations (immutable in review)
+	SelectionData              *SelectionDataView
+	EvaluationCriteria         *agent.EvaluationCriteria
+	ConflictInfo               *ConflictInfoView // Migration conflicts if detected
+	CanSelect                  bool              // True if all variations are done and user can pick winner
+	PendingCount               int
+	FailedCount                int
+	TotalCount                 int
+	HopBudget                  int          // Total token budget for the hop
+	Resolution                 string       // Dereferenced resolution for template comparison
+	ExistingHopsJSON           template.JS  // JSON of existing hops for DAG rendering (template.JS to avoid HTML escaping)
+	ObjectivesJSON             template.JS  // JSON map of objective ID to description
+	NeedsProductionCredentials bool         // requires_production but no credentials configured
 }
 
 // ExistingVariationView holds an existing variation for display in variation review.
@@ -328,6 +329,15 @@ func (s *Server) handleDecisionDetail(w http.ResponseWriter, r *http.Request) {
 
 				// Get strategy and repository for branch URLs
 				strategy, _ := s.db.GetStrategy(ctx, view.Hop.StrategyID)
+
+				// Check if production credentials are needed but missing
+				if view.Hop.RequiresProduction && strategy != nil {
+					creds, err := s.db.ListProjectCredentials(ctx, strategy.ProjectID)
+					if err != nil || len(creds) == 0 {
+						view.NeedsProductionCredentials = true
+					}
+				}
+
 				var repoURL string
 				var mainBranch string
 				if strategy != nil {
@@ -1371,6 +1381,14 @@ func (s *Server) approveVariations(w http.ResponseWriter, r *http.Request, decis
 		// Record initial state
 		s.db.CreateVariationStateTransition(ctx, variation.ID, "", string(domain.VariationStatusCreating), "variation created from approved proposal")
 		createdCount++
+	}
+
+	// Update hop comparison requirements from form
+	requiresDemo := r.FormValue("requires_demo") == "on"
+	requiresProduction := r.FormValue("requires_production") == "on"
+	if err := s.db.UpdateHopComparisonRequirements(ctx, hop.ID, requiresDemo, requiresProduction); err != nil {
+		http.Error(w, "error updating hop requirements", http.StatusInternalServerError)
+		return
 	}
 
 	// Update hop status to active

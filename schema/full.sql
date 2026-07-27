@@ -219,6 +219,10 @@ CREATE TABLE hops (
     -- JSONB structure: { "criteria": [...], "rationale": "...", "tradeoffs": "..." }
     evaluation_criteria JSONB,
 
+    -- Comparison requirements [added in 018]
+    requires_demo BOOLEAN NOT NULL DEFAULT false,
+    requires_production BOOLEAN NOT NULL DEFAULT false,
+
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'active', 'selecting', 'completed', 'rejected', 'abandoned')),
 

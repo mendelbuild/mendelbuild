@@ -3,6 +3,16 @@
 <h1>{{.Decision.Title}}</h1>
 <p><a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">&larr; Back to Hop: {{.Hop.Name}}</a></p>
 
+{{if .NeedsProductionCredentials}}
+<div style="padding: 15px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; margin-bottom: 20px;">
+    <strong style="color: #856404;">Production deployment requires credentials</strong>
+    <p style="margin: 8px 0 0 0; color: #856404;">
+        This hop requires production traffic comparison, but no cloud credentials are configured.
+        <a href="/p/{{$.ProjectID}}/settings" style="color: #007bff;">Configure in Project Settings &rarr;</a>
+    </p>
+</div>
+{{end}}
+
 {{if .SelectionData}}
 <div class="card" style="margin-bottom: 20px;">
     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px;">

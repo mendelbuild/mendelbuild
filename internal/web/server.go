@@ -558,6 +558,10 @@ func (s *Server) setupRoutes() {
 		r.Get("/roadmap", s.handleRoadmap)
 		r.Get("/settings", s.handleProjectSettings)
 		r.Post("/settings", s.handleSaveProjectSettings)
+		r.Post("/settings/credentials", s.handleAddCloudCredential)
+		r.Post("/settings/credentials/{credentialID}", s.handleUpdateCloudCredential)
+		r.Post("/settings/credentials/{credentialID}/delete", s.handleDeleteCloudCredential)
+		r.Post("/redeploy", s.handleRedeploy)
 
 		// OKR Editor routes
 		r.Get("/okr", s.handleOKREditor)

@@ -1,11 +1,104 @@
 # Cloud Deployment & Traffic Splitting Plan
 
 > **Status**: Draft
-> **Last Updated**: 2026-07-24
+> **Last Updated**: 2026-07-25
 
 ## Overview
 
-Enable Mendel to deploy variations to cloud environments and split production traffic between them using Envoy as a reverse proxy.
+Enable Mendel to deploy variations to cloud environments and split production traffic between them using Envoy as a reverse proxy. This supports comparing variations at the **production traffic level** — like Optimizely or LaunchDarkly, but for entire variation branches.
+
+## Core Concept: Comparison Levels
+
+For any Hop, variations can be compared at different levels of deployment:
+
+| Level | Description | When to Use |
+|-------|-------------|-------------|
+| **Code** | Review actual code diffs | Always available |
+| **Demo** | Self-contained non-prod demos (docker-compose) | Testing functionality |
+| **Production (click)** | Point-and-click links to deployed prod instances | Stakeholder review |
+| **Production (traffic)** | Real user traffic with stats | A/B testing, conversion optimization |
+
+Not all levels are appropriate for all Hops. Mendel suggests which are needed based on the Hop's objectives and evaluation criteria, but the user can override.
+
+## Hop Comparison Requirements
+
+Each Hop specifies what comparison levels it needs via two flags:
+
+- **`requires_demo`** — Variations need clickable demos before selection
+- **`requires_production`** — Variations need production traffic before selection
+
+### UI: Variation Review Screen
+
+When approving proposed variations, the user sees:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Comparison Requirements                                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│ ☑ Requires clickable demos                                      │
+│   Variations will run in isolated demo environments             │
+│                                                                 │
+│ ☑ Requires production traffic              (suggested by Mendel)│
+│   Variations will be deployed to production and split traffic   │
+│   Note: Only available when variation migrations don't conflict │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+Mendel suggests defaults based on:
+- Evaluation criteria (e.g., "conversion rate" → needs production traffic)
+- Hop objectives (e.g., "optimize performance" → needs real load)
+
+User can override suggestions.
+
+### Database Changes
+
+Add to `hops` table:
+```sql
+ALTER TABLE hops ADD COLUMN requires_demo BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE hops ADD COLUMN requires_production BOOLEAN NOT NULL DEFAULT false;
+```
+
+### Credential Prompting
+
+When `requires_production` is true but required credentials are missing:
+
+**Show warning banner on:**
+- Hop detail page
+- Decision (variation selection) page  
+- Variation detail page (for blocked variations)
+
+**Banner text:**
+```
+⚠️ Production deployment requires credentials: RENDER_API_KEY
+   [Configure in Project Settings →]
+```
+
+Link goes to Project Settings page where credentials can be entered. Deployment is blocked until credentials are present.
+
+### Autonomous Deployment Flow
+
+When a Hop has `requires_production = true` and all credentials are present:
+
+1. **On variation reaching PENDING status:**
+   - Automatically deploy to production
+   - Traffic allocation: 10% total, split equally among variations
+   - Example: 3 variations → ~3.3% each, 90% to existing production
+
+2. **On user selecting winner:**
+   - Winner gets 100% traffic
+   - Loser variations are torn down
+   - Winner becomes the new "production baseline"
+
+### Production Link on Project Homepage
+
+Once any deployment exists, show on the project homepage:
+
+```
+Production: https://myapp.onrender.com [View →]
+Last deployed: 2 hours ago (from hop: "Add checkout flow")
+```
 
 ## Design Rationale
 
@@ -396,10 +489,26 @@ type EnvoySettings struct {
    - Mask values after save
    - Read `deploy-config.yml` from repo to show required vs missing credentials
    - Link from project nav sidebar
-2. Variation detail: "Deploy to Prod" button (disabled with tooltip if credentials missing)
-3. Hop detail: Traffic allocation sliders (weights must sum to 1.0)
-4. "Generate Envoy Config" button — downloads YAML
-5. Dashboard: Show deployed instances and their traffic %
+
+2. **Variation Review screen** (when approving proposed variations):
+   - Checkbox: "Requires clickable demos" (Mendel suggests based on criteria)
+   - Checkbox: "Requires production traffic" (Mendel suggests based on criteria)
+   - Set `requires_demo` and `requires_production` on Hop
+
+3. **Credential warning banners** (when `requires_production` but credentials missing):
+   - Hop detail page: banner with link to Settings
+   - Decision page: banner with link to Settings
+   - Variation detail page: banner with link to Settings
+
+4. **Project homepage**:
+   - Production link when deployed (URL + last deploy time)
+   - "Redeploy" button to redeploy current main
+
+5. **Decision page enhancements**:
+   - Show production URLs for each variation (when deployed)
+   - Traffic % display per variation
+
+6. _(Future)_ Traffic allocation sliders, Envoy config download
 
 ### Phase E: Integration & Lifecycle
 
@@ -416,29 +525,52 @@ type EnvoySettings struct {
 
 ## User Workflow
 
-1. **Setup (once per project)**
-   - Create `.mendel/deploy-config.yml` in repo (lists required credentials)
-   - Go to Project Settings in Mendel UI
-   - UI shows which credentials are required but missing
-   - Add each credential (GCP_SERVICE_ACCOUNT_KEY, DATABASE_URL, etc.)
-   - Deploy Envoy in their environment (Cloud Run, k8s, VM, etc.)
+### Initial Setup (once per project)
 
-2. **Per-variation deployment**
-   - Variation reaches PENDING (code generation complete)
-   - User clicks "Deploy to Prod" in Mendel UI
-   - If credentials missing: error with link to Project Settings
-   - If credentials present: Mendel runs deploy script, captures service URL
-   - Instance status → `running`
+1. Create `.mendel/deploy-config.yml` in repo (lists required credentials)
+2. Deploy Envoy in their environment (Cloud Run, k8s, VM, etc.)
+3. First Hop requiring production will prompt for missing credentials
 
-3. **Traffic allocation**
-   - User adjusts sliders (main: 90%, var-a: 10%)
-   - Mendel generates new Envoy config
-   - User downloads and applies config (or xDS pushes automatically)
+### Hop with Production Requirements
 
-4. **Selection**
-   - User selects winning variation
-   - Losing variations: teardown script runs, traffic → 0%
+1. **Hop proposed** by Mendel with objectives/criteria
+2. **User approves variations** on Variation Review screen:
+   - Sees suggested checkboxes: ☑ Requires demos, ☑ Requires production
+   - Can override suggestions
+   - Confirms to start code generation
+3. **Variations reach PENDING** (code generation complete)
+4. **If `requires_production = true`:**
+   - Mendel checks for required credentials
+   - If missing: shows banner on Hop/Decision pages linking to Settings
+   - User enters credentials in Project Settings
+   - Once credentials present: Mendel auto-deploys each variation
+   - Traffic split: 10% total, divided equally (e.g., 3 variations → 3.3% each)
+   - Production URLs appear on Decision page
+5. **User compares variations:**
+   - View code diffs
+   - Click demo links (if `requires_demo`)
+   - Click production links (if `requires_production`)
+   - See traffic stats (future: product analytics integration)
+6. **User selects winner:**
+   - Winner gets 100% traffic
    - Winner merged to main
+   - Loser variations torn down
+   - Winner becomes the new production baseline
+
+### Project-Level Redeploy
+
+From the project homepage, user can click "Redeploy" to redeploy the current main branch to production. Useful after manual fixes or when not going through a Hop.
+
+## Decisions Made
+
+| Area | Decision |
+|------|----------|
+| Comparison levels | Explicit checkboxes on Variation Review: `requires_demo`, `requires_production` |
+| Credential prompting | Banner on Hop/Decision/Variation pages linking to Project Settings |
+| Deployment trigger | Autonomous when variation reaches PENDING and credentials present |
+| Winner promotion | Winner stays deployed; losers torn down |
+| **Traffic splitting (v1)** | **None for now** - each variation gets its own production URL, users click between them to compare. No Envoy, no automatic splitting. |
+| **Traffic splitting (future)** | Edit user's production configs temporarily (exception to no-Mendel-code rule), track changes in DB, clean up when experiment ends. Avoids routing traffic through Mendel and cloud-provider lock-in. |
 
 ## Open Questions (to resolve during implementation)
 
@@ -448,6 +580,8 @@ type EnvoySettings struct {
 | Config application | Manual download or automated push? | Manual for prototype; xDS later |
 | Hash consistency | What happens when weights change? | Ring-hash redistributes some users; acceptable for prototype |
 | Multi-hop routing | One Envoy per hop or shared? | Start with one Envoy per project, route based on path/header |
+| Migration conflicts | How to detect conflicting migrations? | Parse migration files, compare table/column changes |
+| Stats collection | How to gather production usage stats? | Future: integrate with product analytics (Amplitude, Mixpanel, etc.) |
 | Rollback | Auto-rollback on health check failure? | Defer; manual for now |
 
 ## Success Criteria
