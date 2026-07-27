@@ -301,7 +301,7 @@ func proposeRoadmap(args []string) {
 	tokensUsed := tokens
 	agentMessage := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decision.ID,
+		InputRequestID: decision.ID,
 		Role:       "agent",
 		Content:    fmt.Sprintf("Generated initial roadmap proposal with %d hops.", len(roadmap.Hops)),
 		TokensUsed: &tokensUsed,

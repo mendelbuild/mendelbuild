@@ -427,39 +427,52 @@ CREATE TABLE variation_migrations (
 --------------------------------------------------------------------------------
 -- DECISIONS
 --------------------------------------------------------------------------------
--- A Decision is a choice point in the system. Every Decision has objectivity
--- and importance scores that can be used, in conjunction with "details", to
--- determine which human or agent should review.
+-- An InputRequest is any input Mendel needs to proceed. This includes:
+-- - Decisions (choosing between options)
+-- - Credentials (API keys, tokens)
+-- - Confirmations (proceed with action?)
+-- - Manual setup tasks (create account, configure service)
+-- Every InputRequest has objectivity and importance scores that can be used,
+-- in conjunction with "details", to determine which human or agent should handle it.
 
-CREATE TABLE decisions (
+CREATE TABLE input_requests (
     id UUID PRIMARY KEY,
 
-    -- What kind of decision?
+    -- What kind of input is needed?
     --   'pass_fail'           - Binary yes/no decision
     --   'choose_one'          - Select exactly one option (e.g., pick winning Variation)
     --   'choose_many'         - Select zero or more options
     --   'roadmap_review'      - Conversational edit/approve cycle for Roadmap proposals
-    --   'variation_review'    - Review/approve proposed Variations before code generation [added in 004]
-    --   'variation_selection' - Pick winning Variation for a Hop [added in 006]
+    --   'variation_review'    - Review/approve proposed Variations before code generation
+    --   'variation_selection' - Pick winning Variation for a Hop
+    --   'credential_request'  - Need an API key or credential [added in 019]
+    --   'manual_setup'        - Human needs to do something external [added in 019]
+    --   'confirmation'        - Simple proceed/cancel confirmation [added in 019]
     kind TEXT NOT NULL CHECK (kind IN ('pass_fail', 'choose_one', 'choose_many', 'roadmap_review',
-                                        'variation_review', 'variation_selection')),
+                                        'variation_review', 'variation_selection',
+                                        'credential_request', 'manual_setup', 'confirmation')),
 
     -- Human- and agent-readable summary
     title TEXT NOT NULL,
     details TEXT,  -- Markdown OK; can include links
 
+    -- For credential_request/manual_setup: how to provide the input [added in 019]
+    instructions TEXT,
+    link TEXT,                      -- URL to external service (e.g., Render dashboard)
+    required_capabilities TEXT[],   -- Permissions/scopes needed
+
     -- Scores that help determine routing to human vs agent
     objectivity_score REAL NOT NULL CHECK (objectivity_score >= 0 AND objectivity_score <= 1),
     -- Importance scores are meant to be comparable at the Project level. I.e.,
-    -- even if a Decision is "important" to a Hop, if that Hop is not important
-    -- in the Project, neither is the Decision.
+    -- even if an InputRequest is "important" to a Hop, if that Hop is not important
+    -- in the Project, neither is the InputRequest.
     importance_score REAL NOT NULL CHECK (importance_score >= 0 AND importance_score <= 1),
 
-    -- Resolution state (see DESIGN.md Section 2.3)
-    --   'needs_assignment' - Decision created, awaiting routing to agent/human
+    -- Resolution state
+    --   'needs_assignment' - InputRequest created, awaiting routing to agent/human
     --   'assigned'         - Routed to a specific agent or human
     --   'accepted'         - Assignee has acknowledged and is working on it
-    --   'resolved'         - Decision made
+    --   'resolved'         - Input provided
     status TEXT NOT NULL DEFAULT 'needs_assignment' CHECK (status IN ('needs_assignment', 'assigned', 'accepted', 'resolved')),
 
     assigned_to TEXT,      -- Identifier for agent or user; format TBD
@@ -471,14 +484,14 @@ CREATE TABLE decisions (
     resolved_by TEXT,      -- Identifier for agent or user; format TBD
     resolved_at TIMESTAMP,
 
-    resolution TEXT,       -- The actual decision made
-    rationale TEXT,        -- Why this decision was made
+    resolution TEXT,       -- The actual input/decision provided
+    rationale TEXT,        -- Why this input was provided (for decisions)
 
-    -- What entity does this decision relate to?
-    subject_type TEXT,     -- 'hop', 'variation', 'strategy', etc.
+    -- What entity does this input request relate to?
+    subject_type TEXT,     -- 'hop', 'variation', 'strategy', 'project', etc.
     subject_id UUID,
 
-    -- Cache for computed/ephemeral data (structure varies by kind) [added in 013]
+    -- Cache for computed/ephemeral data (structure varies by kind)
     -- For variation_selection: stores LLM-computed evaluation scores
     cache JSONB,
 
@@ -486,17 +499,17 @@ CREATE TABLE decisions (
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_decisions_status ON decisions(status);
-CREATE INDEX idx_decisions_subject ON decisions(subject_type, subject_id);
+CREATE INDEX idx_input_requests_status ON input_requests(status);
+CREATE INDEX idx_input_requests_subject ON input_requests(subject_type, subject_id);
 
 --------------------------------------------------------------------------------
--- DECISION MESSAGES
+-- INPUT REQUEST MESSAGES
 --------------------------------------------------------------------------------
--- Conversation history for Decision review cycles [added in 002]
+-- Conversation history for InputRequest review cycles
 
-CREATE TABLE decision_messages (
+CREATE TABLE input_request_messages (
     id UUID PRIMARY KEY,
-    decision_id UUID NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+    input_request_id UUID NOT NULL REFERENCES input_requests(id) ON DELETE CASCADE,
 
     -- Who sent this message?
     --   'user'  - Human reviewer
@@ -512,7 +525,7 @@ CREATE TABLE decision_messages (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_decision_messages_decision ON decision_messages(decision_id, created_at);
+CREATE INDEX idx_input_request_messages_input_request ON input_request_messages(input_request_id, created_at);
 
 --------------------------------------------------------------------------------
 -- REPOSITORIES

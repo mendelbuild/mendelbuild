@@ -473,7 +473,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	userMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decisionID,
+		InputRequestID: decisionID,
 		Role:       "user",
 		Content:    feedback,
 		CreatedAt:  now,
@@ -597,7 +597,7 @@ func (s *Server) sendMessageRoadmap(w http.ResponseWriter, r *http.Request, deci
 	// Save agent response message
 	agentMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decision.ID,
+		InputRequestID: decision.ID,
 		Role:       "agent",
 		Content:    fmt.Sprintf("Revised roadmap based on feedback. Now has %d hops.", len(revisedRoadmap.Hops)),
 		TokensUsed: &tokens,
@@ -731,7 +731,7 @@ func (s *Server) sendMessageVariation(w http.ResponseWriter, r *http.Request, de
 	// Save agent response message
 	agentMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decision.ID,
+		InputRequestID: decision.ID,
 		Role:       "agent",
 		Content:    fmt.Sprintf("Revised variations based on feedback. Now has %d variations.", len(revisedProposal.Variations)),
 		TokensUsed: &tokens,
@@ -855,7 +855,7 @@ func (s *Server) regenerateRoadmap(w http.ResponseWriter, r *http.Request, decis
 	// Save system message
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decision.ID,
+		InputRequestID: decision.ID,
 		Role:       "system",
 		Content:    "Roadmap regenerated from scratch.",
 		CreatedAt:  time.Now(),
@@ -865,7 +865,7 @@ func (s *Server) regenerateRoadmap(w http.ResponseWriter, r *http.Request, decis
 	// Save agent message
 	agentMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decision.ID,
+		InputRequestID: decision.ID,
 		Role:       "agent",
 		Content:    fmt.Sprintf("Generated new roadmap proposal with %d hops.", len(roadmap.Hops)),
 		TokensUsed: &tokens,
@@ -1022,7 +1022,7 @@ func (s *Server) regenerateVariations(w http.ResponseWriter, r *http.Request, de
 	// Save system message
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decision.ID,
+		InputRequestID: decision.ID,
 		Role:       "system",
 		Content:    "Variations regenerated from scratch.",
 		CreatedAt:  time.Now(),
@@ -1032,7 +1032,7 @@ func (s *Server) regenerateVariations(w http.ResponseWriter, r *http.Request, de
 	// Save agent message
 	agentMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decision.ID,
+		InputRequestID: decision.ID,
 		Role:       "agent",
 		Content:    fmt.Sprintf("Generated new variation proposal with %d variations.\n\nRationale: %s", len(proposal.Variations), proposal.Rationale),
 		TokensUsed: &tokens,
@@ -1088,7 +1088,7 @@ func (s *Server) handleUpdateRoadmap(w http.ResponseWriter, r *http.Request) {
 	// Save system message
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decisionID,
+		InputRequestID: decisionID,
 		Role:       "system",
 		Content:    "Roadmap manually edited.",
 		CreatedAt:  time.Now(),
@@ -1259,7 +1259,7 @@ func (s *Server) approveRoadmap(w http.ResponseWriter, r *http.Request, decision
 	}
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decision.ID,
+		InputRequestID: decision.ID,
 		Role:       "system",
 		Content:    msgContent,
 		CreatedAt:  time.Now(),
@@ -1419,7 +1419,7 @@ func (s *Server) approveVariations(w http.ResponseWriter, r *http.Request, decis
 	}
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decision.ID,
+		InputRequestID: decision.ID,
 		Role:       "system",
 		Content:    msgContent,
 		CreatedAt:  time.Now(),
@@ -1657,7 +1657,7 @@ func (s *Server) handleProposeRoadmap(w http.ResponseWriter, r *http.Request) {
 	}
 	agentMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decision.ID,
+		InputRequestID: decision.ID,
 		Role:       "agent",
 		Content:    msgContent,
 		TokensUsed: &tokensUsed,
@@ -1704,7 +1704,7 @@ func (s *Server) handleReject(w http.ResponseWriter, r *http.Request) {
 	// Save system message
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decisionID,
+		InputRequestID: decisionID,
 		Role:       "system",
 		Content:    "Roadmap proposal rejected.",
 		CreatedAt:  time.Now(),
@@ -1834,7 +1834,7 @@ func (s *Server) handleSelectWinner(w http.ResponseWriter, r *http.Request) {
 
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decisionID,
+		InputRequestID: decisionID,
 		Role:       "system",
 		Content:    msgContent,
 		CreatedAt:  time.Now(),
@@ -1891,7 +1891,7 @@ func (s *Server) handleRejectAllVariations(w http.ResponseWriter, r *http.Reques
 	// Save system message
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decisionID,
+		InputRequestID: decisionID,
 		Role:       "system",
 		Content:    "Requested additional variations. Returning to variation review.",
 		CreatedAt:  time.Now(),
@@ -1945,7 +1945,7 @@ func (s *Server) handleRequestMoreVariations(w http.ResponseWriter, r *http.Requ
 	// Save system message
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decisionID,
+		InputRequestID: decisionID,
 		Role:       "system",
 		Content:    "Requested additional variations. Returning to variation review.",
 		CreatedAt:  time.Now(),
@@ -2006,7 +2006,7 @@ func (s *Server) createMoreVariationsDecision(ctx context.Context, w http.Respon
 	// Create system message
 	sysMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: newDecision.ID,
+		InputRequestID: newDecision.ID,
 		Role:       "system",
 		Content:    fmt.Sprintf("Variation review opened for additional proposals.\n\nThere are %d existing pending variation(s) that will be retained. Use the feedback form to request new variations to compare against them.", pendingCount),
 		CreatedAt:  now,

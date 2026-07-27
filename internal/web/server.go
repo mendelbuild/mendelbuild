@@ -371,7 +371,7 @@ func (s *Server) proposeVariationsForHop(ctx context.Context, hop *domain.Hop) e
 	tokensUsed := tokens
 	agentMsg := &domain.DecisionMessage{
 		ID:         uuid.New(),
-		DecisionID: decision.ID,
+		InputRequestID: decision.ID,
 		Role:       "agent",
 		Content:    fmt.Sprintf("Generated %d variation proposals.\n\nRationale: %s", len(proposal.Variations), proposal.Rationale),
 		TokensUsed: &tokensUsed,

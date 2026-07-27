@@ -345,7 +345,7 @@ func (db *DB) GetStrategy(ctx context.Context, id uuid.UUID) (*domain.Strategy, 
 // CreateDecision creates a new decision.
 func (db *DB) CreateDecision(ctx context.Context, d *domain.Decision) error {
 	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO decisions (id, kind, title, details, objectivity_score, importance_score, status, subject_type, subject_id, created_at, updated_at)
+		INSERT INTO input_requests (id, kind, title, details, objectivity_score, importance_score, status, subject_type, subject_id, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
 	`, d.ID, d.Kind, d.Title, d.Details, d.ObjectivityScore, d.ImportanceScore, d.Status, d.SubjectType, d.SubjectID, d.CreatedAt)
 	return err
@@ -359,7 +359,7 @@ func (db *DB) GetDecision(ctx context.Context, id uuid.UUID) (*domain.Decision, 
 			   assigned_to, assigned_at, accepted_by, accepted_at,
 			   resolved_by, resolved_at, resolution, rationale,
 			   subject_type, subject_id, created_at, updated_at
-		FROM decisions WHERE id = $1
+		FROM input_requests WHERE id = $1
 	`, id).Scan(
 		&d.ID, &d.Kind, &d.Title, &d.Details, &d.ObjectivityScore, &d.ImportanceScore, &d.Status,
 		&d.AssignedTo, &d.AssignedAt, &d.AcceptedBy, &d.AcceptedAt,
@@ -379,7 +379,7 @@ func (db *DB) GetDecisionsBySubject(ctx context.Context, subjectType string, sub
 			   assigned_to, assigned_at, accepted_by, accepted_at,
 			   resolved_by, resolved_at, resolution, rationale,
 			   subject_type, subject_id, created_at, updated_at
-		FROM decisions
+		FROM input_requests
 		WHERE subject_type = $1 AND subject_id = $2
 		ORDER BY created_at DESC
 	`, subjectType, subjectID)
@@ -412,7 +412,7 @@ func (db *DB) GetDecisionsByProject(ctx context.Context, projectID uuid.UUID) ([
 			   d.assigned_to, d.assigned_at, d.accepted_by, d.accepted_at,
 			   d.resolved_by, d.resolved_at, d.resolution, d.rationale,
 			   d.subject_type, d.subject_id, d.created_at, d.updated_at
-		FROM decisions d
+		FROM input_requests d
 		WHERE
 			-- Decisions about strategies in this project
 			(d.subject_type = 'strategy' AND d.subject_id IN (
@@ -459,7 +459,7 @@ func (db *DB) GetDecisionsByProject(ctx context.Context, projectID uuid.UUID) ([
 // UpdateDecision updates a decision.
 func (db *DB) UpdateDecision(ctx context.Context, d *domain.Decision) error {
 	_, err := db.Pool.Exec(ctx, `
-		UPDATE decisions SET
+		UPDATE input_requests SET
 			title = $2, details = $3, status = $4,
 			assigned_to = $5, assigned_at = $6,
 			accepted_by = $7, accepted_at = $8,
@@ -478,18 +478,18 @@ func (db *DB) UpdateDecision(ctx context.Context, d *domain.Decision) error {
 // CreateDecisionMessage creates a new decision message.
 func (db *DB) CreateDecisionMessage(ctx context.Context, m *domain.DecisionMessage) error {
 	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO decision_messages (id, decision_id, role, content, tokens_used, created_at)
+		INSERT INTO input_request_messages (id, input_request_id, role, content, tokens_used, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
-	`, m.ID, m.DecisionID, m.Role, m.Content, m.TokensUsed, m.CreatedAt)
+	`, m.ID, m.InputRequestID, m.Role, m.Content, m.TokensUsed, m.CreatedAt)
 	return err
 }
 
 // GetDecisionMessages retrieves all messages for a decision.
 func (db *DB) GetDecisionMessages(ctx context.Context, decisionID uuid.UUID) ([]domain.DecisionMessage, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, decision_id, role, content, tokens_used, created_at
-		FROM decision_messages
-		WHERE decision_id = $1
+		SELECT id, input_request_id, role, content, tokens_used, created_at
+		FROM input_request_messages
+		WHERE input_request_id = $1
 		ORDER BY created_at ASC
 	`, decisionID)
 	if err != nil {
@@ -500,7 +500,7 @@ func (db *DB) GetDecisionMessages(ctx context.Context, decisionID uuid.UUID) ([]
 	var messages []domain.DecisionMessage
 	for rows.Next() {
 		var m domain.DecisionMessage
-		if err := rows.Scan(&m.ID, &m.DecisionID, &m.Role, &m.Content, &m.TokensUsed, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.InputRequestID, &m.Role, &m.Content, &m.TokensUsed, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		messages = append(messages, m)
@@ -939,7 +939,7 @@ func (db *DB) GetDecisionBySubjectAndKind(ctx context.Context, subjectType strin
 			   assigned_to, assigned_at, accepted_by, accepted_at,
 			   resolved_by, resolved_at, resolution, rationale,
 			   subject_type, subject_id, created_at, updated_at
-		FROM decisions
+		FROM input_requests
 		WHERE subject_type = $1 AND subject_id = $2 AND kind = $3
 		ORDER BY created_at DESC
 		LIMIT 1
@@ -969,14 +969,14 @@ func (db *DB) GetHopsNeedingSelectionDecision(ctx context.Context) ([]domain.Hop
 		WHERE h.status IN ('active', 'selecting')
 		  AND v.status = 'pending'
 		  AND NOT EXISTS (
-			SELECT 1 FROM decisions d
+			SELECT 1 FROM input_requests d
 			WHERE d.subject_type = 'hop'
 			  AND d.subject_id = h.id
 			  AND d.kind = 'variation_selection'
 			  AND d.status != 'resolved'
 		  )
 		  AND NOT EXISTS (
-			SELECT 1 FROM decisions d
+			SELECT 1 FROM input_requests d
 			WHERE d.subject_type = 'hop'
 			  AND d.subject_id = h.id
 			  AND d.kind = 'variation_review'
@@ -1149,7 +1149,7 @@ func (db *DB) GetHopsNeedingVariationProposal(ctx context.Context) ([]domain.Hop
 			SELECT 1 FROM variations v WHERE v.hop_id = h.id
 		  )
 		  AND NOT EXISTS (
-			SELECT 1 FROM decisions d
+			SELECT 1 FROM input_requests d
 			WHERE d.subject_type = 'hop'
 			  AND d.subject_id = h.id
 			  AND d.kind = 'variation_review'
@@ -1827,7 +1827,7 @@ func (db *DB) MarkVariationMigrationReverted(ctx context.Context, id uuid.UUID) 
 func (db *DB) GetDecisionCache(ctx context.Context, decisionID uuid.UUID) (json.RawMessage, error) {
 	var cache json.RawMessage
 	err := db.Pool.QueryRow(ctx, `
-		SELECT cache FROM decisions WHERE id = $1
+		SELECT cache FROM input_requests WHERE id = $1
 	`, decisionID).Scan(&cache)
 	if err != nil {
 		return nil, err
@@ -1838,7 +1838,7 @@ func (db *DB) GetDecisionCache(ctx context.Context, decisionID uuid.UUID) (json.
 // SetDecisionCache updates the cache JSON for a decision.
 func (db *DB) SetDecisionCache(ctx context.Context, decisionID uuid.UUID, cache json.RawMessage) error {
 	_, err := db.Pool.Exec(ctx, `
-		UPDATE decisions SET cache = $2, updated_at = NOW() WHERE id = $1
+		UPDATE input_requests SET cache = $2, updated_at = NOW() WHERE id = $1
 	`, decisionID, cache)
 	return err
 }
@@ -1846,7 +1846,7 @@ func (db *DB) SetDecisionCache(ctx context.Context, decisionID uuid.UUID, cache 
 // ClearDecisionCache sets the cache to NULL for a decision.
 func (db *DB) ClearDecisionCache(ctx context.Context, decisionID uuid.UUID) error {
 	_, err := db.Pool.Exec(ctx, `
-		UPDATE decisions SET cache = NULL, updated_at = NOW() WHERE id = $1
+		UPDATE input_requests SET cache = NULL, updated_at = NOW() WHERE id = $1
 	`, decisionID)
 	return err
 }
@@ -1855,7 +1855,7 @@ func (db *DB) ClearDecisionCache(ctx context.Context, decisionID uuid.UUID) erro
 // Used when evaluation criteria change for a hop.
 func (db *DB) ClearDecisionCacheBySubject(ctx context.Context, subjectType string, subjectID uuid.UUID) error {
 	_, err := db.Pool.Exec(ctx, `
-		UPDATE decisions SET cache = NULL, updated_at = NOW()
+		UPDATE input_requests SET cache = NULL, updated_at = NOW()
 		WHERE subject_type = $1 AND subject_id = $2
 	`, subjectType, subjectID)
 	return err

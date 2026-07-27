@@ -263,60 +263,85 @@ type BudgetSpendLog struct {
 	Description        *string   `json:"description,omitempty"`
 }
 
-// DecisionKind represents the type of decision.
-type DecisionKind string
+// InputRequestKind represents the type of input needed.
+type InputRequestKind string
 
 const (
-	DecisionKindPassFail           DecisionKind = "pass_fail"
-	DecisionKindChooseOne          DecisionKind = "choose_one"
-	DecisionKindChooseMany         DecisionKind = "choose_many"
-	DecisionKindRoadmapReview      DecisionKind = "roadmap_review"
-	DecisionKindVariationReview    DecisionKind = "variation_review"
-	DecisionKindVariationSelection DecisionKind = "variation_selection" // Pick winning Variation for a Hop
+	InputRequestKindPassFail           InputRequestKind = "pass_fail"
+	InputRequestKindChooseOne          InputRequestKind = "choose_one"
+	InputRequestKindChooseMany         InputRequestKind = "choose_many"
+	InputRequestKindRoadmapReview      InputRequestKind = "roadmap_review"
+	InputRequestKindVariationReview    InputRequestKind = "variation_review"
+	InputRequestKindVariationSelection InputRequestKind = "variation_selection"
+	InputRequestKindCredentialRequest  InputRequestKind = "credential_request"
+	InputRequestKindManualSetup        InputRequestKind = "manual_setup"
+	InputRequestKindConfirmation       InputRequestKind = "confirmation"
 )
 
-// DecisionStatus represents the lifecycle state of a Decision.
-type DecisionStatus string
+// InputRequestStatus represents the lifecycle state of an InputRequest.
+type InputRequestStatus string
 
 const (
-	DecisionStatusNeedsAssignment DecisionStatus = "needs_assignment"
-	DecisionStatusAssigned        DecisionStatus = "assigned"
-	DecisionStatusAccepted        DecisionStatus = "accepted"
-	DecisionStatusResolved        DecisionStatus = "resolved"
+	InputRequestStatusNeedsAssignment InputRequestStatus = "needs_assignment"
+	InputRequestStatusAssigned        InputRequestStatus = "assigned"
+	InputRequestStatusAccepted        InputRequestStatus = "accepted"
+	InputRequestStatusResolved        InputRequestStatus = "resolved"
 )
 
-// Decision is a choice point in the system.
-type Decision struct {
-	ID               uuid.UUID      `json:"id"`
-	Kind             DecisionKind   `json:"kind"`
-	Title            string         `json:"title"`
-	Details          *string        `json:"details,omitempty"`
-	ObjectivityScore float64        `json:"objectivity_score"`
-	ImportanceScore  float64        `json:"importance_score"`
-	Status           DecisionStatus `json:"status"`
-	AssignedTo       *string        `json:"assigned_to,omitempty"`
-	AssignedAt       *time.Time     `json:"assigned_at,omitempty"`
-	AcceptedBy       *string        `json:"accepted_by,omitempty"`
-	AcceptedAt       *time.Time     `json:"accepted_at,omitempty"`
-	ResolvedBy       *string        `json:"resolved_by,omitempty"`
-	ResolvedAt       *time.Time     `json:"resolved_at,omitempty"`
-	Resolution       *string        `json:"resolution,omitempty"`
-	Rationale        *string        `json:"rationale,omitempty"`
-	SubjectType      *string        `json:"subject_type,omitempty"`
-	SubjectID        *uuid.UUID     `json:"subject_id,omitempty"`
-	CreatedAt        time.Time      `json:"created_at"`
-	UpdatedAt        time.Time      `json:"updated_at"`
+// InputRequest is any input Mendel needs to proceed (decisions, credentials, confirmations, etc.).
+type InputRequest struct {
+	ID                   uuid.UUID          `json:"id"`
+	Kind                 InputRequestKind   `json:"kind"`
+	Title                string             `json:"title"`
+	Details              *string            `json:"details,omitempty"`
+	Instructions         *string            `json:"instructions,omitempty"`          // How to provide the input
+	Link                 *string            `json:"link,omitempty"`                  // URL to external service
+	RequiredCapabilities []string           `json:"required_capabilities,omitempty"` // Permissions/scopes needed
+	ObjectivityScore     float64            `json:"objectivity_score"`
+	ImportanceScore      float64            `json:"importance_score"`
+	Status               InputRequestStatus `json:"status"`
+	AssignedTo           *string            `json:"assigned_to,omitempty"`
+	AssignedAt           *time.Time         `json:"assigned_at,omitempty"`
+	AcceptedBy           *string            `json:"accepted_by,omitempty"`
+	AcceptedAt           *time.Time         `json:"accepted_at,omitempty"`
+	ResolvedBy           *string            `json:"resolved_by,omitempty"`
+	ResolvedAt           *time.Time         `json:"resolved_at,omitempty"`
+	Resolution           *string            `json:"resolution,omitempty"`
+	Rationale            *string            `json:"rationale,omitempty"`
+	SubjectType          *string            `json:"subject_type,omitempty"`
+	SubjectID            *uuid.UUID         `json:"subject_id,omitempty"`
+	CreatedAt            time.Time          `json:"created_at"`
+	UpdatedAt            time.Time          `json:"updated_at"`
 }
 
-// DecisionMessage is a message in a decision review conversation.
-type DecisionMessage struct {
-	ID         uuid.UUID  `json:"id"`
-	DecisionID uuid.UUID  `json:"decision_id"`
-	Role       string     `json:"role"` // "user", "agent", "system"
-	Content    string     `json:"content"`
-	TokensUsed *int       `json:"tokens_used,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
+// InputRequestMessage is a message in an input request conversation.
+type InputRequestMessage struct {
+	ID             uuid.UUID `json:"id"`
+	InputRequestID uuid.UUID `json:"input_request_id"`
+	Role           string    `json:"role"` // "user", "agent", "system"
+	Content        string    `json:"content"`
+	TokensUsed     *int      `json:"tokens_used,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
+
+// Aliases for backwards compatibility during migration (can be removed later)
+type DecisionKind = InputRequestKind
+type DecisionStatus = InputRequestStatus
+type Decision = InputRequest
+type DecisionMessage = InputRequestMessage
+
+const (
+	DecisionKindPassFail           = InputRequestKindPassFail
+	DecisionKindChooseOne          = InputRequestKindChooseOne
+	DecisionKindChooseMany         = InputRequestKindChooseMany
+	DecisionKindRoadmapReview      = InputRequestKindRoadmapReview
+	DecisionKindVariationReview    = InputRequestKindVariationReview
+	DecisionKindVariationSelection = InputRequestKindVariationSelection
+	DecisionStatusNeedsAssignment  = InputRequestStatusNeedsAssignment
+	DecisionStatusAssigned         = InputRequestStatusAssigned
+	DecisionStatusAccepted         = InputRequestStatusAccepted
+	DecisionStatusResolved         = InputRequestStatusResolved
+)
 
 // RepoType represents the type of repository.
 type RepoType string
