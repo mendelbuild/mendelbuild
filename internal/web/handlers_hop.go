@@ -69,8 +69,8 @@ type HopDetailView struct {
 	Variations               []VariationWithLogs
 	Objectives               []domain.Objective
 	Allocations              []domain.BudgetAllocation
-	PendingReview            *domain.Decision
-	PendingSelection         *domain.Decision
+	PendingReview            *domain.InputRequest
+	PendingSelection         *domain.InputRequest
 	HasCreatingVariations    bool
 	HasPendingVariations     bool
 	IsStuck                  bool // No pending variations and no unresolved decisions
@@ -147,17 +147,17 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check for pending decisions
-	decisions, _ := s.db.GetDecisionsBySubject(ctx, "hop", hopID)
-	var pendingReview *domain.Decision
-	var pendingSelection *domain.Decision
-	for i := range decisions {
-		d := &decisions[i]
-		if d.Status != domain.DecisionStatusResolved {
-			if d.Kind == domain.DecisionKindVariationReview {
-				pendingReview = d
-			} else if d.Kind == domain.DecisionKindVariationSelection {
-				pendingSelection = d
+	// Check for pending input requests
+	inputRequests, _ := s.db.GetInputRequestsBySubject(ctx, "hop", hopID)
+	var pendingReview *domain.InputRequest
+	var pendingSelection *domain.InputRequest
+	for i := range inputRequests {
+		ir := &inputRequests[i]
+		if ir.Status != domain.InputRequestStatusResolved {
+			if ir.Kind == domain.InputRequestKindVariationReview {
+				pendingReview = ir
+			} else if ir.Kind == domain.InputRequestKindVariationSelection {
+				pendingSelection = ir
 			}
 		}
 	}
@@ -239,16 +239,16 @@ func (s *Server) handleProposeVariations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Get the created decision to redirect to it
-	decision, err := s.db.GetDecisionBySubjectAndKind(ctx, "hop", hopID, domain.DecisionKindVariationReview)
+	// Get the created input request to redirect to it
+	inputRequest, err := s.db.GetInputRequestBySubjectAndKind(ctx, "hop", hopID, domain.InputRequestKindVariationReview)
 	if err != nil {
-		// Decision was created but we can't find it - redirect to hop page
+		// Input request was created but we can't find it - redirect to hop page
 		http.Redirect(w, r, fmt.Sprintf("/p/%s/hops/%s", projectID, hopID), http.StatusSeeOther)
 		return
 	}
 
-	// Redirect to decision page
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, decision.ID), http.StatusSeeOther)
+	// Redirect to input request page
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, inputRequest.ID), http.StatusSeeOther)
 }
 
 // VariationDetailView holds data for rendering the variation detail page.

@@ -1,6 +1,6 @@
 {{define "page-content"}}
 {{with .View}}
-<h1>{{.Decision.Title}}</h1>
+<h1>{{.InputRequest.Title}}</h1>
 <p><a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">&larr; Back to Hop: {{.Hop.Name}}</a></p>
 
 {{if .NeedsProductionCredentials}}
@@ -45,7 +45,7 @@
         </ul>
     </div>
 
-    <form id="select-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/select">
+    <form id="select-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/select">
     <div class="table-scroll-wrapper">
         <div class="table-scroll-container">
             <table class="comparison-table">
@@ -171,7 +171,7 @@
         </div>
     </div>
     </form>
-    <form id="more-variations-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/request-more-variations" style="display: none;"></form>
+    <form id="more-variations-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/request-more-variations" style="display: none;"></form>
 </div>
 {{else}}
 <div class="card">
@@ -213,7 +213,7 @@
 
     {{/* Right column: Info cards */}}
     <div style="flex: 1;">
-        {{if ne .Decision.Status "resolved"}}
+        {{if ne .InputRequest.Status "resolved"}}
         {{if not .CanSelect}}
         <div class="card">
             <h2>Status</h2>
@@ -239,7 +239,7 @@
             </div>
             {{else}}
             <div style="padding: 15px; background: #e2e3e5; border-radius: 4px; text-align: center;">
-                <strong>Decision Resolved</strong>
+                <strong>Input Request Resolved</strong>
             </div>
             {{end}}
         </div>
@@ -258,12 +258,12 @@
                 </tr>
                 <tr>
                     <th>Created</th>
-                    <td>{{.Decision.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                    <td>{{.InputRequest.CreatedAt.Format "2006-01-02 15:04"}}</td>
                 </tr>
-                {{if .Decision.ResolvedAt}}
+                {{if .InputRequest.ResolvedAt}}
                 <tr>
                     <th>Resolved</th>
-                    <td>{{.Decision.ResolvedAt.Format "2006-01-02 15:04"}}</td>
+                    <td>{{.InputRequest.ResolvedAt.Format "2006-01-02 15:04"}}</td>
                 </tr>
                 {{end}}
             </table>

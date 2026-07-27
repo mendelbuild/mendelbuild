@@ -326,24 +326,6 @@ type InputRequestMessage struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-// Aliases for backwards compatibility during migration (can be removed later)
-type DecisionKind = InputRequestKind
-type DecisionStatus = InputRequestStatus
-type Decision = InputRequest
-type DecisionMessage = InputRequestMessage
-
-const (
-	DecisionKindPassFail           = InputRequestKindPassFail
-	DecisionKindChooseOne          = InputRequestKindChooseOne
-	DecisionKindChooseMany         = InputRequestKindChooseMany
-	DecisionKindRoadmapReview      = InputRequestKindRoadmapReview
-	DecisionKindVariationReview    = InputRequestKindVariationReview
-	DecisionKindVariationSelection = InputRequestKindVariationSelection
-	DecisionStatusNeedsAssignment  = InputRequestStatusNeedsAssignment
-	DecisionStatusAssigned         = InputRequestStatusAssigned
-	DecisionStatusAccepted         = InputRequestStatusAccepted
-	DecisionStatusResolved         = InputRequestStatusResolved
-)
 
 // RepoType represents the type of repository.
 type RepoType string

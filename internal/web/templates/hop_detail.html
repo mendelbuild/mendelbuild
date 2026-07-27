@@ -150,7 +150,7 @@
                     {{else if .HasPendingVariations}}
                     <div style="padding: 15px; background: #fff3cd; border-radius: 4px;">
                         <strong>Awaiting Selection</strong><br>
-                        <span style="color: #666;">Variations are ready. A selection decision will appear shortly.</span>
+                        <span style="color: #666;">Variations are ready. A selection input request will appear shortly.</span>
                     </div>
                     {{else}}
                     {{/* This case should be caught by IsStuck above, but just in case */}}
@@ -162,7 +162,7 @@
                 {{else}}
                 <div style="padding: 15px; background: #e2e3e5; border-radius: 4px;">
                     <strong>Proposing Variations...</strong><br>
-                    <span style="color: #666;">AI is generating variation proposals. A review decision will appear in the queue.</span>
+                    <span style="color: #666;">AI is generating variation proposals. A review request will appear in the queue.</span>
                 </div>
                 {{end}}
             {{else if eq .Hop.Status "selecting"}}

@@ -89,7 +89,7 @@ func (s *Server) cleanupStaleDemos() {
 
 // startVariationWorker starts a background goroutine that polls for
 // variations in "creating" status and runs code generation for them.
-// Also handles creating selection Decisions and updating hop statuses.
+// Also handles creating selection input requests and updating hop statuses.
 func (s *Server) startVariationWorker() {
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
@@ -102,7 +102,7 @@ func (s *Server) startVariationWorker() {
 			case <-ticker.C:
 				s.processVariationProposals()
 				s.processCreatingVariations()
-				s.processSelectionDecisions()
+				s.processSelectionInputRequests()
 				s.processHopStatusUpdates()
 			}
 		}
@@ -156,22 +156,22 @@ func (s *Server) processCreatingVariations() {
 	}
 }
 
-// processSelectionDecisions creates variation_selection Decisions for hops
-// that have at least one pending variation but no selection Decision yet.
-func (s *Server) processSelectionDecisions() {
+// processSelectionInputRequests creates variation_selection input requests for hops
+// that have at least one pending variation but no selection input request yet.
+func (s *Server) processSelectionInputRequests() {
 	ctx := context.Background()
 
-	hops, err := s.db.GetHopsNeedingSelectionDecision(ctx)
+	hops, err := s.db.GetHopsNeedingSelectionInputRequest(ctx)
 	if err != nil {
-		fmt.Printf("[worker] Error finding hops needing selection decision: %v\n", err)
+		fmt.Printf("[worker] Error finding hops needing selection input request: %v\n", err)
 		return
 	}
 
 	for _, hop := range hops {
-		if err := s.createSelectionDecision(ctx, &hop); err != nil {
-			fmt.Printf("[worker] Error creating selection decision for hop %s: %v\n", hop.ID, err)
+		if err := s.createSelectionInputRequest(ctx, &hop); err != nil {
+			fmt.Printf("[worker] Error creating selection input request for hop %s: %v\n", hop.ID, err)
 		} else {
-			fmt.Printf("[worker] Created variation_selection decision for hop '%s'\n", hop.Name)
+			fmt.Printf("[worker] Created variation_selection input request for hop '%s'\n", hop.Name)
 		}
 	}
 }
@@ -196,7 +196,7 @@ func (s *Server) processHopStatusUpdates() {
 }
 
 // processVariationProposals automatically proposes variations for active hops
-// that don't have any variations or variation_review Decisions yet.
+// that don't have any variations or variation_review input requests yet.
 func (s *Server) processVariationProposals() {
 	ctx := context.Background()
 
@@ -211,12 +211,12 @@ func (s *Server) processVariationProposals() {
 		if err := s.proposeVariationsForHop(ctx, &hop); err != nil {
 			fmt.Printf("[worker] Error proposing variations for hop '%s': %v\n", hop.Name, err)
 		} else {
-			fmt.Printf("[worker] Created variation_review decision for hop '%s'\n", hop.Name)
+			fmt.Printf("[worker] Created variation_review input request for hop '%s'\n", hop.Name)
 		}
 	}
 }
 
-// proposeVariationsForHop runs the variation proposer agent and creates a variation_review Decision.
+// proposeVariationsForHop runs the variation proposer agent and creates a variation_review input request.
 func (s *Server) proposeVariationsForHop(ctx context.Context, hop *domain.Hop) error {
 	strategy, err := s.db.GetStrategy(ctx, hop.StrategyID)
 	if err != nil {
@@ -325,7 +325,7 @@ func (s *Server) proposeVariationsForHop(ctx context.Context, hop *domain.Hop) e
 					fmt.Printf("[worker] Warning: failed to save evaluation criteria: %v\n", err)
 				} else {
 					// Invalidate cached evaluation scores since criteria changed
-					s.db.ClearDecisionCacheBySubject(ctx, "hop", hop.ID)
+					s.db.ClearInputRequestCacheBySubject(ctx, "hop", hop.ID)
 				}
 			}
 		}
@@ -344,50 +344,50 @@ func (s *Server) proposeVariationsForHop(ctx context.Context, hop *domain.Hop) e
 		})
 	}
 
-	// Create decision
+	// Create input request
 	now := time.Now()
 	proposalJSON, _ := json.MarshalIndent(proposalData, "", "  ")
 	proposalStr := string(proposalJSON)
 
-	decision := &domain.Decision{
+	inputRequest := &domain.InputRequest{
 		ID:               uuid.New(),
 		ProjectID:        strategy.ProjectID,
-		Kind:             domain.DecisionKindVariationReview,
+		Kind:             domain.InputRequestKindVariationReview,
 		Title:            fmt.Sprintf("Variation Review: %s", hop.Name),
 		Details:          &proposalStr,
 		ObjectivityScore: 0.4,
 		ImportanceScore:  0.7,
-		Status:           domain.DecisionStatusNeedsAssignment,
+		Status:           domain.InputRequestStatusNeedsAssignment,
 		SubjectType:      strPtr("hop"),
 		SubjectID:        &hop.ID,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
 
-	if err := s.db.CreateDecision(ctx, decision); err != nil {
-		return fmt.Errorf("create decision: %w", err)
+	if err := s.db.CreateInputRequest(ctx, inputRequest); err != nil {
+		return fmt.Errorf("create input request: %w", err)
 	}
 
 	// Create agent message
 	tokensUsed := tokens
-	agentMsg := &domain.DecisionMessage{
-		ID:         uuid.New(),
-		InputRequestID: decision.ID,
-		Role:       "agent",
-		Content:    fmt.Sprintf("Generated %d variation proposals.\n\nRationale: %s", len(proposal.Variations), proposal.Rationale),
-		TokensUsed: &tokensUsed,
-		CreatedAt:  now,
+	agentMsg := &domain.InputRequestMessage{
+		ID:             uuid.New(),
+		InputRequestID: inputRequest.ID,
+		Role:           "agent",
+		Content:        fmt.Sprintf("Generated %d variation proposals.\n\nRationale: %s", len(proposal.Variations), proposal.Rationale),
+		TokensUsed:     &tokensUsed,
+		CreatedAt:      now,
 	}
-	s.db.CreateDecisionMessage(ctx, agentMsg)
+	s.db.CreateInputRequestMessage(ctx, agentMsg)
 
 	return nil
 }
 
-// createSelectionDecision creates a variation_selection Decision for a hop.
-// Before creating the selection decision, it runs a conflict audit on all
+// createSelectionInputRequest creates a variation_selection input request for a hop.
+// Before creating the selection input request, it runs a conflict audit on all
 // variation migrations. If conflicts are detected, it creates a variation_review
-// decision instead to let the user address the conflicts.
-func (s *Server) createSelectionDecision(ctx context.Context, hop *domain.Hop) error {
+// input request instead to let the user address the conflicts.
+func (s *Server) createSelectionInputRequest(ctx context.Context, hop *domain.Hop) error {
 	// Get all variations for this hop
 	variations, err := s.db.GetVariationsByHop(ctx, hop.ID)
 	if err != nil {
@@ -414,18 +414,18 @@ func (s *Server) createSelectionDecision(ctx context.Context, hop *domain.Hop) e
 			// Log error but don't block - we can proceed without the audit
 			fmt.Printf("[worker] Warning: conflict audit failed for hop %s: %v\n", hop.Name, err)
 		} else if auditResult.HasConflicts {
-			// Conflicts detected - create a variation_review decision instead
-			return s.createConflictReviewDecision(ctx, hop, variations, auditResult)
+			// Conflicts detected - create a variation_review input request instead
+			return s.createConflictReviewInputRequest(ctx, hop, variations, auditResult)
 		}
 	}
 
-	// No conflicts - create the selection decision
-	return s.createSelectionDecisionInternal(ctx, hop, variations)
+	// No conflicts - create the selection input request
+	return s.createSelectionInputRequestInternal(ctx, hop, variations)
 }
 
-// createConflictReviewDecision creates a variation_review decision when
+// createConflictReviewInputRequest creates a variation_review input request when
 // migration conflicts are detected between variations.
-func (s *Server) createConflictReviewDecision(ctx context.Context, hop *domain.Hop, variations []domain.Variation, auditResult *agent.ConflictAuditResponse) error {
+func (s *Server) createConflictReviewInputRequest(ctx context.Context, hop *domain.Hop, variations []domain.Variation, auditResult *agent.ConflictAuditResponse) error {
 	// Get strategy for project ID
 	strategy, err := s.db.GetStrategy(ctx, hop.StrategyID)
 	if err != nil {
@@ -465,15 +465,15 @@ func (s *Server) createConflictReviewDecision(ctx context.Context, hop *domain.H
 	detailsJSON, _ := json.MarshalIndent(details, "", "  ")
 	detailsStr := string(detailsJSON)
 
-	decision := &domain.Decision{
+	inputRequest := &domain.InputRequest{
 		ID:               uuid.New(),
 		ProjectID:        strategy.ProjectID,
-		Kind:             domain.DecisionKindVariationReview,
+		Kind:             domain.InputRequestKindVariationReview,
 		Title:            fmt.Sprintf("Migration Conflicts: %s", hop.Name),
 		Details:          &detailsStr,
 		ObjectivityScore: 0.3, // Requires human judgment to resolve conflicts
 		ImportanceScore:  0.9, // Very important - blocking selection
-		Status:           domain.DecisionStatusNeedsAssignment,
+		Status:           domain.InputRequestStatusNeedsAssignment,
 		SubjectType:      strPtr("hop"),
 		SubjectID:        &hop.ID,
 		CreatedAt:        time.Now(),
@@ -482,11 +482,11 @@ func (s *Server) createConflictReviewDecision(ctx context.Context, hop *domain.H
 
 	fmt.Printf("[worker] Migration conflicts detected for hop '%s': %s\n", hop.Name, auditResult.Summary)
 
-	return s.db.CreateDecision(ctx, decision)
+	return s.db.CreateInputRequest(ctx, inputRequest)
 }
 
-// createSelectionDecisionInternal creates the actual selection decision.
-func (s *Server) createSelectionDecisionInternal(ctx context.Context, hop *domain.Hop, variations []domain.Variation) error {
+// createSelectionInputRequestInternal creates the actual selection input request.
+func (s *Server) createSelectionInputRequestInternal(ctx context.Context, hop *domain.Hop, variations []domain.Variation) error {
 	// Get strategy for project ID
 	strategy, err := s.db.GetStrategy(ctx, hop.StrategyID)
 	if err != nil {
@@ -536,22 +536,22 @@ func (s *Server) createSelectionDecisionInternal(ctx context.Context, hop *domai
 	detailsJSON, _ := json.MarshalIndent(details, "", "  ")
 	detailsStr := string(detailsJSON)
 
-	decision := &domain.Decision{
+	inputRequest := &domain.InputRequest{
 		ID:               uuid.New(),
 		ProjectID:        strategy.ProjectID,
-		Kind:             domain.DecisionKindVariationSelection,
+		Kind:             domain.InputRequestKindVariationSelection,
 		Title:            fmt.Sprintf("Select Variation: %s", hop.Name),
 		Details:          &detailsStr,
 		ObjectivityScore: 0.4, // Partially objective (some criteria are measurable)
 		ImportanceScore:  0.7, // Important - affects what gets merged
-		Status:           domain.DecisionStatusNeedsAssignment,
+		Status:           domain.InputRequestStatusNeedsAssignment,
 		SubjectType:      strPtr("hop"),
 		SubjectID:        &hop.ID,
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
 	}
 
-	return s.db.CreateDecision(ctx, decision)
+	return s.db.CreateInputRequest(ctx, inputRequest)
 }
 
 func (s *Server) setupRoutes() {
@@ -604,19 +604,19 @@ func (s *Server) setupRoutes() {
 		r.Post("/variations/{variationID}/restart-demo", s.handleRestartDemo)
 		r.Post("/variations/{variationID}/prune", s.handlePruneVariation)
 
-		// Decision routes
-		r.Get("/inputs", s.handleDecisions)
-		r.Get("/inputs/{decisionID}", s.handleDecisionDetail)
-		r.Post("/inputs/{decisionID}/message", s.handleSendMessage)
-		r.Post("/inputs/{decisionID}/regenerate", s.handleRegenerate)
-		r.Post("/inputs/{decisionID}/roadmap", s.handleUpdateRoadmap)
-		r.Post("/inputs/{decisionID}/approve", s.handleApprove)
-		r.Post("/inputs/{decisionID}/reject", s.handleReject)
-		r.Post("/inputs/{decisionID}/select", s.handleSelectWinner)
-		r.Post("/inputs/{decisionID}/reject-all", s.handleRejectAllVariations)
-		r.Post("/inputs/{decisionID}/request-more-variations", s.handleRequestMoreVariations)
-		r.Post("/inputs/{decisionID}/resolve-conflicts", s.handleResolveConflicts)
-		r.Post("/inputs/{decisionID}/provide-credential", s.handleProvideCredential)
+		// Input request routes
+		r.Get("/inputs", s.handleInputRequests)
+		r.Get("/inputs/{inputRequestID}", s.handleInputRequestDetail)
+		r.Post("/inputs/{inputRequestID}/message", s.handleSendMessage)
+		r.Post("/inputs/{inputRequestID}/regenerate", s.handleRegenerate)
+		r.Post("/inputs/{inputRequestID}/roadmap", s.handleUpdateRoadmap)
+		r.Post("/inputs/{inputRequestID}/approve", s.handleApprove)
+		r.Post("/inputs/{inputRequestID}/reject", s.handleReject)
+		r.Post("/inputs/{inputRequestID}/select", s.handleSelectWinner)
+		r.Post("/inputs/{inputRequestID}/reject-all", s.handleRejectAllVariations)
+		r.Post("/inputs/{inputRequestID}/request-more-variations", s.handleRequestMoreVariations)
+		r.Post("/inputs/{inputRequestID}/resolve-conflicts", s.handleResolveConflicts)
+		r.Post("/inputs/{inputRequestID}/provide-credential", s.handleProvideCredential)
 		r.Post("/roadmap/propose", s.handleProposeRoadmap)
 	})
 

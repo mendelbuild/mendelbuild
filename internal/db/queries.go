@@ -342,8 +342,8 @@ func (db *DB) GetStrategy(ctx context.Context, id uuid.UUID) (*domain.Strategy, 
 	return &s, nil
 }
 
-// CreateDecision creates a new decision/input request.
-func (db *DB) CreateDecision(ctx context.Context, d *domain.Decision) error {
+// CreateInputRequest creates a new decision/input request.
+func (db *DB) CreateInputRequest(ctx context.Context, d *domain.InputRequest) error {
 	_, err := db.Pool.Exec(ctx, `
 		INSERT INTO input_requests (id, project_id, kind, title, details, instructions, link, required_capabilities,
 		                            objectivity_score, importance_score, status, subject_type, subject_id, created_at, updated_at)
@@ -353,9 +353,9 @@ func (db *DB) CreateDecision(ctx context.Context, d *domain.Decision) error {
 	return err
 }
 
-// GetDecision retrieves a decision/input request by ID.
-func (db *DB) GetDecision(ctx context.Context, id uuid.UUID) (*domain.Decision, error) {
-	var d domain.Decision
+// GetInputRequest retrieves a decision/input request by ID.
+func (db *DB) GetInputRequest(ctx context.Context, id uuid.UUID) (*domain.InputRequest, error) {
+	var d domain.InputRequest
 	err := db.Pool.QueryRow(ctx, `
 		SELECT id, project_id, kind, title, details, instructions, link, required_capabilities,
 		       objectivity_score, importance_score, status,
@@ -376,8 +376,8 @@ func (db *DB) GetDecision(ctx context.Context, id uuid.UUID) (*domain.Decision, 
 	return &d, nil
 }
 
-// GetDecisionsBySubject retrieves all decisions for a subject.
-func (db *DB) GetDecisionsBySubject(ctx context.Context, subjectType string, subjectID uuid.UUID) ([]domain.Decision, error) {
+// GetInputRequestsBySubject retrieves all decisions for a subject.
+func (db *DB) GetInputRequestsBySubject(ctx context.Context, subjectType string, subjectID uuid.UUID) ([]domain.InputRequest, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT id, project_id, kind, title, details, objectivity_score, importance_score, status,
 			   assigned_to, assigned_at, accepted_by, accepted_at,
@@ -392,9 +392,9 @@ func (db *DB) GetDecisionsBySubject(ctx context.Context, subjectType string, sub
 	}
 	defer rows.Close()
 
-	var decisions []domain.Decision
+	var decisions []domain.InputRequest
 	for rows.Next() {
-		var d domain.Decision
+		var d domain.InputRequest
 		if err := rows.Scan(
 			&d.ID, &d.ProjectID, &d.Kind, &d.Title, &d.Details, &d.ObjectivityScore, &d.ImportanceScore, &d.Status,
 			&d.AssignedTo, &d.AssignedAt, &d.AcceptedBy, &d.AcceptedAt,
@@ -408,8 +408,8 @@ func (db *DB) GetDecisionsBySubject(ctx context.Context, subjectType string, sub
 	return decisions, nil
 }
 
-// GetDecisionsByProject retrieves all decisions related to a project.
-func (db *DB) GetDecisionsByProject(ctx context.Context, projectID uuid.UUID) ([]domain.Decision, error) {
+// GetInputRequestsByProject retrieves all decisions related to a project.
+func (db *DB) GetInputRequestsByProject(ctx context.Context, projectID uuid.UUID) ([]domain.InputRequest, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT id, project_id, kind, title, details, objectivity_score, importance_score, status,
 			   assigned_to, assigned_at, accepted_by, accepted_at,
@@ -424,9 +424,9 @@ func (db *DB) GetDecisionsByProject(ctx context.Context, projectID uuid.UUID) ([
 	}
 	defer rows.Close()
 
-	var decisions []domain.Decision
+	var decisions []domain.InputRequest
 	for rows.Next() {
-		var d domain.Decision
+		var d domain.InputRequest
 		if err := rows.Scan(
 			&d.ID, &d.ProjectID, &d.Kind, &d.Title, &d.Details, &d.ObjectivityScore, &d.ImportanceScore, &d.Status,
 			&d.AssignedTo, &d.AssignedAt, &d.AcceptedBy, &d.AcceptedAt,
@@ -440,8 +440,8 @@ func (db *DB) GetDecisionsByProject(ctx context.Context, projectID uuid.UUID) ([
 	return decisions, nil
 }
 
-// CountOpenDecisionsByProject counts unresolved input requests for a project.
-func (db *DB) CountOpenDecisionsByProject(ctx context.Context, projectID uuid.UUID) (int, error) {
+// CountOpenInputRequestsByProject counts unresolved input requests for a project.
+func (db *DB) CountOpenInputRequestsByProject(ctx context.Context, projectID uuid.UUID) (int, error) {
 	var count int
 	err := db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM input_requests
@@ -450,8 +450,8 @@ func (db *DB) CountOpenDecisionsByProject(ctx context.Context, projectID uuid.UU
 	return count, err
 }
 
-// UpdateDecision updates a decision.
-func (db *DB) UpdateDecision(ctx context.Context, d *domain.Decision) error {
+// UpdateInputRequest updates a decision.
+func (db *DB) UpdateInputRequest(ctx context.Context, d *domain.InputRequest) error {
 	_, err := db.Pool.Exec(ctx, `
 		UPDATE input_requests SET
 			title = $2, details = $3, status = $4,
@@ -469,8 +469,8 @@ func (db *DB) UpdateDecision(ctx context.Context, d *domain.Decision) error {
 	return err
 }
 
-// CreateDecisionMessage creates a new decision message.
-func (db *DB) CreateDecisionMessage(ctx context.Context, m *domain.DecisionMessage) error {
+// CreateInputRequestMessage creates a new decision message.
+func (db *DB) CreateInputRequestMessage(ctx context.Context, m *domain.InputRequestMessage) error {
 	_, err := db.Pool.Exec(ctx, `
 		INSERT INTO input_request_messages (id, input_request_id, role, content, tokens_used, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
@@ -478,22 +478,22 @@ func (db *DB) CreateDecisionMessage(ctx context.Context, m *domain.DecisionMessa
 	return err
 }
 
-// GetDecisionMessages retrieves all messages for a decision.
-func (db *DB) GetDecisionMessages(ctx context.Context, decisionID uuid.UUID) ([]domain.DecisionMessage, error) {
+// GetInputRequestMessages retrieves all messages for a decision.
+func (db *DB) GetInputRequestMessages(ctx context.Context, inputRequestID uuid.UUID) ([]domain.InputRequestMessage, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT id, input_request_id, role, content, tokens_used, created_at
 		FROM input_request_messages
 		WHERE input_request_id = $1
 		ORDER BY created_at ASC
-	`, decisionID)
+	`, inputRequestID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var messages []domain.DecisionMessage
+	var messages []domain.InputRequestMessage
 	for rows.Next() {
-		var m domain.DecisionMessage
+		var m domain.InputRequestMessage
 		if err := rows.Scan(&m.ID, &m.InputRequestID, &m.Role, &m.Content, &m.TokensUsed, &m.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -925,9 +925,9 @@ func (db *DB) GetVariationLogsByType(ctx context.Context, variationID uuid.UUID,
 	return logs, nil
 }
 
-// GetDecisionBySubjectAndKind retrieves a decision by subject and kind.
-func (db *DB) GetDecisionBySubjectAndKind(ctx context.Context, subjectType string, subjectID uuid.UUID, kind domain.DecisionKind) (*domain.Decision, error) {
-	var d domain.Decision
+// GetInputRequestBySubjectAndKind retrieves a decision by subject and kind.
+func (db *DB) GetInputRequestBySubjectAndKind(ctx context.Context, subjectType string, subjectID uuid.UUID, kind domain.InputRequestKind) (*domain.InputRequest, error) {
+	var d domain.InputRequest
 	err := db.Pool.QueryRow(ctx, `
 		SELECT id, kind, title, details, objectivity_score, importance_score, status,
 			   assigned_to, assigned_at, accepted_by, accepted_at,
@@ -949,12 +949,12 @@ func (db *DB) GetDecisionBySubjectAndKind(ctx context.Context, subjectType strin
 	return &d, nil
 }
 
-// GetHopsNeedingSelectionDecision returns hops with at least one pending variation
-// but no unresolved variation_selection Decision. Includes both 'active' and 'selecting'
-// hops to handle cases where status was updated but Decision wasn't created.
-// Also excludes hops that have an unresolved variation_review Decision (user is still
+// GetHopsNeedingSelectionInputRequest returns hops with at least one pending variation
+// but no unresolved variation_selection input request. Includes both 'active' and 'selecting'
+// hops to handle cases where status was updated but input request wasn't created.
+// Also excludes hops that have an unresolved variation_review input request (user is still
 // proposing/reviewing additional variations).
-func (db *DB) GetHopsNeedingSelectionDecision(ctx context.Context) ([]domain.Hop, error) {
+func (db *DB) GetHopsNeedingSelectionInputRequest(ctx context.Context) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT DISTINCT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria,
 		       h.requires_demo, h.requires_production, h.status, h.created_at, h.updated_at
@@ -1133,7 +1133,7 @@ func (db *DB) GetCompletedTransitiveDependencies(ctx context.Context, hopID uuid
 }
 
 // GetHopsNeedingVariationProposal returns active hops that have no variations
-// and no existing variation_review Decision (pending or resolved).
+// and no existing variation_review input request (pending or resolved).
 func (db *DB) GetHopsNeedingVariationProposal(ctx context.Context) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria, h.status, h.created_at, h.updated_at
@@ -1817,37 +1817,37 @@ func (db *DB) MarkVariationMigrationReverted(ctx context.Context, id uuid.UUID) 
 	return nil
 }
 
-// GetDecisionCache retrieves the cache JSON for a decision.
-func (db *DB) GetDecisionCache(ctx context.Context, decisionID uuid.UUID) (json.RawMessage, error) {
+// GetInputRequestCache retrieves the cache JSON for a decision.
+func (db *DB) GetInputRequestCache(ctx context.Context, inputRequestID uuid.UUID) (json.RawMessage, error) {
 	var cache json.RawMessage
 	err := db.Pool.QueryRow(ctx, `
 		SELECT cache FROM input_requests WHERE id = $1
-	`, decisionID).Scan(&cache)
+	`, inputRequestID).Scan(&cache)
 	if err != nil {
 		return nil, err
 	}
 	return cache, nil
 }
 
-// SetDecisionCache updates the cache JSON for a decision.
-func (db *DB) SetDecisionCache(ctx context.Context, decisionID uuid.UUID, cache json.RawMessage) error {
+// SetInputRequestCache updates the cache JSON for a decision.
+func (db *DB) SetInputRequestCache(ctx context.Context, inputRequestID uuid.UUID, cache json.RawMessage) error {
 	_, err := db.Pool.Exec(ctx, `
 		UPDATE input_requests SET cache = $2, updated_at = NOW() WHERE id = $1
-	`, decisionID, cache)
+	`, inputRequestID, cache)
 	return err
 }
 
-// ClearDecisionCache sets the cache to NULL for a decision.
-func (db *DB) ClearDecisionCache(ctx context.Context, decisionID uuid.UUID) error {
+// ClearInputRequestCache sets the cache to NULL for a decision.
+func (db *DB) ClearInputRequestCache(ctx context.Context, inputRequestID uuid.UUID) error {
 	_, err := db.Pool.Exec(ctx, `
 		UPDATE input_requests SET cache = NULL, updated_at = NOW() WHERE id = $1
-	`, decisionID)
+	`, inputRequestID)
 	return err
 }
 
-// ClearDecisionCacheBySubject clears cache for all decisions related to a subject.
+// ClearInputRequestCacheBySubject clears cache for all decisions related to a subject.
 // Used when evaluation criteria change for a hop.
-func (db *DB) ClearDecisionCacheBySubject(ctx context.Context, subjectType string, subjectID uuid.UUID) error {
+func (db *DB) ClearInputRequestCacheBySubject(ctx context.Context, subjectType string, subjectID uuid.UUID) error {
 	_, err := db.Pool.Exec(ctx, `
 		UPDATE input_requests SET cache = NULL, updated_at = NOW()
 		WHERE subject_type = $1 AND subject_id = $2

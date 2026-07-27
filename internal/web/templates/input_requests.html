@@ -5,16 +5,16 @@
     <div class="tabs">
         <a href="?tab=open" class="tab {{if eq .ActiveTab "open"}}active{{end}}">
             Open
-            {{if .OpenDecisions}}<span class="tab-count">{{len .OpenDecisions}}</span>{{end}}
+            {{if .OpenInputRequests}}<span class="tab-count">{{len .OpenInputRequests}}</span>{{end}}
         </a>
         <a href="?tab=resolved" class="tab {{if eq .ActiveTab "resolved"}}active{{end}}">
             Resolved
-            {{if .ResolvedDecisions}}<span class="tab-count">{{len .ResolvedDecisions}}</span>{{end}}
+            {{if .ResolvedInputRequests}}<span class="tab-count">{{len .ResolvedInputRequests}}</span>{{end}}
         </a>
     </div>
 
     {{if eq .ActiveTab "open"}}
-        {{if .OpenDecisions}}
+        {{if .OpenInputRequests}}
         <table>
             <thead>
                 <tr>
@@ -27,7 +27,7 @@
                 </tr>
             </thead>
             <tbody>
-                {{range .OpenDecisions}}
+                {{range .OpenInputRequests}}
                 <tr>
                     <td>{{.Title}}</td>
                     <td>{{.Kind}}</td>
@@ -43,7 +43,7 @@
         <p class="empty">No input needed. All caught up!</p>
         {{end}}
     {{else}}
-        {{if .ResolvedDecisions}}
+        {{if .ResolvedInputRequests}}
         <table>
             <thead>
                 <tr>
@@ -56,7 +56,7 @@
                 </tr>
             </thead>
             <tbody>
-                {{range .ResolvedDecisions}}
+                {{range .ResolvedInputRequests}}
                 <tr>
                     <td>{{.Title}}</td>
                     <td>{{.Kind}}</td>

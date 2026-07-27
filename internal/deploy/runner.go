@@ -399,7 +399,7 @@ func (r *Runner) CreateCredentialRequestAndBlockVariation(ctx context.Context, v
 			UpdatedAt:            now,
 		}
 
-		if err := r.db.CreateDecision(ctx, inputRequest); err != nil {
+		if err := r.db.CreateInputRequest(ctx, inputRequest); err != nil {
 			return fmt.Errorf("create input request for %s: %w", credName, err)
 		}
 
@@ -411,7 +411,7 @@ func (r *Runner) CreateCredentialRequestAndBlockVariation(ctx context.Context, v
 			Content:        fmt.Sprintf("Deployment for hop '%s' variation '%s' requires credential '%s'.", hop.Name, variation.Name, credName),
 			CreatedAt:      now,
 		}
-		r.db.CreateDecisionMessage(ctx, msg)
+		r.db.CreateInputRequestMessage(ctx, msg)
 	}
 
 	// Block the variation

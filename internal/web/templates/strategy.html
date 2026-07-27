@@ -117,12 +117,12 @@
         <div class="card" id="manage-roadmap">
             <h2>Manage Roadmap</h2>
 
-            {{if $.PendingDecision}}
+            {{if $.PendingInputRequest}}
             <div style="padding: 15px; background: #cce5ff; border-radius: 4px; margin-bottom: 15px;">
                 <strong>Pending Review</strong><br>
-                <a href="/p/{{$.ProjectID}}/inputs/{{$.PendingDecision.ID}}">{{$.PendingDecision.Title}}</a>
+                <a href="/p/{{$.ProjectID}}/inputs/{{$.PendingInputRequest.ID}}">{{$.PendingInputRequest.Title}}</a>
                 <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
-                    Created {{$.PendingDecision.CreatedAt.Format "Jan 2, 2006"}}
+                    Created {{$.PendingInputRequest.CreatedAt.Format "Jan 2, 2006"}}
                 </div>
             </div>
             {{end}}
@@ -148,10 +148,10 @@
             {{end}}
         </div>
 
-        {{if $.PendingDecisions}}
+        {{if $.PendingInputRequests}}
         <div class="card">
             <h2>Input Needed</h2>
-            {{range $.PendingDecisions}}
+            {{range $.PendingInputRequests}}
             <div style="padding: 8px 0; border-bottom: 1px solid #eee;">
                 <a href="/p/{{$.ProjectID}}/inputs/{{.ID}}">{{.Title}}</a>
                 <div style="font-size: 0.8em;">

@@ -1,24 +1,24 @@
 {{define "page-content"}}
 {{with .View}}
-<h1>{{.Decision.Title}}</h1>
+<h1>{{.InputRequest.Title}}</h1>
 
 <div style="display: flex; gap: 20px; align-items: flex-start;">
     {{/* Left column: Roadmap editor */}}
     <div style="flex: 1;">
         <div class="card">
             <h2>Proposed Roadmap</h2>
-            <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/roadmap">
-                <textarea name="roadmap" style="width: 100%; height: 400px; font-family: monospace; font-size: 12px; padding: 10px; border: 1px solid #ccc; border-radius: 4px;">{{if .Decision.Details}}{{.Decision.Details}}{{end}}</textarea>
+            <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/roadmap">
+                <textarea name="roadmap" style="width: 100%; height: 400px; font-family: monospace; font-size: 12px; padding: 10px; border: 1px solid #ccc; border-radius: 4px;">{{if .InputRequest.Details}}{{.InputRequest.Details}}{{end}}</textarea>
                 <div style="margin-top: 10px; display: flex; gap: 10px;">
                     <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Save Changes</button>
-                    {{if ne .Decision.Status "resolved"}}
+                    {{if ne .InputRequest.Status "resolved"}}
                     <button type="button" onclick="document.getElementById('approve-form').submit()" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Approve &amp; Create Hops</button>
                     <button type="button" onclick="document.getElementById('reject-form').submit()" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Reject</button>
                     {{end}}
                 </div>
             </form>
-            <form id="approve-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/approve" style="display: none;"></form>
-            <form id="reject-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/reject" style="display: none;"></form>
+            <form id="approve-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/approve" style="display: none;"></form>
+            <form id="reject-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/reject" style="display: none;"></form>
         </div>
 
     </div>
@@ -45,15 +45,15 @@
                 {{end}}
             </div>
 
-            {{if ne .Decision.Status "resolved"}}
-            <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/message">
+            {{if ne .InputRequest.Status "resolved"}}
+            <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/message">
                 <textarea name="feedback" placeholder="Enter your feedback for the agent..." style="width: 100%; height: 80px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical;"></textarea>
                 <div style="margin-top: 10px; display: flex; gap: 10px;">
                     <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Send Feedback</button>
                     <button type="button" onclick="document.getElementById('regenerate-form').submit()" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Regenerate</button>
                 </div>
             </form>
-            <form id="regenerate-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.Decision.ID}}/regenerate" style="display: none;"></form>
+            <form id="regenerate-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/regenerate" style="display: none;"></form>
             {{else}}
             {{if eq .Resolution "approved"}}
             <div style="padding: 15px; background: #d4edda; border-radius: 4px; text-align: center;">
@@ -67,18 +67,18 @@
             </div>
             {{else}}
             <div style="padding: 15px; background: #e2e3e5; border-radius: 4px; text-align: center;">
-                <strong>This decision has been resolved.</strong>
+                <strong>This input request has been resolved.</strong>
             </div>
             {{end}}
             {{end}}
         </div>
 
         <div class="card">
-            <h2>Decision Info</h2>
+            <h2>Input Request Info</h2>
             <table>
                 <tr>
                     <th>Status</th>
-                    <td><span class="status status-{{.Decision.Status}}">{{.Decision.Status}}</span></td>
+                    <td><span class="status status-{{.InputRequest.Status}}">{{.InputRequest.Status}}</span></td>
                 </tr>
                 {{if .Strategy}}
                 <tr>
@@ -88,12 +88,12 @@
                 {{end}}
                 <tr>
                     <th>Created</th>
-                    <td>{{.Decision.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                    <td>{{.InputRequest.CreatedAt.Format "2006-01-02 15:04"}}</td>
                 </tr>
-                {{if .Decision.ResolvedAt}}
+                {{if .InputRequest.ResolvedAt}}
                 <tr>
                     <th>Resolved</th>
-                    <td>{{.Decision.ResolvedAt.Format "2006-01-02 15:04"}}</td>
+                    <td>{{.InputRequest.ResolvedAt.Format "2006-01-02 15:04"}}</td>
                 </tr>
                 {{end}}
             </table>
