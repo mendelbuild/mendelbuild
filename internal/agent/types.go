@@ -123,6 +123,15 @@ type HopContext struct {
 	Objectives []string `json:"objectives" desc:"Objective descriptions this hop advances"`
 }
 
+// CompletedDependencyHop represents a completed dependency hop and its selected variation.
+// All fields are pulled directly from the database - no LLM regeneration.
+type CompletedDependencyHop struct {
+	HopName           string `json:"hop_name" desc:"Name of the completed dependency hop"`
+	HopCommentary     string `json:"hop_commentary" desc:"What this hop achieved"`
+	VariationName     string `json:"variation_name" desc:"Name of the selected/merged variation"`
+	VariationApproach string `json:"variation_approach" desc:"The implementation approach that was selected and is now in the codebase"`
+}
+
 // VariationProposerInput is the input to the variation proposer.
 type VariationProposerInput struct {
 	Hop             HopContext `json:"hop" desc:"The hop to propose variations for"`
@@ -130,6 +139,7 @@ type VariationProposerInput struct {
 	RepositorySummary string   `json:"repository_summary,omitempty" desc:"Optional summary of the repository structure and tech stack"`
 	AvailableBudget int        `json:"available_budget" desc:"Available Claude tokens for this hop"`
 	NumVariations   int        `json:"num_variations" desc:"Number of variations to propose (typically 2-4)"`
+	CompletedDependencies []CompletedDependencyHop `json:"completed_dependencies,omitempty" desc:"Completed dependency hops with their selected variations. These decisions are already implemented in the codebase and MUST be respected."`
 }
 
 // VariationProposerResponse is the structured output from the variation proposer.

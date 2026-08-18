@@ -63,17 +63,18 @@ type VariationWithLogs struct {
 
 // HopDetailView holds data for rendering the hop detail page.
 type HopDetailView struct {
-	Hop                   *domain.Hop
-	Strategy              *domain.Strategy
-	Project               *domain.Project
-	Variations            []VariationWithLogs
-	Objectives            []domain.Objective
-	Allocations           []domain.BudgetAllocation
-	PendingReview         *domain.Decision
-	PendingSelection      *domain.Decision
-	HasCreatingVariations bool
-	HasPendingVariations  bool
-	IsStuck               bool // No pending variations and no unresolved decisions
+	Hop                      *domain.Hop
+	Strategy                 *domain.Strategy
+	Project                  *domain.Project
+	Variations               []VariationWithLogs
+	Objectives               []domain.Objective
+	Allocations              []domain.BudgetAllocation
+	PendingReview            *domain.InputRequest
+	PendingSelection         *domain.InputRequest
+	HasCreatingVariations    bool
+	HasPendingVariations     bool
+	IsStuck                  bool // No pending variations and no unresolved decisions
+	NeedsProductionCredentials bool // requires_production but no credentials configured
 }
 
 func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
@@ -146,17 +147,17 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check for pending decisions
-	decisions, _ := s.db.GetDecisionsBySubject(ctx, "hop", hopID)
-	var pendingReview *domain.Decision
-	var pendingSelection *domain.Decision
-	for i := range decisions {
-		d := &decisions[i]
-		if d.Status != domain.DecisionStatusResolved {
-			if d.Kind == domain.DecisionKindVariationReview {
-				pendingReview = d
-			} else if d.Kind == domain.DecisionKindVariationSelection {
-				pendingSelection = d
+	// Check for pending input requests
+	inputRequests, _ := s.db.GetInputRequestsBySubject(ctx, "hop", hopID)
+	var pendingReview *domain.InputRequest
+	var pendingSelection *domain.InputRequest
+	for i := range inputRequests {
+		ir := &inputRequests[i]
+		if ir.Status != domain.InputRequestStatusResolved {
+			if ir.Kind == domain.InputRequestKindVariationReview {
+				pendingReview = ir
+			} else if ir.Kind == domain.InputRequestKindVariationSelection {
+				pendingSelection = ir
 			}
 		}
 	}
@@ -176,25 +177,36 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 	// Detect stuck state: has variations but none pending/creating, no unresolved decisions
 	isStuck := len(variations) > 0 && !hasCreatingVariations && !hasPendingVariations && pendingReview == nil && pendingSelection == nil
 
+	// Check if production credentials are needed but missing
+	needsProductionCredentials := false
+	if hop.RequiresProduction {
+		creds, err := s.db.ListProjectCredentials(ctx, projectID)
+		if err != nil || len(creds) == 0 {
+			needsProductionCredentials = true
+		}
+	}
+
 	view := &HopDetailView{
-		Hop:                   hop,
-		Strategy:              strategy,
-		Project:               project,
-		Variations:            variations,
-		Objectives:            objectives,
-		Allocations:           allocations,
-		PendingReview:         pendingReview,
-		PendingSelection:      pendingSelection,
-		HasCreatingVariations: hasCreatingVariations,
-		HasPendingVariations:  hasPendingVariations,
-		IsStuck:               isStuck,
+		Hop:                        hop,
+		Strategy:                   strategy,
+		Project:                    project,
+		Variations:                 variations,
+		Objectives:                 objectives,
+		Allocations:                allocations,
+		PendingReview:              pendingReview,
+		PendingSelection:           pendingSelection,
+		HasCreatingVariations:      hasCreatingVariations,
+		HasPendingVariations:       hasPendingVariations,
+		IsStuck:                    isStuck,
+		NeedsProductionCredentials: needsProductionCredentials,
 	}
 
 	data := map[string]interface{}{
 		"Title":     "Hop: " + hop.Name,
-		"ProjectID": projectID,
+		"ProjectID": projectID.String(),
 		"View":      view,
 	}
+	s.addOpenInputCount(ctx, data)
 
 	if err := renderPage(w, "hop_detail.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -227,16 +239,16 @@ func (s *Server) handleProposeVariations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Get the created decision to redirect to it
-	decision, err := s.db.GetDecisionBySubjectAndKind(ctx, "hop", hopID, domain.DecisionKindVariationReview)
+	// Get the created input request to redirect to it
+	inputRequest, err := s.db.GetInputRequestBySubjectAndKind(ctx, "hop", hopID, domain.InputRequestKindVariationReview)
 	if err != nil {
-		// Decision was created but we can't find it - redirect to hop page
+		// Input request was created but we can't find it - redirect to hop page
 		http.Redirect(w, r, fmt.Sprintf("/p/%s/hops/%s", projectID, hopID), http.StatusSeeOther)
 		return
 	}
 
-	// Redirect to decision page
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/decisions/%s", projectID, decision.ID), http.StatusSeeOther)
+	// Redirect to input request page
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, inputRequest.ID), http.StatusSeeOther)
 }
 
 // VariationDetailView holds data for rendering the variation detail page.
@@ -318,9 +330,10 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"Title":     "Variation: " + variation.Name,
-		"ProjectID": projectID,
+		"ProjectID": projectID.String(),
 		"View":      view,
 	}
+	s.addOpenInputCount(ctx, data)
 
 	if err := renderPage(w, "variation_detail.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

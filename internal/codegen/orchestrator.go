@@ -194,7 +194,7 @@ func (o *Orchestrator) runGenerators(ctx context.Context, variations []*domain.V
 }
 
 // VariationProposalData is the data needed to orchestrate variations.
-// This can come from a Decision's details or be constructed manually.
+// This can come from an InputRequest's details or be constructed manually.
 type VariationProposalData struct {
 	HopID      uuid.UUID              `json:"hop_id"`
 	Variations []ProposedVariationData `json:"variations"`
@@ -208,7 +208,7 @@ type ProposedVariationData struct {
 	EstimatedTokens int    `json:"estimated_tokens"`
 }
 
-// ParseVariationProposal parses a variation proposal from a Decision's details.
+// ParseVariationProposal parses a variation proposal from an InputRequest's details.
 func ParseVariationProposal(details string) (*VariationProposalData, error) {
 	var proposal VariationProposalData
 	if err := json.Unmarshal([]byte(details), &proposal); err != nil {

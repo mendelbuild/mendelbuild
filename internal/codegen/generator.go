@@ -197,7 +197,18 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 	}
 	logger(domain.LogLevelMilestone, fmt.Sprintf("Pushed branch: %s", branchName))
 
-	// 11. Update variation with commit info
+	// 11. Compute diff stats vs main branch
+	diffStats, err := gitClient.GetDiffStats(ctx, g.config.MainBranch)
+	if err != nil {
+		logger(domain.LogLevelInfo, fmt.Sprintf("Could not compute diff stats: %v", err))
+	} else {
+		logger(domain.LogLevelInfo, fmt.Sprintf("Diff stats: %d files, +%d/-%d lines", diffStats.FilesChanged, diffStats.Additions, diffStats.Deletions))
+		if err := g.db.UpdateVariationDiffStats(ctx, variation.ID, diffStats.FilesChanged, diffStats.Additions, diffStats.Deletions); err != nil {
+			logger(domain.LogLevelInfo, fmt.Sprintf("Could not save diff stats: %v", err))
+		}
+	}
+
+	// 12. Update variation with commit info
 	variation.CommitRef = &commitRef
 	variation.Status = domain.VariationStatusPending
 	variation.UpdatedAt = time.Now()
@@ -207,7 +218,7 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 		return result, nil
 	}
 
-	// 12. Record state transition
+	// 13. Record state transition
 	g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusPending, "code generation successful")
 
 	logger(domain.LogLevelMilestone, "Code generation completed successfully!")

@@ -1,6 +1,6 @@
 {{define "page-content"}}
 {{with .View}}
-<h1>{{.Decision.Title}}</h1>
+<h1>{{.InputRequest.Title}}</h1>
 
 {{/* Conflict warning banner */}}
 {{if .ConflictInfo}}
@@ -69,7 +69,7 @@
                                 {{.Status}}
                             </span>
                             {{if and $.View.ConflictInfo (eq .Status "pending")}}
-                            {{if ne $.View.Decision.Status "resolved"}}
+                            {{if ne $.View.InputRequest.Status "resolved"}}
                             <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.ID}}/prune" style="margin: 0;" onsubmit="return confirm('Prune this variation? This will remove it from consideration.')">
                                 <button type="submit" style="padding: 4px 8px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">Prune</button>
                             </form>
@@ -91,12 +91,12 @@
             {{if .VariationProposal.Variations}}
             <h3 style="color: #28a745; margin-bottom: 10px;">{{if .ExistingVariations}}New {{end}}Proposed Variations</h3>
             {{end}}
-            <form id="approve-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/approve">
+            <form id="approve-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/approve">
             {{range $i, $v := .VariationProposal.Variations}}
             <div class="variation-card" style="border: 2px solid #28a745; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: #f8f9fa;">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
                     <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; margin: 0;">
-                        {{if ne $.View.Decision.Status "resolved"}}
+                        {{if ne $.View.InputRequest.Status "resolved"}}
                         <input type="checkbox" name="variations" value="{{$i}}" checked class="variation-checkbox" style="width: 18px; height: 18px;" onchange="updateApproveButton()">
                         {{end}}
                         <h3 style="margin: 0;">{{$v.Name}}</h3>
@@ -132,13 +132,13 @@
             {{end}}
         </div>
 
-        {{if .Decision.Details}}
+        {{if .InputRequest.Details}}
         <div class="card">
             <h2>Raw Proposal (JSON)</h2>
             <details>
                 <summary style="cursor: pointer; color: #007bff;">View/Edit JSON</summary>
-                <form method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/roadmap">
-                    <textarea name="roadmap" style="width: 100%; height: 300px; font-family: monospace; font-size: 12px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; margin-top: 10px;">{{.Decision.Details}}</textarea>
+                <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/roadmap">
+                    <textarea name="roadmap" style="width: 100%; height: 300px; font-family: monospace; font-size: 12px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; margin-top: 10px;">{{.InputRequest.Details}}</textarea>
                     <button type="submit" style="margin-top: 10px; padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Save Changes</button>
                 </form>
             </details>
@@ -151,7 +151,7 @@
         <div class="card">
             <h2>Review Actions</h2>
 
-            {{if ne .Decision.Status "resolved"}}
+            {{if ne .InputRequest.Status "resolved"}}
             {{if .ConflictInfo}}
             {{/* Conflict resolution mode */}}
             <div style="padding: 12px; background: #f8d7da; border-radius: 4px; text-align: center; margin-bottom: 15px;">
@@ -160,7 +160,7 @@
             <p style="font-size: 0.85em; color: #666; margin-bottom: 15px;">
                 Prune conflicting variations until no conflicts remain. You can also use the feedback form to request revised variations that avoid these conflicts.
             </p>
-            <form method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/resolve-conflicts">
+            <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/resolve-conflicts">
                 <button type="submit" style="width: 100%; padding: 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
                     Conflicts Resolved - Proceed to Selection
                 </button>
@@ -169,6 +169,20 @@
                 Click when you've pruned enough variations to eliminate conflicts. The system will re-check for remaining conflicts.
             </p>
             {{else if .VariationProposal.Variations}}
+            <div style="margin-bottom: 15px; padding: 12px; background: #f8f9fa; border-radius: 4px; border: 1px solid #dee2e6;">
+                <div style="font-weight: bold; margin-bottom: 10px;">Comparison Requirements</div>
+                <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; cursor: pointer;">
+                    <input type="checkbox" name="requires_demo" form="approve-form" checked style="width: 16px; height: 16px;">
+                    <span>Requires clickable demos</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" name="requires_production" form="approve-form" style="width: 16px; height: 16px;">
+                    <span>Requires production traffic</span>
+                </label>
+                <p style="font-size: 0.8em; color: #666; margin: 8px 0 0 0;">
+                    Production traffic enables A/B comparison with real users.
+                </p>
+            </div>
             <button id="approve-button" type="submit" form="approve-form" style="width: 100%; padding: 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
                 Approve {{len .VariationProposal.Variations}} New Variation{{if ne (len .VariationProposal.Variations) 1}}s{{end}}
             </button>
@@ -199,11 +213,11 @@
             {{else if eq .Resolution "rejected"}}
             <div style="padding: 15px; background: #f8d7da; border-radius: 4px; text-align: center;">
                 <strong>Proposal Rejected</strong><br>
-                <a href="/p/{{$.ProjectID}}/decisions">Back to Decisions</a>
+                <a href="/p/{{$.ProjectID}}/inputs">Back to Input Needed</a>
             </div>
             {{else}}
             <div style="padding: 15px; background: #e2e3e5; border-radius: 4px; text-align: center;">
-                <strong>Decision Resolved</strong>
+                <strong>Input Request Resolved</strong>
             </div>
             {{end}}
             {{end}}
@@ -228,24 +242,24 @@
                 {{end}}
             </div>
 
-            {{if ne .Decision.Status "resolved"}}
-            <form method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/message">
+            {{if ne .InputRequest.Status "resolved"}}
+            <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/message">
                 <textarea name="feedback" placeholder="Provide feedback on the variations..." style="width: 100%; height: 80px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical;"></textarea>
                 <div style="margin-top: 10px; display: flex; gap: 10px;">
                     <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Send Feedback</button>
                     <button type="button" onclick="document.getElementById('regenerate-form').submit()" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Regenerate</button>
                 </div>
             </form>
-            <form id="regenerate-form" method="POST" action="/p/{{$.ProjectID}}/decisions/{{.Decision.ID}}/regenerate" style="display: none;"></form>
+            <form id="regenerate-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/regenerate" style="display: none;"></form>
             {{end}}
         </div>
 
         <div class="card">
-            <h2>Decision Info</h2>
+            <h2>Input Request Info</h2>
             <table>
                 <tr>
                     <th style="width: 80px;">Status</th>
-                    <td><span class="status status-{{.Decision.Status}}">{{.Decision.Status}}</span></td>
+                    <td><span class="status status-{{.InputRequest.Status}}">{{.InputRequest.Status}}</span></td>
                 </tr>
                 {{if .Hop}}
                 <tr>
@@ -255,12 +269,12 @@
                 {{end}}
                 <tr>
                     <th>Created</th>
-                    <td>{{.Decision.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                    <td>{{.InputRequest.CreatedAt.Format "2006-01-02 15:04"}}</td>
                 </tr>
-                {{if .Decision.ResolvedAt}}
+                {{if .InputRequest.ResolvedAt}}
                 <tr>
                     <th>Resolved</th>
-                    <td>{{.Decision.ResolvedAt.Format "2006-01-02 15:04"}}</td>
+                    <td>{{.InputRequest.ResolvedAt.Format "2006-01-02 15:04"}}</td>
                 </tr>
                 {{end}}
             </table>

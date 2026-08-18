@@ -342,26 +342,30 @@ func (db *DB) GetStrategy(ctx context.Context, id uuid.UUID) (*domain.Strategy, 
 	return &s, nil
 }
 
-// CreateDecision creates a new decision.
-func (db *DB) CreateDecision(ctx context.Context, d *domain.Decision) error {
+// CreateInputRequest creates a new decision/input request.
+func (db *DB) CreateInputRequest(ctx context.Context, d *domain.InputRequest) error {
 	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO decisions (id, kind, title, details, objectivity_score, importance_score, status, subject_type, subject_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
-	`, d.ID, d.Kind, d.Title, d.Details, d.ObjectivityScore, d.ImportanceScore, d.Status, d.SubjectType, d.SubjectID, d.CreatedAt)
+		INSERT INTO input_requests (id, project_id, kind, title, details, instructions, link, required_capabilities,
+		                            objectivity_score, importance_score, status, subject_type, subject_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
+	`, d.ID, d.ProjectID, d.Kind, d.Title, d.Details, d.Instructions, d.Link, d.RequiredCapabilities,
+		d.ObjectivityScore, d.ImportanceScore, d.Status, d.SubjectType, d.SubjectID, d.CreatedAt)
 	return err
 }
 
-// GetDecision retrieves a decision by ID.
-func (db *DB) GetDecision(ctx context.Context, id uuid.UUID) (*domain.Decision, error) {
-	var d domain.Decision
+// GetInputRequest retrieves a decision/input request by ID.
+func (db *DB) GetInputRequest(ctx context.Context, id uuid.UUID) (*domain.InputRequest, error) {
+	var d domain.InputRequest
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, kind, title, details, objectivity_score, importance_score, status,
+		SELECT id, project_id, kind, title, details, instructions, link, required_capabilities,
+		       objectivity_score, importance_score, status,
 			   assigned_to, assigned_at, accepted_by, accepted_at,
 			   resolved_by, resolved_at, resolution, rationale,
 			   subject_type, subject_id, created_at, updated_at
-		FROM decisions WHERE id = $1
+		FROM input_requests WHERE id = $1
 	`, id).Scan(
-		&d.ID, &d.Kind, &d.Title, &d.Details, &d.ObjectivityScore, &d.ImportanceScore, &d.Status,
+		&d.ID, &d.ProjectID, &d.Kind, &d.Title, &d.Details, &d.Instructions, &d.Link, &d.RequiredCapabilities,
+		&d.ObjectivityScore, &d.ImportanceScore, &d.Status,
 		&d.AssignedTo, &d.AssignedAt, &d.AcceptedBy, &d.AcceptedAt,
 		&d.ResolvedBy, &d.ResolvedAt, &d.Resolution, &d.Rationale,
 		&d.SubjectType, &d.SubjectID, &d.CreatedAt, &d.UpdatedAt,
@@ -372,14 +376,14 @@ func (db *DB) GetDecision(ctx context.Context, id uuid.UUID) (*domain.Decision, 
 	return &d, nil
 }
 
-// GetDecisionsBySubject retrieves all decisions for a subject.
-func (db *DB) GetDecisionsBySubject(ctx context.Context, subjectType string, subjectID uuid.UUID) ([]domain.Decision, error) {
+// GetInputRequestsBySubject retrieves all decisions for a subject.
+func (db *DB) GetInputRequestsBySubject(ctx context.Context, subjectType string, subjectID uuid.UUID) ([]domain.InputRequest, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, kind, title, details, objectivity_score, importance_score, status,
+		SELECT id, project_id, kind, title, details, objectivity_score, importance_score, status,
 			   assigned_to, assigned_at, accepted_by, accepted_at,
 			   resolved_by, resolved_at, resolution, rationale,
 			   subject_type, subject_id, created_at, updated_at
-		FROM decisions
+		FROM input_requests
 		WHERE subject_type = $1 AND subject_id = $2
 		ORDER BY created_at DESC
 	`, subjectType, subjectID)
@@ -388,11 +392,11 @@ func (db *DB) GetDecisionsBySubject(ctx context.Context, subjectType string, sub
 	}
 	defer rows.Close()
 
-	var decisions []domain.Decision
+	var decisions []domain.InputRequest
 	for rows.Next() {
-		var d domain.Decision
+		var d domain.InputRequest
 		if err := rows.Scan(
-			&d.ID, &d.Kind, &d.Title, &d.Details, &d.ObjectivityScore, &d.ImportanceScore, &d.Status,
+			&d.ID, &d.ProjectID, &d.Kind, &d.Title, &d.Details, &d.ObjectivityScore, &d.ImportanceScore, &d.Status,
 			&d.AssignedTo, &d.AssignedAt, &d.AcceptedBy, &d.AcceptedAt,
 			&d.ResolvedBy, &d.ResolvedAt, &d.Resolution, &d.Rationale,
 			&d.SubjectType, &d.SubjectID, &d.CreatedAt, &d.UpdatedAt,
@@ -404,47 +408,27 @@ func (db *DB) GetDecisionsBySubject(ctx context.Context, subjectType string, sub
 	return decisions, nil
 }
 
-// GetDecisionsByProject retrieves all decisions related to a project.
-// Includes decisions for strategies, hops, and variations belonging to the project.
-func (db *DB) GetDecisionsByProject(ctx context.Context, projectID uuid.UUID) ([]domain.Decision, error) {
+// GetInputRequestsByProject retrieves all decisions related to a project.
+func (db *DB) GetInputRequestsByProject(ctx context.Context, projectID uuid.UUID) ([]domain.InputRequest, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT d.id, d.kind, d.title, d.details, d.objectivity_score, d.importance_score, d.status,
-			   d.assigned_to, d.assigned_at, d.accepted_by, d.accepted_at,
-			   d.resolved_by, d.resolved_at, d.resolution, d.rationale,
-			   d.subject_type, d.subject_id, d.created_at, d.updated_at
-		FROM decisions d
-		WHERE
-			-- Decisions about strategies in this project
-			(d.subject_type = 'strategy' AND d.subject_id IN (
-				SELECT id FROM strategies WHERE project_id = $1
-			))
-			OR
-			-- Decisions about hops in strategies in this project
-			(d.subject_type = 'hop' AND d.subject_id IN (
-				SELECT h.id FROM hops h
-				JOIN strategies s ON h.strategy_id = s.id
-				WHERE s.project_id = $1
-			))
-			OR
-			-- Decisions about variations in hops in strategies in this project
-			(d.subject_type = 'variation' AND d.subject_id IN (
-				SELECT v.id FROM variations v
-				JOIN hops h ON v.hop_id = h.id
-				JOIN strategies s ON h.strategy_id = s.id
-				WHERE s.project_id = $1
-			))
-		ORDER BY d.created_at DESC
+		SELECT id, project_id, kind, title, details, objectivity_score, importance_score, status,
+			   assigned_to, assigned_at, accepted_by, accepted_at,
+			   resolved_by, resolved_at, resolution, rationale,
+			   subject_type, subject_id, created_at, updated_at
+		FROM input_requests
+		WHERE project_id = $1
+		ORDER BY created_at DESC
 	`, projectID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var decisions []domain.Decision
+	var decisions []domain.InputRequest
 	for rows.Next() {
-		var d domain.Decision
+		var d domain.InputRequest
 		if err := rows.Scan(
-			&d.ID, &d.Kind, &d.Title, &d.Details, &d.ObjectivityScore, &d.ImportanceScore, &d.Status,
+			&d.ID, &d.ProjectID, &d.Kind, &d.Title, &d.Details, &d.ObjectivityScore, &d.ImportanceScore, &d.Status,
 			&d.AssignedTo, &d.AssignedAt, &d.AcceptedBy, &d.AcceptedAt,
 			&d.ResolvedBy, &d.ResolvedAt, &d.Resolution, &d.Rationale,
 			&d.SubjectType, &d.SubjectID, &d.CreatedAt, &d.UpdatedAt,
@@ -456,10 +440,20 @@ func (db *DB) GetDecisionsByProject(ctx context.Context, projectID uuid.UUID) ([
 	return decisions, nil
 }
 
-// UpdateDecision updates a decision.
-func (db *DB) UpdateDecision(ctx context.Context, d *domain.Decision) error {
+// CountOpenInputRequestsByProject counts unresolved input requests for a project.
+func (db *DB) CountOpenInputRequestsByProject(ctx context.Context, projectID uuid.UUID) (int, error) {
+	var count int
+	err := db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM input_requests
+		WHERE project_id = $1 AND status != 'resolved'
+	`, projectID).Scan(&count)
+	return count, err
+}
+
+// UpdateInputRequest updates a decision.
+func (db *DB) UpdateInputRequest(ctx context.Context, d *domain.InputRequest) error {
 	_, err := db.Pool.Exec(ctx, `
-		UPDATE decisions SET
+		UPDATE input_requests SET
 			title = $2, details = $3, status = $4,
 			assigned_to = $5, assigned_at = $6,
 			accepted_by = $7, accepted_at = $8,
@@ -475,32 +469,32 @@ func (db *DB) UpdateDecision(ctx context.Context, d *domain.Decision) error {
 	return err
 }
 
-// CreateDecisionMessage creates a new decision message.
-func (db *DB) CreateDecisionMessage(ctx context.Context, m *domain.DecisionMessage) error {
+// CreateInputRequestMessage creates a new decision message.
+func (db *DB) CreateInputRequestMessage(ctx context.Context, m *domain.InputRequestMessage) error {
 	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO decision_messages (id, decision_id, role, content, tokens_used, created_at)
+		INSERT INTO input_request_messages (id, input_request_id, role, content, tokens_used, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
-	`, m.ID, m.DecisionID, m.Role, m.Content, m.TokensUsed, m.CreatedAt)
+	`, m.ID, m.InputRequestID, m.Role, m.Content, m.TokensUsed, m.CreatedAt)
 	return err
 }
 
-// GetDecisionMessages retrieves all messages for a decision.
-func (db *DB) GetDecisionMessages(ctx context.Context, decisionID uuid.UUID) ([]domain.DecisionMessage, error) {
+// GetInputRequestMessages retrieves all messages for a decision.
+func (db *DB) GetInputRequestMessages(ctx context.Context, inputRequestID uuid.UUID) ([]domain.InputRequestMessage, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, decision_id, role, content, tokens_used, created_at
-		FROM decision_messages
-		WHERE decision_id = $1
+		SELECT id, input_request_id, role, content, tokens_used, created_at
+		FROM input_request_messages
+		WHERE input_request_id = $1
 		ORDER BY created_at ASC
-	`, decisionID)
+	`, inputRequestID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var messages []domain.DecisionMessage
+	var messages []domain.InputRequestMessage
 	for rows.Next() {
-		var m domain.DecisionMessage
-		if err := rows.Scan(&m.ID, &m.DecisionID, &m.Role, &m.Content, &m.TokensUsed, &m.CreatedAt); err != nil {
+		var m domain.InputRequestMessage
+		if err := rows.Scan(&m.ID, &m.InputRequestID, &m.Role, &m.Content, &m.TokensUsed, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		messages = append(messages, m)
@@ -511,9 +505,11 @@ func (db *DB) GetDecisionMessages(ctx context.Context, decisionID uuid.UUID) ([]
 // CreateHop creates a new hop.
 func (db *DB) CreateHop(ctx context.Context, h *domain.Hop) error {
 	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO hops (id, strategy_id, name, commentary, params, evaluation_criteria, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
-	`, h.ID, h.StrategyID, h.Name, h.Commentary, h.Params, h.EvaluationCriteria, h.Status, h.CreatedAt)
+		INSERT INTO hops (id, strategy_id, name, commentary, params, evaluation_criteria,
+		                  requires_demo, requires_production, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+	`, h.ID, h.StrategyID, h.Name, h.Commentary, h.Params, h.EvaluationCriteria,
+		h.RequiresDemo, h.RequiresProduction, h.Status, h.CreatedAt)
 	return err
 }
 
@@ -553,7 +549,8 @@ func (db *DB) GetFundingSourceByType(ctx context.Context, strategyID uuid.UUID, 
 // GetHopsByStrategy retrieves all hops for a strategy.
 func (db *DB) GetHopsByStrategy(ctx context.Context, strategyID uuid.UUID) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, strategy_id, name, commentary, params, evaluation_criteria, status, created_at, updated_at
+		SELECT id, strategy_id, name, commentary, params, evaluation_criteria,
+		       requires_demo, requires_production, status, created_at, updated_at
 		FROM hops
 		WHERE strategy_id = $1
 		ORDER BY created_at ASC
@@ -566,7 +563,8 @@ func (db *DB) GetHopsByStrategy(ctx context.Context, strategyID uuid.UUID) ([]do
 	var hops []domain.Hop
 	for rows.Next() {
 		var h domain.Hop
-		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria,
+			&h.RequiresDemo, &h.RequiresProduction, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 		hops = append(hops, h)
@@ -578,9 +576,11 @@ func (db *DB) GetHopsByStrategy(ctx context.Context, strategyID uuid.UUID) ([]do
 func (db *DB) GetHop(ctx context.Context, id uuid.UUID) (*domain.Hop, error) {
 	var h domain.Hop
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, strategy_id, name, commentary, params, evaluation_criteria, status, created_at, updated_at
+		SELECT id, strategy_id, name, commentary, params, evaluation_criteria,
+		       requires_demo, requires_production, status, created_at, updated_at
 		FROM hops WHERE id = $1
-	`, id).Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria, &h.Status, &h.CreatedAt, &h.UpdatedAt)
+	`, id).Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria,
+		&h.RequiresDemo, &h.RequiresProduction, &h.Status, &h.CreatedAt, &h.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -603,6 +603,14 @@ func (db *DB) UpdateHopEvaluationCriteria(ctx context.Context, hopID uuid.UUID, 
 	return err
 }
 
+// UpdateHopComparisonRequirements updates the demo/production requirements for a hop.
+func (db *DB) UpdateHopComparisonRequirements(ctx context.Context, hopID uuid.UUID, requiresDemo, requiresProduction bool) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE hops SET requires_demo = $1, requires_production = $2, updated_at = NOW() WHERE id = $3
+	`, requiresDemo, requiresProduction, hopID)
+	return err
+}
+
 // CreateVariation creates a new variation.
 func (db *DB) CreateVariation(ctx context.Context, v *domain.Variation) error {
 	_, err := db.Pool.Exec(ctx, `
@@ -616,9 +624,11 @@ func (db *DB) CreateVariation(ctx context.Context, v *domain.Variation) error {
 func (db *DB) GetVariation(ctx context.Context, id uuid.UUID) (*domain.Variation, error) {
 	var v domain.Variation
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref, status, created_at, updated_at
+		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref,
+		       diff_files_changed, diff_additions, diff_deletions, evaluation_scores, status, created_at, updated_at
 		FROM variations WHERE id = $1
-	`, id).Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef, &v.Status, &v.CreatedAt, &v.UpdatedAt)
+	`, id).Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef,
+		&v.DiffFilesChanged, &v.DiffAdditions, &v.DiffDeletions, &v.EvaluationScores, &v.Status, &v.CreatedAt, &v.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -636,10 +646,29 @@ func (db *DB) UpdateVariation(ctx context.Context, v *domain.Variation) error {
 	return err
 }
 
+// UpdateVariationDiffStats updates the diff stats for a variation.
+func (db *DB) UpdateVariationDiffStats(ctx context.Context, variationID uuid.UUID, filesChanged, additions, deletions int) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE variations SET
+			diff_files_changed = $2, diff_additions = $3, diff_deletions = $4, updated_at = NOW()
+		WHERE id = $1
+	`, variationID, filesChanged, additions, deletions)
+	return err
+}
+
+// UpdateVariationEvaluationScores updates the cached evaluation scores for a variation.
+func (db *DB) UpdateVariationEvaluationScores(ctx context.Context, variationID uuid.UUID, scores json.RawMessage) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE variations SET evaluation_scores = $2, updated_at = NOW() WHERE id = $1
+	`, variationID, scores)
+	return err
+}
+
 // GetVariationsByHop retrieves all variations for a hop.
 func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain.Variation, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref, status, created_at, updated_at
+		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref,
+		       diff_files_changed, diff_additions, diff_deletions, evaluation_scores, status, created_at, updated_at
 		FROM variations
 		WHERE hop_id = $1
 		ORDER BY created_at ASC
@@ -652,7 +681,8 @@ func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain
 	var variations []domain.Variation
 	for rows.Next() {
 		var v domain.Variation
-		if err := rows.Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef, &v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef,
+			&v.DiffFilesChanged, &v.DiffAdditions, &v.DiffDeletions, &v.EvaluationScores, &v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
 		variations = append(variations, v)
@@ -663,7 +693,8 @@ func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain
 // GetHopsWithCreatingVariations returns hops that have variations in "creating" status.
 func (db *DB) GetHopsWithCreatingVariations(ctx context.Context) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT DISTINCT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria, h.status, h.created_at, h.updated_at
+		SELECT DISTINCT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria,
+		       h.requires_demo, h.requires_production, h.status, h.created_at, h.updated_at
 		FROM hops h
 		JOIN variations v ON v.hop_id = h.id
 		WHERE v.status = 'creating'
@@ -677,7 +708,8 @@ func (db *DB) GetHopsWithCreatingVariations(ctx context.Context) ([]domain.Hop, 
 	var hops []domain.Hop
 	for rows.Next() {
 		var h domain.Hop
-		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria,
+			&h.RequiresDemo, &h.RequiresProduction, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 		hops = append(hops, h)
@@ -893,15 +925,15 @@ func (db *DB) GetVariationLogsByType(ctx context.Context, variationID uuid.UUID,
 	return logs, nil
 }
 
-// GetDecisionBySubjectAndKind retrieves a decision by subject and kind.
-func (db *DB) GetDecisionBySubjectAndKind(ctx context.Context, subjectType string, subjectID uuid.UUID, kind domain.DecisionKind) (*domain.Decision, error) {
-	var d domain.Decision
+// GetInputRequestBySubjectAndKind retrieves a decision by subject and kind.
+func (db *DB) GetInputRequestBySubjectAndKind(ctx context.Context, subjectType string, subjectID uuid.UUID, kind domain.InputRequestKind) (*domain.InputRequest, error) {
+	var d domain.InputRequest
 	err := db.Pool.QueryRow(ctx, `
 		SELECT id, kind, title, details, objectivity_score, importance_score, status,
 			   assigned_to, assigned_at, accepted_by, accepted_at,
 			   resolved_by, resolved_at, resolution, rationale,
 			   subject_type, subject_id, created_at, updated_at
-		FROM decisions
+		FROM input_requests
 		WHERE subject_type = $1 AND subject_id = $2 AND kind = $3
 		ORDER BY created_at DESC
 		LIMIT 1
@@ -917,27 +949,28 @@ func (db *DB) GetDecisionBySubjectAndKind(ctx context.Context, subjectType strin
 	return &d, nil
 }
 
-// GetHopsNeedingSelectionDecision returns hops with at least one pending variation
-// but no unresolved variation_selection Decision. Includes both 'active' and 'selecting'
-// hops to handle cases where status was updated but Decision wasn't created.
-// Also excludes hops that have an unresolved variation_review Decision (user is still
+// GetHopsNeedingSelectionInputRequest returns hops with at least one pending variation
+// but no unresolved variation_selection input request. Includes both 'active' and 'selecting'
+// hops to handle cases where status was updated but input request wasn't created.
+// Also excludes hops that have an unresolved variation_review input request (user is still
 // proposing/reviewing additional variations).
-func (db *DB) GetHopsNeedingSelectionDecision(ctx context.Context) ([]domain.Hop, error) {
+func (db *DB) GetHopsNeedingSelectionInputRequest(ctx context.Context) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT DISTINCT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria, h.status, h.created_at, h.updated_at
+		SELECT DISTINCT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria,
+		       h.requires_demo, h.requires_production, h.status, h.created_at, h.updated_at
 		FROM hops h
 		JOIN variations v ON v.hop_id = h.id
 		WHERE h.status IN ('active', 'selecting')
 		  AND v.status = 'pending'
 		  AND NOT EXISTS (
-			SELECT 1 FROM decisions d
+			SELECT 1 FROM input_requests d
 			WHERE d.subject_type = 'hop'
 			  AND d.subject_id = h.id
 			  AND d.kind = 'variation_selection'
 			  AND d.status != 'resolved'
 		  )
 		  AND NOT EXISTS (
-			SELECT 1 FROM decisions d
+			SELECT 1 FROM input_requests d
 			WHERE d.subject_type = 'hop'
 			  AND d.subject_id = h.id
 			  AND d.kind = 'variation_review'
@@ -953,7 +986,8 @@ func (db *DB) GetHopsNeedingSelectionDecision(ctx context.Context) ([]domain.Hop
 	var hops []domain.Hop
 	for rows.Next() {
 		var h domain.Hop
-		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria,
+			&h.RequiresDemo, &h.RequiresProduction, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 		hops = append(hops, h)
@@ -965,7 +999,8 @@ func (db *DB) GetHopsNeedingSelectionDecision(ctx context.Context) ([]domain.Hop
 // (no variations in 'creating' status) and at least one is 'pending'.
 func (db *DB) GetHopsReadyForSelection(ctx context.Context) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria, h.status, h.created_at, h.updated_at
+		SELECT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria,
+		       h.requires_demo, h.requires_production, h.status, h.created_at, h.updated_at
 		FROM hops h
 		WHERE h.status = 'active'
 		  AND EXISTS (
@@ -984,7 +1019,8 @@ func (db *DB) GetHopsReadyForSelection(ctx context.Context) ([]domain.Hop, error
 	var hops []domain.Hop
 	for rows.Next() {
 		var h domain.Hop
-		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria,
+			&h.RequiresDemo, &h.RequiresProduction, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 		hops = append(hops, h)
@@ -1038,8 +1074,66 @@ func (db *DB) GetHopDependsOn(ctx context.Context, hopID uuid.UUID) ([]uuid.UUID
 	return deps, nil
 }
 
+// CompletedDependencyInfo holds info about a completed dependency hop and its selected variation.
+type CompletedDependencyInfo struct {
+	HopID             uuid.UUID
+	HopName           string
+	HopCommentary     string
+	VariationID       uuid.UUID
+	VariationName     string
+	VariationApproach string
+}
+
+// GetCompletedTransitiveDependencies returns all completed dependency hops (transitive closure)
+// with their selected/merged variations. This is used to provide context when proposing new variations.
+func (db *DB) GetCompletedTransitiveDependencies(ctx context.Context, hopID uuid.UUID) ([]CompletedDependencyInfo, error) {
+	rows, err := db.Pool.Query(ctx, `
+		WITH RECURSIVE transitive_deps AS (
+			-- Base case: direct dependencies
+			SELECT depends_on_hop_id as hop_id, 1 as depth
+			FROM hop_dependencies
+			WHERE hop_id = $1
+
+			UNION
+
+			-- Recursive case: dependencies of dependencies
+			SELECT hd.depends_on_hop_id, td.depth + 1
+			FROM hop_dependencies hd
+			JOIN transitive_deps td ON hd.hop_id = td.hop_id
+			WHERE td.depth < 100  -- Safety limit to prevent infinite recursion
+		)
+		SELECT DISTINCT
+			h.id as hop_id,
+			h.name as hop_name,
+			h.commentary as hop_commentary,
+			v.id as variation_id,
+			v.name as variation_name,
+			v.approach as variation_approach
+		FROM transitive_deps td
+		JOIN hops h ON h.id = td.hop_id
+		JOIN variations v ON v.hop_id = h.id
+		WHERE h.status = 'completed'
+		  AND v.status IN ('merged', 'selected')
+		ORDER BY h.name
+	`, hopID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var deps []CompletedDependencyInfo
+	for rows.Next() {
+		var d CompletedDependencyInfo
+		if err := rows.Scan(&d.HopID, &d.HopName, &d.HopCommentary, &d.VariationID, &d.VariationName, &d.VariationApproach); err != nil {
+			return nil, err
+		}
+		deps = append(deps, d)
+	}
+	return deps, nil
+}
+
 // GetHopsNeedingVariationProposal returns active hops that have no variations
-// and no existing variation_review Decision (pending or resolved).
+// and no existing variation_review input request (pending or resolved).
 func (db *DB) GetHopsNeedingVariationProposal(ctx context.Context) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria, h.status, h.created_at, h.updated_at
@@ -1049,7 +1143,7 @@ func (db *DB) GetHopsNeedingVariationProposal(ctx context.Context) ([]domain.Hop
 			SELECT 1 FROM variations v WHERE v.hop_id = h.id
 		  )
 		  AND NOT EXISTS (
-			SELECT 1 FROM decisions d
+			SELECT 1 FROM input_requests d
 			WHERE d.subject_type = 'hop'
 			  AND d.subject_id = h.id
 			  AND d.kind = 'variation_review'
@@ -1723,41 +1817,559 @@ func (db *DB) MarkVariationMigrationReverted(ctx context.Context, id uuid.UUID) 
 	return nil
 }
 
-// GetDecisionCache retrieves the cache JSON for a decision.
-func (db *DB) GetDecisionCache(ctx context.Context, decisionID uuid.UUID) (json.RawMessage, error) {
+// GetInputRequestCache retrieves the cache JSON for a decision.
+func (db *DB) GetInputRequestCache(ctx context.Context, inputRequestID uuid.UUID) (json.RawMessage, error) {
 	var cache json.RawMessage
 	err := db.Pool.QueryRow(ctx, `
-		SELECT cache FROM decisions WHERE id = $1
-	`, decisionID).Scan(&cache)
+		SELECT cache FROM input_requests WHERE id = $1
+	`, inputRequestID).Scan(&cache)
 	if err != nil {
 		return nil, err
 	}
 	return cache, nil
 }
 
-// SetDecisionCache updates the cache JSON for a decision.
-func (db *DB) SetDecisionCache(ctx context.Context, decisionID uuid.UUID, cache json.RawMessage) error {
+// SetInputRequestCache updates the cache JSON for a decision.
+func (db *DB) SetInputRequestCache(ctx context.Context, inputRequestID uuid.UUID, cache json.RawMessage) error {
 	_, err := db.Pool.Exec(ctx, `
-		UPDATE decisions SET cache = $2, updated_at = NOW() WHERE id = $1
-	`, decisionID, cache)
+		UPDATE input_requests SET cache = $2, updated_at = NOW() WHERE id = $1
+	`, inputRequestID, cache)
 	return err
 }
 
-// ClearDecisionCache sets the cache to NULL for a decision.
-func (db *DB) ClearDecisionCache(ctx context.Context, decisionID uuid.UUID) error {
+// ClearInputRequestCache sets the cache to NULL for a decision.
+func (db *DB) ClearInputRequestCache(ctx context.Context, inputRequestID uuid.UUID) error {
 	_, err := db.Pool.Exec(ctx, `
-		UPDATE decisions SET cache = NULL, updated_at = NOW() WHERE id = $1
-	`, decisionID)
+		UPDATE input_requests SET cache = NULL, updated_at = NOW() WHERE id = $1
+	`, inputRequestID)
 	return err
 }
 
-// ClearDecisionCacheBySubject clears cache for all decisions related to a subject.
+// ClearInputRequestCacheBySubject clears cache for all decisions related to a subject.
 // Used when evaluation criteria change for a hop.
-func (db *DB) ClearDecisionCacheBySubject(ctx context.Context, subjectType string, subjectID uuid.UUID) error {
+func (db *DB) ClearInputRequestCacheBySubject(ctx context.Context, subjectType string, subjectID uuid.UUID) error {
 	_, err := db.Pool.Exec(ctx, `
-		UPDATE decisions SET cache = NULL, updated_at = NOW()
+		UPDATE input_requests SET cache = NULL, updated_at = NOW()
 		WHERE subject_type = $1 AND subject_id = $2
 	`, subjectType, subjectID)
 	return err
+}
+
+// =====================================================
+// Project Credential Queries (added in 015)
+// =====================================================
+
+// CreateProjectCredential creates a new encrypted credential.
+func (db *DB) CreateProjectCredential(ctx context.Context, cred *domain.ProjectCredential) error {
+	now := time.Now()
+	if cred.ID == uuid.Nil {
+		cred.ID = uuid.New()
+	}
+	cred.CreatedAt = now
+	cred.UpdatedAt = now
+
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO project_credentials (id, project_id, name, encrypted_value, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, cred.ID, cred.ProjectID, cred.Name, cred.EncryptedValue, cred.CreatedAt, cred.UpdatedAt)
+	return err
+}
+
+// GetProjectCredential retrieves a credential by project and name.
+func (db *DB) GetProjectCredential(ctx context.Context, projectID uuid.UUID, name string) (*domain.ProjectCredential, error) {
+	var cred domain.ProjectCredential
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, project_id, name, encrypted_value, created_at, updated_at
+		FROM project_credentials
+		WHERE project_id = $1 AND name = $2
+	`, projectID, name).Scan(&cred.ID, &cred.ProjectID, &cred.Name, &cred.EncryptedValue, &cred.CreatedAt, &cred.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &cred, nil
+}
+
+// GetProjectCredentialByID retrieves a credential by ID.
+func (db *DB) GetProjectCredentialByID(ctx context.Context, id uuid.UUID) (*domain.ProjectCredential, error) {
+	var cred domain.ProjectCredential
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, project_id, name, encrypted_value, created_at, updated_at
+		FROM project_credentials
+		WHERE id = $1
+	`, id).Scan(&cred.ID, &cred.ProjectID, &cred.Name, &cred.EncryptedValue, &cred.CreatedAt, &cred.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &cred, nil
+}
+
+// ListProjectCredentials lists all credentials for a project (names only, not values).
+func (db *DB) ListProjectCredentials(ctx context.Context, projectID uuid.UUID) ([]domain.ProjectCredential, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, project_id, name, created_at, updated_at
+		FROM project_credentials
+		WHERE project_id = $1
+		ORDER BY name
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var creds []domain.ProjectCredential
+	for rows.Next() {
+		var cred domain.ProjectCredential
+		if err := rows.Scan(&cred.ID, &cred.ProjectID, &cred.Name, &cred.CreatedAt, &cred.UpdatedAt); err != nil {
+			return nil, err
+		}
+		creds = append(creds, cred)
+	}
+	return creds, nil
+}
+
+// UpdateProjectCredential updates an existing credential's encrypted value.
+func (db *DB) UpdateProjectCredential(ctx context.Context, id uuid.UUID, encryptedValue []byte) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE project_credentials
+		SET encrypted_value = $2, updated_at = NOW()
+		WHERE id = $1
+	`, id, encryptedValue)
+	return err
+}
+
+// DeleteProjectCredential deletes a credential.
+func (db *DB) DeleteProjectCredential(ctx context.Context, id uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		DELETE FROM project_credentials WHERE id = $1
+	`, id)
+	return err
+}
+
+// GetUnresolvedCredentialRequests returns all unresolved credential_request InputRequests for a project.
+func (db *DB) GetUnresolvedCredentialRequests(ctx context.Context, projectID uuid.UUID) ([]domain.InputRequest, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT ir.id, ir.kind, ir.title, ir.details, ir.instructions, ir.link, ir.required_capabilities,
+		       ir.objectivity_score, ir.importance_score, ir.status,
+		       ir.assigned_to, ir.assigned_at, ir.accepted_by, ir.accepted_at,
+		       ir.resolved_by, ir.resolved_at, ir.resolution, ir.rationale,
+		       ir.subject_type, ir.subject_id, ir.created_at, ir.updated_at
+		FROM input_requests ir
+		JOIN variations v ON ir.subject_type = 'variation' AND ir.subject_id = v.id
+		JOIN hops h ON v.hop_id = h.id
+		JOIN strategies s ON h.strategy_id = s.id
+		WHERE s.project_id = $1
+		  AND ir.kind = 'credential_request'
+		  AND ir.status != 'resolved'
+		ORDER BY ir.created_at DESC
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var reqs []domain.InputRequest
+	for rows.Next() {
+		var r domain.InputRequest
+		if err := rows.Scan(
+			&r.ID, &r.Kind, &r.Title, &r.Details, &r.Instructions, &r.Link, &r.RequiredCapabilities,
+			&r.ObjectivityScore, &r.ImportanceScore, &r.Status,
+			&r.AssignedTo, &r.AssignedAt, &r.AcceptedBy, &r.AcceptedAt,
+			&r.ResolvedBy, &r.ResolvedAt, &r.Resolution, &r.Rationale,
+			&r.SubjectType, &r.SubjectID, &r.CreatedAt, &r.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		reqs = append(reqs, r)
+	}
+	return reqs, nil
+}
+
+// ResolveCredentialRequestsByName resolves all credential_request InputRequests matching a credential name.
+// Called when a credential is added via Settings to auto-resolve matching requests.
+func (db *DB) ResolveCredentialRequestsByName(ctx context.Context, projectID uuid.UUID, credentialName string) error {
+	now := time.Now()
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE input_requests ir
+		SET status = 'resolved',
+		    resolution = 'credential_provided',
+		    resolved_at = $3,
+		    updated_at = $3
+		FROM variations v
+		JOIN hops h ON v.hop_id = h.id
+		JOIN strategies s ON h.strategy_id = s.id
+		WHERE ir.subject_type = 'variation'
+		  AND ir.subject_id = v.id
+		  AND s.project_id = $1
+		  AND ir.kind = 'credential_request'
+		  AND ir.title LIKE '%' || $2 || '%'
+		  AND ir.status != 'resolved'
+	`, projectID, credentialName, now)
+	return err
+}
+
+// GetBlockedVariationsWithResolvedRequests returns blocked variations whose InputRequests are now resolved.
+func (db *DB) GetBlockedVariationsWithResolvedRequests(ctx context.Context) ([]domain.Variation, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT v.id, v.hop_id, v.name, v.approach, v.repository_id, v.commit_ref, v.ecosystem_id, v.deployment_ref,
+		       v.diff_files_changed, v.diff_additions, v.diff_deletions, v.evaluation_scores, v.status, v.created_at, v.updated_at
+		FROM variations v
+		WHERE v.status = 'blocked'
+		  AND NOT EXISTS (
+		      SELECT 1 FROM input_requests ir
+		      WHERE ir.subject_type = 'variation'
+		        AND ir.subject_id = v.id
+		        AND ir.status != 'resolved'
+		  )
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var variations []domain.Variation
+	for rows.Next() {
+		var v domain.Variation
+		if err := rows.Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef,
+			&v.DiffFilesChanged, &v.DiffAdditions, &v.DiffDeletions, &v.EvaluationScores, &v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
+			return nil, err
+		}
+		variations = append(variations, v)
+	}
+	return variations, nil
+}
+
+// GetCredentialRequestForVariation returns an unresolved credential request for a variation, if any.
+func (db *DB) GetCredentialRequestForVariation(ctx context.Context, variationID uuid.UUID, credentialName string) (*domain.InputRequest, error) {
+	var r domain.InputRequest
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, kind, title, details, instructions, link, required_capabilities,
+		       objectivity_score, importance_score, status,
+		       assigned_to, assigned_at, accepted_by, accepted_at,
+		       resolved_by, resolved_at, resolution, rationale,
+		       subject_type, subject_id, created_at, updated_at
+		FROM input_requests
+		WHERE subject_type = 'variation'
+		  AND subject_id = $1
+		  AND kind = 'credential_request'
+		  AND title LIKE '%' || $2 || '%'
+		  AND status != 'resolved'
+		LIMIT 1
+	`, variationID, credentialName).Scan(
+		&r.ID, &r.Kind, &r.Title, &r.Details, &r.Instructions, &r.Link, &r.RequiredCapabilities,
+		&r.ObjectivityScore, &r.ImportanceScore, &r.Status,
+		&r.AssignedTo, &r.AssignedAt, &r.AcceptedBy, &r.AcceptedAt,
+		&r.ResolvedBy, &r.ResolvedAt, &r.Resolution, &r.Rationale,
+		&r.SubjectType, &r.SubjectID, &r.CreatedAt, &r.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// =====================================================
+// Deployed Instance Queries (added in 015)
+// =====================================================
+
+// CreateDeployedInstance creates a new deployed instance record.
+func (db *DB) CreateDeployedInstance(ctx context.Context, di *domain.DeployedInstance) error {
+	now := time.Now()
+	if di.ID == uuid.Nil {
+		di.ID = uuid.New()
+	}
+	di.DeployedAt = now
+	di.CreatedAt = now
+
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO deployed_instances (id, variation_id, cloud_ecosystem, url, public_url, instance_info, deployed_at, status, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, di.ID, di.VariationID, di.CloudEcosystem, di.URL, di.PublicURL, di.InstanceInfo, di.DeployedAt, di.Status, di.CreatedAt)
+	return err
+}
+
+// GetDeployedInstance retrieves a deployed instance by ID.
+func (db *DB) GetDeployedInstance(ctx context.Context, id uuid.UUID) (*domain.DeployedInstance, error) {
+	var di domain.DeployedInstance
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, variation_id, cloud_ecosystem, url, public_url, instance_info, deployed_at, status, error_message, created_at
+		FROM deployed_instances WHERE id = $1
+	`, id).Scan(&di.ID, &di.VariationID, &di.CloudEcosystem, &di.URL, &di.PublicURL, &di.InstanceInfo, &di.DeployedAt, &di.Status, &di.ErrorMessage, &di.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &di, nil
+}
+
+// GetDeployedInstanceByVariation retrieves the latest deployed instance for a variation.
+func (db *DB) GetDeployedInstanceByVariation(ctx context.Context, variationID uuid.UUID) (*domain.DeployedInstance, error) {
+	var di domain.DeployedInstance
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, variation_id, cloud_ecosystem, url, public_url, instance_info, deployed_at, status, error_message, created_at
+		FROM deployed_instances
+		WHERE variation_id = $1
+		ORDER BY deployed_at DESC
+		LIMIT 1
+	`, variationID).Scan(&di.ID, &di.VariationID, &di.CloudEcosystem, &di.URL, &di.PublicURL, &di.InstanceInfo, &di.DeployedAt, &di.Status, &di.ErrorMessage, &di.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &di, nil
+}
+
+// ListDeployedInstancesByStatus lists all deployed instances with a given status.
+func (db *DB) ListDeployedInstancesByStatus(ctx context.Context, status domain.DeployedInstanceStatus) ([]domain.DeployedInstance, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, variation_id, cloud_ecosystem, url, public_url, instance_info, deployed_at, status, error_message, created_at
+		FROM deployed_instances
+		WHERE status = $1
+		ORDER BY deployed_at DESC
+	`, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var instances []domain.DeployedInstance
+	for rows.Next() {
+		var di domain.DeployedInstance
+		if err := rows.Scan(&di.ID, &di.VariationID, &di.CloudEcosystem, &di.URL, &di.PublicURL, &di.InstanceInfo, &di.DeployedAt, &di.Status, &di.ErrorMessage, &di.CreatedAt); err != nil {
+			return nil, err
+		}
+		instances = append(instances, di)
+	}
+	return instances, nil
+}
+
+// UpdateDeployedInstanceStatus updates the status (and optionally error message) of a deployed instance.
+func (db *DB) UpdateDeployedInstanceStatus(ctx context.Context, id uuid.UUID, status domain.DeployedInstanceStatus, errorMessage *string) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE deployed_instances
+		SET status = $2, error_message = $3
+		WHERE id = $1
+	`, id, status, errorMessage)
+	return err
+}
+
+// GetLatestRunningDeploymentByProject retrieves the most recent running deployment for a project.
+func (db *DB) GetLatestRunningDeploymentByProject(ctx context.Context, projectID uuid.UUID) (*domain.DeployedInstance, error) {
+	var di domain.DeployedInstance
+	err := db.Pool.QueryRow(ctx, `
+		SELECT di.id, di.variation_id, di.cloud_ecosystem, di.url, di.public_url, di.instance_info, di.deployed_at, di.status, di.error_message, di.created_at
+		FROM deployed_instances di
+		JOIN variations v ON di.variation_id = v.id
+		JOIN hops h ON v.hop_id = h.id
+		JOIN strategies s ON h.strategy_id = s.id
+		WHERE s.project_id = $1 AND di.status = 'running'
+		ORDER BY di.deployed_at DESC
+		LIMIT 1
+	`, projectID).Scan(&di.ID, &di.VariationID, &di.CloudEcosystem, &di.URL, &di.PublicURL, &di.InstanceInfo, &di.DeployedAt, &di.Status, &di.ErrorMessage, &di.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &di, nil
+}
+
+// =====================================================
+// Traffic Allocation Queries (added in 015)
+// =====================================================
+
+// CreateTrafficAllocation creates a new traffic allocation for a hop.
+func (db *DB) CreateTrafficAllocation(ctx context.Context, ta *domain.TrafficAllocation) error {
+	now := time.Now()
+	if ta.ID == uuid.Nil {
+		ta.ID = uuid.New()
+	}
+	ta.CreatedAt = now
+	ta.UpdatedAt = now
+
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO traffic_allocations (id, hop_id, bucket_salt, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, ta.ID, ta.HopID, ta.BucketSalt, ta.CreatedAt, ta.UpdatedAt)
+	return err
+}
+
+// GetTrafficAllocationByHop retrieves the traffic allocation for a hop.
+func (db *DB) GetTrafficAllocationByHop(ctx context.Context, hopID uuid.UUID) (*domain.TrafficAllocation, error) {
+	var ta domain.TrafficAllocation
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, hop_id, bucket_salt, created_at, updated_at
+		FROM traffic_allocations
+		WHERE hop_id = $1
+	`, hopID).Scan(&ta.ID, &ta.HopID, &ta.BucketSalt, &ta.CreatedAt, &ta.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &ta, nil
+}
+
+// CreateTrafficAllocationSlice creates a new traffic allocation slice.
+func (db *DB) CreateTrafficAllocationSlice(ctx context.Context, slice *domain.TrafficAllocationSlice) error {
+	now := time.Now()
+	if slice.ID == uuid.Nil {
+		slice.ID = uuid.New()
+	}
+	slice.CreatedAt = now
+
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO traffic_allocation_slices (id, traffic_allocation_id, variation_id, fraction, bucket_order, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, slice.ID, slice.TrafficAllocationID, slice.VariationID, slice.Fraction, slice.BucketOrder, slice.CreatedAt)
+	return err
+}
+
+// GetTrafficAllocationSlices retrieves all slices for a traffic allocation, ordered by bucket_order.
+func (db *DB) GetTrafficAllocationSlices(ctx context.Context, allocationID uuid.UUID) ([]domain.TrafficAllocationSlice, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, traffic_allocation_id, variation_id, fraction, bucket_order, created_at
+		FROM traffic_allocation_slices
+		WHERE traffic_allocation_id = $1
+		ORDER BY bucket_order
+	`, allocationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var slices []domain.TrafficAllocationSlice
+	for rows.Next() {
+		var s domain.TrafficAllocationSlice
+		if err := rows.Scan(&s.ID, &s.TrafficAllocationID, &s.VariationID, &s.Fraction, &s.BucketOrder, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		slices = append(slices, s)
+	}
+	return slices, nil
+}
+
+// UpdateTrafficAllocationSlice updates the fraction for a slice.
+func (db *DB) UpdateTrafficAllocationSlice(ctx context.Context, id uuid.UUID, fraction float64) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE traffic_allocation_slices SET fraction = $2 WHERE id = $1
+	`, id, fraction)
+	return err
+}
+
+// DeleteTrafficAllocationSlice deletes a traffic allocation slice.
+func (db *DB) DeleteTrafficAllocationSlice(ctx context.Context, id uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		DELETE FROM traffic_allocation_slices WHERE id = $1
+	`, id)
+	return err
+}
+
+// ReplaceTrafficAllocationSlices replaces all slices for an allocation atomically.
+func (db *DB) ReplaceTrafficAllocationSlices(ctx context.Context, allocationID uuid.UUID, slices []domain.TrafficAllocationSlice) error {
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Delete existing slices
+	_, err = tx.Exec(ctx, `DELETE FROM traffic_allocation_slices WHERE traffic_allocation_id = $1`, allocationID)
+	if err != nil {
+		return err
+	}
+
+	// Insert new slices
+	now := time.Now()
+	for i := range slices {
+		s := &slices[i]
+		if s.ID == uuid.Nil {
+			s.ID = uuid.New()
+		}
+		s.TrafficAllocationID = allocationID
+		s.CreatedAt = now
+
+		_, err = tx.Exec(ctx, `
+			INSERT INTO traffic_allocation_slices (id, traffic_allocation_id, variation_id, fraction, bucket_order, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, s.ID, s.TrafficAllocationID, s.VariationID, s.Fraction, s.BucketOrder, s.CreatedAt)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Update allocation timestamp
+	_, err = tx.Exec(ctx, `UPDATE traffic_allocations SET updated_at = NOW() WHERE id = $1`, allocationID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+// =====================================================
+// Traffic Allocation Envoy Config Queries (added in 015)
+// =====================================================
+
+// CreateEnvoyConfig stores a generated Envoy configuration.
+func (db *DB) CreateEnvoyConfig(ctx context.Context, config *domain.TrafficAllocationEnvoyConfig) error {
+	now := time.Now()
+	if config.ID == uuid.Nil {
+		config.ID = uuid.New()
+	}
+	config.GeneratedAt = now
+
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO traffic_allocation_envoy_configs (id, project_id, config_yaml, generated_at)
+		VALUES ($1, $2, $3, $4)
+	`, config.ID, config.ProjectID, config.ConfigYAML, config.GeneratedAt)
+	return err
+}
+
+// GetLatestEnvoyConfig retrieves the most recent Envoy config for a project.
+func (db *DB) GetLatestEnvoyConfig(ctx context.Context, projectID uuid.UUID) (*domain.TrafficAllocationEnvoyConfig, error) {
+	var config domain.TrafficAllocationEnvoyConfig
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, project_id, config_yaml, generated_at, applied_at, superseded_at
+		FROM traffic_allocation_envoy_configs
+		WHERE project_id = $1
+		ORDER BY generated_at DESC
+		LIMIT 1
+	`, projectID).Scan(&config.ID, &config.ProjectID, &config.ConfigYAML, &config.GeneratedAt, &config.AppliedAt, &config.SupersededAt)
+	if err != nil {
+		return nil, err
+	}
+	return &config, nil
+}
+
+// MarkEnvoyConfigApplied marks an Envoy config as applied and supersedes previous configs.
+func (db *DB) MarkEnvoyConfigApplied(ctx context.Context, id uuid.UUID) error {
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Get the project_id for this config
+	var projectID uuid.UUID
+	err = tx.QueryRow(ctx, `SELECT project_id FROM traffic_allocation_envoy_configs WHERE id = $1`, id).Scan(&projectID)
+	if err != nil {
+		return err
+	}
+
+	// Mark previous applied configs as superseded
+	_, err = tx.Exec(ctx, `
+		UPDATE traffic_allocation_envoy_configs
+		SET superseded_at = NOW()
+		WHERE project_id = $1 AND applied_at IS NOT NULL AND superseded_at IS NULL AND id != $2
+	`, projectID, id)
+	if err != nil {
+		return err
+	}
+
+	// Mark this config as applied
+	_, err = tx.Exec(ctx, `
+		UPDATE traffic_allocation_envoy_configs
+		SET applied_at = NOW()
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 

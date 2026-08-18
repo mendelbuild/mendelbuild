@@ -3,6 +3,30 @@
 <h1>{{.Project.Name}}</h1>
 <h2>Strategy: {{.Strategy.Name}}</h2>
 
+{{if $.ProductionURL}}
+<div class="card" style="margin-bottom: 20px; background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); border: 1px solid #28a745;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <h2 style="margin: 0 0 5px 0; color: #155724;">Production</h2>
+            <a href="{{$.ProductionURL}}" target="_blank" style="color: #155724; font-size: 1.1em;">{{$.ProductionURL}}</a>
+            <div style="font-size: 0.85em; color: #155724; margin-top: 5px;">
+                Last deployed: {{$.ProductionDeployedAt}}
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px;">
+            <a href="{{$.ProductionURL}}" target="_blank" style="padding: 8px 16px; background: #28a745; color: white; text-decoration: none; border-radius: 4px; font-weight: bold;">
+                View
+            </a>
+            <form method="POST" action="/p/{{$.ProjectID}}/redeploy" style="margin: 0;">
+                <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    Redeploy
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+{{end}}
+
 <div style="display: flex; gap: 20px; align-items: flex-start;">
     <div style="flex: 2;">
         <div class="card">
@@ -93,12 +117,12 @@
         <div class="card" id="manage-roadmap">
             <h2>Manage Roadmap</h2>
 
-            {{if $.PendingDecision}}
+            {{if $.PendingInputRequest}}
             <div style="padding: 15px; background: #cce5ff; border-radius: 4px; margin-bottom: 15px;">
                 <strong>Pending Review</strong><br>
-                <a href="/p/{{$.ProjectID}}/decisions/{{$.PendingDecision.ID}}">{{$.PendingDecision.Title}}</a>
+                <a href="/p/{{$.ProjectID}}/inputs/{{$.PendingInputRequest.ID}}">{{$.PendingInputRequest.Title}}</a>
                 <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
-                    Created {{$.PendingDecision.CreatedAt.Format "Jan 2, 2006"}}
+                    Created {{$.PendingInputRequest.CreatedAt.Format "Jan 2, 2006"}}
                 </div>
             </div>
             {{end}}
@@ -124,12 +148,12 @@
             {{end}}
         </div>
 
-        {{if $.PendingDecisions}}
+        {{if $.PendingInputRequests}}
         <div class="card">
-            <h2>Pending Decisions</h2>
-            {{range $.PendingDecisions}}
+            <h2>Input Needed</h2>
+            {{range $.PendingInputRequests}}
             <div style="padding: 8px 0; border-bottom: 1px solid #eee;">
-                <a href="/p/{{$.ProjectID}}/decisions/{{.ID}}">{{.Title}}</a>
+                <a href="/p/{{$.ProjectID}}/inputs/{{.ID}}">{{.Title}}</a>
                 <div style="font-size: 0.8em;">
                     <span class="status status-{{.Status}}">{{.Status}}</span>
                 </div>

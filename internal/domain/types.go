@@ -115,6 +115,8 @@ type Hop struct {
 	Commentary         string          `json:"commentary"`
 	Params             json.RawMessage `json:"params,omitempty"`              // Stores objective_ids and other hop metadata
 	EvaluationCriteria json.RawMessage `json:"evaluation_criteria,omitempty"` // AI-generated structured criteria for comparing Variations (JSONB)
+	RequiresDemo       bool            `json:"requires_demo"`                 // Variations need clickable demos
+	RequiresProduction bool            `json:"requires_production"`           // Variations need production traffic
 	Status             HopStatus       `json:"status"`
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`
@@ -132,6 +134,7 @@ type VariationStatus string
 const (
 	VariationStatusCreating   VariationStatus = "creating"   // Code being generated
 	VariationStatusPending    VariationStatus = "pending"    // Code generated, awaiting selection
+	VariationStatusBlocked    VariationStatus = "blocked"    // Waiting for InputRequest (e.g., credentials)
 	VariationStatusMigrating  VariationStatus = "migrating"  // Data migrations in progress
 	VariationStatusActive     VariationStatus = "active"     // Live and receiving traffic
 	VariationStatusDraining   VariationStatus = "draining"   // Traffic being drained
@@ -145,17 +148,21 @@ const (
 
 // Variation is a concrete implementation attempt within a Hop.
 type Variation struct {
-	ID            uuid.UUID       `json:"id"`
-	HopID         uuid.UUID       `json:"hop_id"`
-	Name          string          `json:"name"`                    // e.g., "cache-layer-approach"
-	Approach      string          `json:"approach"`                // Detailed implementation approach
-	RepositoryID  *uuid.UUID      `json:"repository_id,omitempty"`
-	CommitRef     *string         `json:"commit_ref,omitempty"`
-	EcosystemID   *uuid.UUID      `json:"ecosystem_id,omitempty"`
-	DeploymentRef *string         `json:"deployment_ref,omitempty"`
-	Status        VariationStatus `json:"status"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
+	ID               uuid.UUID       `json:"id"`
+	HopID            uuid.UUID       `json:"hop_id"`
+	Name             string          `json:"name"`                    // e.g., "cache-layer-approach"
+	Approach         string          `json:"approach"`                // Detailed implementation approach
+	RepositoryID     *uuid.UUID      `json:"repository_id,omitempty"`
+	CommitRef        *string         `json:"commit_ref,omitempty"`
+	EcosystemID      *uuid.UUID      `json:"ecosystem_id,omitempty"`
+	DeploymentRef    *string         `json:"deployment_ref,omitempty"`
+	DiffFilesChanged   *int            `json:"diff_files_changed,omitempty"`   // Files changed vs main
+	DiffAdditions      *int            `json:"diff_additions,omitempty"`       // Lines added vs main
+	DiffDeletions      *int            `json:"diff_deletions,omitempty"`       // Lines deleted vs main
+	EvaluationScores   json.RawMessage `json:"evaluation_scores,omitempty"`    // Cached evaluation scores
+	Status             VariationStatus `json:"status"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
 }
 
 // VariationStateHistory records a state transition for a Variation.
@@ -257,60 +264,68 @@ type BudgetSpendLog struct {
 	Description        *string   `json:"description,omitempty"`
 }
 
-// DecisionKind represents the type of decision.
-type DecisionKind string
+// InputRequestKind represents the type of input needed.
+type InputRequestKind string
 
 const (
-	DecisionKindPassFail           DecisionKind = "pass_fail"
-	DecisionKindChooseOne          DecisionKind = "choose_one"
-	DecisionKindChooseMany         DecisionKind = "choose_many"
-	DecisionKindRoadmapReview      DecisionKind = "roadmap_review"
-	DecisionKindVariationReview    DecisionKind = "variation_review"
-	DecisionKindVariationSelection DecisionKind = "variation_selection" // Pick winning Variation for a Hop
+	InputRequestKindPassFail           InputRequestKind = "pass_fail"
+	InputRequestKindChooseOne          InputRequestKind = "choose_one"
+	InputRequestKindChooseMany         InputRequestKind = "choose_many"
+	InputRequestKindRoadmapReview      InputRequestKind = "roadmap_review"
+	InputRequestKindVariationReview    InputRequestKind = "variation_review"
+	InputRequestKindVariationSelection InputRequestKind = "variation_selection"
+	InputRequestKindCredentialRequest  InputRequestKind = "credential_request"
+	InputRequestKindManualSetup        InputRequestKind = "manual_setup"
+	InputRequestKindConfirmation       InputRequestKind = "confirmation"
 )
 
-// DecisionStatus represents the lifecycle state of a Decision.
-type DecisionStatus string
+// InputRequestStatus represents the lifecycle state of an InputRequest.
+type InputRequestStatus string
 
 const (
-	DecisionStatusNeedsAssignment DecisionStatus = "needs_assignment"
-	DecisionStatusAssigned        DecisionStatus = "assigned"
-	DecisionStatusAccepted        DecisionStatus = "accepted"
-	DecisionStatusResolved        DecisionStatus = "resolved"
+	InputRequestStatusNeedsAssignment InputRequestStatus = "needs_assignment"
+	InputRequestStatusAssigned        InputRequestStatus = "assigned"
+	InputRequestStatusAccepted        InputRequestStatus = "accepted"
+	InputRequestStatusResolved        InputRequestStatus = "resolved"
 )
 
-// Decision is a choice point in the system.
-type Decision struct {
-	ID               uuid.UUID      `json:"id"`
-	Kind             DecisionKind   `json:"kind"`
-	Title            string         `json:"title"`
-	Details          *string        `json:"details,omitempty"`
-	ObjectivityScore float64        `json:"objectivity_score"`
-	ImportanceScore  float64        `json:"importance_score"`
-	Status           DecisionStatus `json:"status"`
-	AssignedTo       *string        `json:"assigned_to,omitempty"`
-	AssignedAt       *time.Time     `json:"assigned_at,omitempty"`
-	AcceptedBy       *string        `json:"accepted_by,omitempty"`
-	AcceptedAt       *time.Time     `json:"accepted_at,omitempty"`
-	ResolvedBy       *string        `json:"resolved_by,omitempty"`
-	ResolvedAt       *time.Time     `json:"resolved_at,omitempty"`
-	Resolution       *string        `json:"resolution,omitempty"`
-	Rationale        *string        `json:"rationale,omitempty"`
-	SubjectType      *string        `json:"subject_type,omitempty"`
-	SubjectID        *uuid.UUID     `json:"subject_id,omitempty"`
-	CreatedAt        time.Time      `json:"created_at"`
-	UpdatedAt        time.Time      `json:"updated_at"`
+// InputRequest is any input Mendel needs to proceed (decisions, credentials, confirmations, etc.).
+type InputRequest struct {
+	ID                   uuid.UUID          `json:"id"`
+	ProjectID            uuid.UUID          `json:"project_id"`
+	Kind                 InputRequestKind   `json:"kind"`
+	Title                string             `json:"title"`
+	Details              *string            `json:"details,omitempty"`
+	Instructions         *string            `json:"instructions,omitempty"`          // How to provide the input
+	Link                 *string            `json:"link,omitempty"`                  // URL to external service
+	RequiredCapabilities []string           `json:"required_capabilities,omitempty"` // Permissions/scopes needed
+	ObjectivityScore     float64            `json:"objectivity_score"`
+	ImportanceScore      float64            `json:"importance_score"`
+	Status               InputRequestStatus `json:"status"`
+	AssignedTo           *string            `json:"assigned_to,omitempty"`
+	AssignedAt           *time.Time         `json:"assigned_at,omitempty"`
+	AcceptedBy           *string            `json:"accepted_by,omitempty"`
+	AcceptedAt           *time.Time         `json:"accepted_at,omitempty"`
+	ResolvedBy           *string            `json:"resolved_by,omitempty"`
+	ResolvedAt           *time.Time         `json:"resolved_at,omitempty"`
+	Resolution           *string            `json:"resolution,omitempty"`
+	Rationale            *string            `json:"rationale,omitempty"`
+	SubjectType          *string            `json:"subject_type,omitempty"`
+	SubjectID            *uuid.UUID         `json:"subject_id,omitempty"`
+	CreatedAt            time.Time          `json:"created_at"`
+	UpdatedAt            time.Time          `json:"updated_at"`
 }
 
-// DecisionMessage is a message in a decision review conversation.
-type DecisionMessage struct {
-	ID         uuid.UUID  `json:"id"`
-	DecisionID uuid.UUID  `json:"decision_id"`
-	Role       string     `json:"role"` // "user", "agent", "system"
-	Content    string     `json:"content"`
-	TokensUsed *int       `json:"tokens_used,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
+// InputRequestMessage is a message in an input request conversation.
+type InputRequestMessage struct {
+	ID             uuid.UUID `json:"id"`
+	InputRequestID uuid.UUID `json:"input_request_id"`
+	Role           string    `json:"role"` // "user", "agent", "system"
+	Content        string    `json:"content"`
+	TokensUsed     *int      `json:"tokens_used,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
+
 
 // RepoType represents the type of repository.
 type RepoType string
@@ -342,4 +357,67 @@ type Ecosystem struct {
 	Config        json.RawMessage `json:"config,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
 	UpdatedAt     time.Time       `json:"updated_at"`
+}
+
+// ProjectCredential stores an encrypted credential for cloud deployments.
+type ProjectCredential struct {
+	ID             uuid.UUID `json:"id"`
+	ProjectID      uuid.UUID `json:"project_id"`
+	Name           string    `json:"name"`
+	EncryptedValue []byte    `json:"-"` // Never serialize to JSON
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// DeployedInstanceStatus represents the lifecycle state of a deployed instance.
+type DeployedInstanceStatus string
+
+const (
+	DeployedInstanceStatusDeploying  DeployedInstanceStatus = "deploying"
+	DeployedInstanceStatusRunning    DeployedInstanceStatus = "running"
+	DeployedInstanceStatusFailed     DeployedInstanceStatus = "failed"
+	DeployedInstanceStatusTerminated DeployedInstanceStatus = "terminated"
+)
+
+// DeployedInstance tracks a variation deployed to a cloud environment.
+type DeployedInstance struct {
+	ID             uuid.UUID              `json:"id"`
+	VariationID    uuid.UUID              `json:"variation_id"`
+	CloudEcosystem string                 `json:"cloud_ecosystem"`
+	URL            string                 `json:"url"`
+	PublicURL      *string                `json:"public_url,omitempty"`
+	InstanceInfo   json.RawMessage        `json:"instance_info,omitempty"`
+	DeployedAt     time.Time              `json:"deployed_at"`
+	Status         DeployedInstanceStatus `json:"status"`
+	ErrorMessage   *string                `json:"error_message,omitempty"`
+	CreatedAt      time.Time              `json:"created_at"`
+}
+
+// TrafficAllocation defines how traffic is split for a hop.
+type TrafficAllocation struct {
+	ID         uuid.UUID `json:"id"`
+	HopID      uuid.UUID `json:"hop_id"`
+	BucketSalt string    `json:"bucket_salt"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// TrafficAllocationSlice defines a portion of traffic for a variation.
+type TrafficAllocationSlice struct {
+	ID                    uuid.UUID `json:"id"`
+	TrafficAllocationID   uuid.UUID `json:"traffic_allocation_id"`
+	VariationID           uuid.UUID `json:"variation_id"`
+	Fraction              float64   `json:"fraction"`
+	BucketOrder           int       `json:"bucket_order"`
+	CreatedAt             time.Time `json:"created_at"`
+}
+
+// TrafficAllocationEnvoyConfig stores a generated Envoy configuration.
+type TrafficAllocationEnvoyConfig struct {
+	ID           uuid.UUID  `json:"id"`
+	ProjectID    uuid.UUID  `json:"project_id"`
+	ConfigYAML   string     `json:"config_yaml"`
+	GeneratedAt  time.Time  `json:"generated_at"`
+	AppliedAt    *time.Time `json:"applied_at,omitempty"`
+	SupersededAt *time.Time `json:"superseded_at,omitempty"`
 }

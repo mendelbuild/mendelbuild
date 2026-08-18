@@ -278,48 +278,49 @@ func proposeRoadmap(args []string) {
 	}
 	roadmapStr := string(roadmapJSON)
 
-	decision := &domain.Decision{
+	inputRequest := &domain.InputRequest{
 		ID:               uuid.New(),
-		Kind:             domain.DecisionKindRoadmapReview,
+		ProjectID:        strategy.ProjectID,
+		Kind:             domain.InputRequestKindRoadmapReview,
 		Title:            fmt.Sprintf("Roadmap Review: %s", strategy.Name),
 		Details:          &roadmapStr,
 		ObjectivityScore: 0.3, // Roadmap review is subjective
 		ImportanceScore:  0.8, // Roadmaps are important
-		Status:           domain.DecisionStatusNeedsAssignment,
+		Status:           domain.InputRequestStatusNeedsAssignment,
 		SubjectType:      strPtr("strategy"),
 		SubjectID:        &strategyUUID,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
 
-	if err := database.CreateDecision(ctx, decision); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating decision: %v\n", err)
+	if err := database.CreateInputRequest(ctx, inputRequest); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating input request: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Create initial agent message
 	tokensUsed := tokens
-	agentMessage := &domain.DecisionMessage{
-		ID:         uuid.New(),
-		DecisionID: decision.ID,
-		Role:       "agent",
-		Content:    fmt.Sprintf("Generated initial roadmap proposal with %d hops.", len(roadmap.Hops)),
-		TokensUsed: &tokensUsed,
-		CreatedAt:  now,
+	agentMessage := &domain.InputRequestMessage{
+		ID:             uuid.New(),
+		InputRequestID: inputRequest.ID,
+		Role:           "agent",
+		Content:        fmt.Sprintf("Generated initial roadmap proposal with %d hops.", len(roadmap.Hops)),
+		TokensUsed:     &tokensUsed,
+		CreatedAt:      now,
 	}
 
-	if err := database.CreateDecisionMessage(ctx, agentMessage); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating decision message: %v\n", err)
+	if err := database.CreateInputRequestMessage(ctx, agentMessage); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating input request message: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Created decision %s\n", decision.ID)
+	fmt.Printf("Created input request %s\n", inputRequest.ID)
 	fmt.Printf("Tokens used: %d\n", tokens)
 	fmt.Printf("Proposed %d hops:\n", len(roadmap.Hops))
 	for i, hop := range roadmap.Hops {
 		fmt.Printf("  %d. %s\n", i+1, hop.Name)
 	}
-	fmt.Printf("\nView at: http://localhost:8080/p/<project-id>/decisions/%s\n", decision.ID)
+	fmt.Printf("\nView at: http://localhost:8080/p/<project-id>/inputs/%s\n", inputRequest.ID)
 }
 
 func strPtr(s string) *string {
@@ -328,18 +329,18 @@ func strPtr(s string) *string {
 
 func runGenerate(args []string) {
 	fs := flag.NewFlagSet("generate", flag.ExitOnError)
-	decisionID := fs.String("decision", "", "Approved variation_review decision UUID")
+	inputRequestID := fs.String("input-request", "", "Approved variation_review input request UUID")
 	concurrency := fs.Int("concurrency", 2, "Number of parallel generators")
 	fs.Parse(args)
 
-	if *decisionID == "" {
-		fmt.Fprintln(os.Stderr, "usage: mendel generate -decision <uuid>")
+	if *inputRequestID == "" {
+		fmt.Fprintln(os.Stderr, "usage: mendel generate -input-request <uuid>")
 		os.Exit(1)
 	}
 
-	decisionUUID, err := uuid.Parse(*decisionID)
+	inputRequestUUID, err := uuid.Parse(*inputRequestID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid decision UUID: %v\n", err)
+		fmt.Fprintf(os.Stderr, "invalid input request UUID: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -353,37 +354,37 @@ func runGenerate(args []string) {
 	}
 	defer database.Close()
 
-	// Load decision
-	decision, err := database.GetDecision(ctx, decisionUUID)
+	// Load input request
+	inputRequest, err := database.GetInputRequest(ctx, inputRequestUUID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading decision: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error loading input request: %v\n", err)
 		os.Exit(1)
 	}
 
-	if decision.Kind != domain.DecisionKindVariationReview {
-		fmt.Fprintf(os.Stderr, "Decision is not a variation_review (kind: %s)\n", decision.Kind)
+	if inputRequest.Kind != domain.InputRequestKindVariationReview {
+		fmt.Fprintf(os.Stderr, "Input request is not a variation_review (kind: %s)\n", inputRequest.Kind)
 		os.Exit(1)
 	}
 
-	if decision.Status != domain.DecisionStatusResolved || decision.Resolution == nil || *decision.Resolution != "approved" {
-		fmt.Fprintln(os.Stderr, "Decision must be approved before generating code")
+	if inputRequest.Status != domain.InputRequestStatusResolved || inputRequest.Resolution == nil || *inputRequest.Resolution != "approved" {
+		fmt.Fprintln(os.Stderr, "Input request must be approved before generating code")
 		os.Exit(1)
 	}
 
-	if decision.SubjectID == nil {
-		fmt.Fprintln(os.Stderr, "Decision has no hop associated")
+	if inputRequest.SubjectID == nil {
+		fmt.Fprintln(os.Stderr, "Input request has no hop associated")
 		os.Exit(1)
 	}
 
-	hopID := *decision.SubjectID
+	hopID := *inputRequest.SubjectID
 
-	// Parse variation proposal from decision details
-	if decision.Details == nil {
-		fmt.Fprintln(os.Stderr, "Decision has no variation proposal")
+	// Parse variation proposal from input request details
+	if inputRequest.Details == nil {
+		fmt.Fprintln(os.Stderr, "Input request has no variation proposal")
 		os.Exit(1)
 	}
 
-	proposal, err := codegen.ParseVariationProposal(*decision.Details)
+	proposal, err := codegen.ParseVariationProposal(*inputRequest.Details)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing variation proposal: %v\n", err)
 		os.Exit(1)

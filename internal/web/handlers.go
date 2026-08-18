@@ -66,6 +66,25 @@ func renderPage(w http.ResponseWriter, pageName string, data interface{}) error 
 	return t.ExecuteTemplate(w, "layout", data)
 }
 
+// addOpenInputCount adds the open input request count to template data for the nav badge.
+func (s *Server) addOpenInputCount(ctx context.Context, data map[string]interface{}) {
+	projectIDStr, ok := data["ProjectID"].(string)
+	if !ok || projectIDStr == "" {
+		return
+	}
+	projectID, err := uuid.Parse(projectIDStr)
+	if err != nil {
+		return
+	}
+	count, err := s.db.CountOpenInputRequestsByProject(ctx, projectID)
+	if err != nil {
+		return
+	}
+	if count > 0 {
+		data["OpenInputCount"] = count
+	}
+}
+
 // StrategyView holds data for rendering the strategy page.
 type StrategyView struct {
 	Project    *domain.Project
@@ -127,41 +146,57 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get decisions for sidebar
-	decisions, _ := s.db.GetDecisionsByProject(ctx, projectID)
-	var pendingDecision *domain.Decision
-	var pendingDecisions []domain.Decision
-	for i := range decisions {
-		d := &decisions[i]
-		if d.Kind == domain.DecisionKindRoadmapReview && d.Status != domain.DecisionStatusResolved {
-			pendingDecision = d
+	// Get input requests for sidebar
+	inputRequests, _ := s.db.GetInputRequestsByProject(ctx, projectID)
+	var pendingInputRequest *domain.InputRequest
+	var pendingInputRequests []domain.InputRequest
+	for i := range inputRequests {
+		ir := &inputRequests[i]
+		if ir.Kind == domain.InputRequestKindRoadmapReview && ir.Status != domain.InputRequestStatusResolved {
+			pendingInputRequest = ir
 		}
-		// Collect all non-resolved decisions
-		if d.Status != domain.DecisionStatusResolved && len(pendingDecisions) < 5 {
-			pendingDecisions = append(pendingDecisions, *d)
+		// Collect all non-resolved input requests
+		if ir.Status != domain.InputRequestStatusResolved && len(pendingInputRequests) < 5 {
+			pendingInputRequests = append(pendingInputRequests, *ir)
 		}
 	}
 
-	data := map[string]interface{}{
-		"Title":            "Strategy: " + view.Strategy.Name,
-		"ProjectID":        projectID,
-		"Strategy":         view,
-		"PendingDecision":  pendingDecision,
-		"PendingDecisions": pendingDecisions,
+	// Get production deployment info
+	var productionURL string
+	var productionDeployedAt string
+	deployment, err := s.db.GetLatestRunningDeploymentByProject(ctx, projectID)
+	if err == nil && deployment != nil {
+		if deployment.PublicURL != nil {
+			productionURL = *deployment.PublicURL
+		} else {
+			productionURL = deployment.URL
+		}
+		productionDeployedAt = deployment.DeployedAt.Format("2006-01-02 15:04")
 	}
+
+	data := map[string]interface{}{
+		"Title":               "Strategy: " + view.Strategy.Name,
+		"ProjectID":           projectID.String(),
+		"Strategy":            view,
+		"PendingInputRequest":     pendingInputRequest,
+		"PendingInputRequests":    pendingInputRequests,
+		"ProductionURL":       productionURL,
+		"ProductionDeployedAt": productionDeployedAt,
+	}
+	s.addOpenInputCount(ctx, data)
 
 	if err := renderPage(w, "strategy.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-// DecisionView is a template-friendly view of a Decision with dereferenced pointer fields.
-type DecisionView struct {
-	domain.Decision
+// InputRequestView is a template-friendly view of an InputRequest with dereferenced pointer fields.
+type InputRequestView struct {
+	domain.InputRequest
 	ResolutionStr string
 }
 
-func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleInputRequests(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
 	if err != nil {
@@ -169,23 +204,23 @@ func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	decisions, err := s.db.GetDecisionsByProject(ctx, projectID)
+	inputRequests, err := s.db.GetInputRequestsByProject(ctx, projectID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Separate open and resolved decisions, converting to view types
-	var openDecisions, resolvedDecisions []DecisionView
-	for _, d := range decisions {
-		view := DecisionView{Decision: d}
-		if d.Resolution != nil {
-			view.ResolutionStr = *d.Resolution
+	// Separate open and resolved input requests, converting to view types
+	var openInputRequests, resolvedInputRequests []InputRequestView
+	for _, ir := range inputRequests {
+		view := InputRequestView{InputRequest: ir}
+		if ir.Resolution != nil {
+			view.ResolutionStr = *ir.Resolution
 		}
-		if d.Status == domain.DecisionStatusResolved {
-			resolvedDecisions = append(resolvedDecisions, view)
+		if ir.Status == domain.InputRequestStatusResolved {
+			resolvedInputRequests = append(resolvedInputRequests, view)
 		} else {
-			openDecisions = append(openDecisions, view)
+			openInputRequests = append(openInputRequests, view)
 		}
 	}
 
@@ -196,14 +231,15 @@ func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]interface{}{
-		"Title":             "Decisions",
-		"ProjectID":         projectID,
-		"OpenDecisions":     openDecisions,
-		"ResolvedDecisions": resolvedDecisions,
+		"Title":             "Input Needed",
+		"ProjectID":         projectID.String(),
+		"OpenInputRequests":     openInputRequests,
+		"ResolvedInputRequests": resolvedInputRequests,
 		"ActiveTab":         activeTab,
 	}
+	s.addOpenInputCount(ctx, data)
 
-	if err := renderPage(w, "decisions.html", data); err != nil {
+	if err := renderPage(w, "input_requests.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -274,16 +310,16 @@ func (s *Server) handleRoadmap(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		} else {
-			// Check for pending variation_review decision with proposed variations
-			decision, err := s.db.GetDecisionBySubjectAndKind(ctx, "hop", hop.ID, domain.DecisionKindVariationReview)
-			if err == nil && decision != nil && decision.Status != domain.DecisionStatusResolved && decision.Details != nil {
-				// Parse proposed variations from decision details
+			// Check for pending variation_review input request with proposed variations
+			inputRequest, err := s.db.GetInputRequestBySubjectAndKind(ctx, "hop", hop.ID, domain.InputRequestKindVariationReview)
+			if err == nil && inputRequest != nil && inputRequest.Status != domain.InputRequestStatusResolved && inputRequest.Details != nil {
+				// Parse proposed variations from input request details
 				var proposal struct {
 					Variations []struct {
 						Name string `json:"name"`
 					} `json:"variations"`
 				}
-				if json.Unmarshal([]byte(*decision.Details), &proposal) == nil {
+				if json.Unmarshal([]byte(*inputRequest.Details), &proposal) == nil {
 					for _, v := range proposal.Variations {
 						varViews = append(varViews, RoadmapVariationView{
 							ID:     "", // No ID yet - not clickable
@@ -324,12 +360,13 @@ func (s *Server) handleRoadmap(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"Title":     "Roadmap",
-		"ProjectID": projectID,
+		"ProjectID": projectID.String(),
 		"Project":   project,
 		"Strategy":  strategy,
 		"HopsJSON":  template.JS(hopsJSON),
 		"EdgesJSON": template.JS(edgesJSON),
 	}
+	s.addOpenInputCount(ctx, data)
 
 	if err := renderPage(w, "roadmap.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

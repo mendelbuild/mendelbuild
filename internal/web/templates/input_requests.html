@@ -1,20 +1,20 @@
 {{define "page-content"}}
-<h1>Decisions</h1>
+<h1>Input Needed</h1>
 
 <div class="card">
     <div class="tabs">
         <a href="?tab=open" class="tab {{if eq .ActiveTab "open"}}active{{end}}">
             Open
-            {{if .OpenDecisions}}<span class="tab-count">{{len .OpenDecisions}}</span>{{end}}
+            {{if .OpenInputRequests}}<span class="tab-count">{{len .OpenInputRequests}}</span>{{end}}
         </a>
         <a href="?tab=resolved" class="tab {{if eq .ActiveTab "resolved"}}active{{end}}">
             Resolved
-            {{if .ResolvedDecisions}}<span class="tab-count">{{len .ResolvedDecisions}}</span>{{end}}
+            {{if .ResolvedInputRequests}}<span class="tab-count">{{len .ResolvedInputRequests}}</span>{{end}}
         </a>
     </div>
 
     {{if eq .ActiveTab "open"}}
-        {{if .OpenDecisions}}
+        {{if .OpenInputRequests}}
         <table>
             <thead>
                 <tr>
@@ -27,23 +27,23 @@
                 </tr>
             </thead>
             <tbody>
-                {{range .OpenDecisions}}
+                {{range .OpenInputRequests}}
                 <tr>
                     <td>{{.Title}}</td>
                     <td>{{.Kind}}</td>
                     <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
                     <td>{{printf "%.2f" .ImportanceScore}}</td>
                     <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
-                    <td><a href="/p/{{$.ProjectID}}/decisions/{{.ID}}">Review</a></td>
+                    <td><a href="/p/{{$.ProjectID}}/inputs/{{.ID}}">Review</a></td>
                 </tr>
                 {{end}}
             </tbody>
         </table>
         {{else}}
-        <p class="empty">No open decisions. All caught up!</p>
+        <p class="empty">No input needed. All caught up!</p>
         {{end}}
     {{else}}
-        {{if .ResolvedDecisions}}
+        {{if .ResolvedInputRequests}}
         <table>
             <thead>
                 <tr>
@@ -56,7 +56,7 @@
                 </tr>
             </thead>
             <tbody>
-                {{range .ResolvedDecisions}}
+                {{range .ResolvedInputRequests}}
                 <tr>
                     <td>{{.Title}}</td>
                     <td>{{.Kind}}</td>
@@ -71,13 +71,13 @@
                     </td>
                     <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
                     <td>{{if .ResolvedAt}}{{.ResolvedAt.Format "2006-01-02 15:04"}}{{else}}-{{end}}</td>
-                    <td><a href="/p/{{$.ProjectID}}/decisions/{{.ID}}">View</a></td>
+                    <td><a href="/p/{{$.ProjectID}}/inputs/{{.ID}}">View</a></td>
                 </tr>
                 {{end}}
             </tbody>
         </table>
         {{else}}
-        <p class="empty">No resolved decisions yet.</p>
+        <p class="empty">No resolved items yet.</p>
         {{end}}
     {{end}}
 </div>
