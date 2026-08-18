@@ -38,6 +38,8 @@ func main() {
 		proposeRoadmap(args)
 	case "generate":
 		runGenerate(args)
+	case "assign-owner":
+		assignOwner(args)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -54,6 +56,7 @@ Commands:
   migrate           Run database migrations
   propose-roadmap   Generate a roadmap proposal for a strategy
   generate          Run code generation for a hop's approved variations
+  assign-owner      Assign a user as owner to all projects without an owner
 
 Environment:
   MENDEL_DB_URL       Postgres connection string (default: postgres://localhost:5432/mendelbuild?sslmode=disable)
@@ -422,5 +425,57 @@ func runGenerate(args []string) {
 		if r.Error != "" {
 			fmt.Printf("    Error: %s\n", r.Error)
 		}
+	}
+}
+
+func assignOwner(args []string) {
+	fs := flag.NewFlagSet("assign-owner", flag.ExitOnError)
+	email := fs.String("email", "", "Email address of user to assign as owner")
+	fs.Parse(args)
+
+	if *email == "" {
+		fmt.Fprintln(os.Stderr, "error: -email is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	database, err := db.Connect(ctx, getConnString())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error connecting to database: %v\n", err)
+		os.Exit(1)
+	}
+	defer database.Close()
+
+	// Find or create user by email
+	user, err := database.GetUserByEmail(ctx, *email)
+	if err != nil {
+		// User doesn't exist, create them
+		user = &domain.User{
+			ID:        uuid.New(),
+			Email:     *email,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		if err := database.CreateUser(ctx, user); err != nil {
+			fmt.Fprintf(os.Stderr, "error creating user: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Created user: %s (%s)\n", user.Email, user.ID)
+	} else {
+		fmt.Printf("Found existing user: %s (%s)\n", user.Email, user.ID)
+	}
+
+	// Assign as owner to all projects without an owner
+	count, err := database.AssignOwnerToUnownedProjects(ctx, user.ID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error assigning ownership: %v\n", err)
+		os.Exit(1)
+	}
+
+	if count == 0 {
+		fmt.Println("No unowned projects found.")
+	} else {
+		fmt.Printf("Assigned %s as owner to %d project(s).\n", *email, count)
 	}
 }

@@ -1,5 +1,5 @@
 -- MendelBuild Core Schema
--- This file represents the complete schema after all migrations (001-016).
+-- This file represents the complete schema after all migrations (001-022).
 -- It should be kept in sync with migrations for reference.
 --
 -- See DESIGN.md Section 2 for conceptual overview.
@@ -39,6 +39,49 @@ CREATE TABLE project_credentials (
 );
 
 CREATE INDEX idx_project_credentials_project ON project_credentials(project_id);
+
+--------------------------------------------------------------------------------
+-- USERS AND AUTHENTICATION
+--------------------------------------------------------------------------------
+-- Users for multi-user support [added in 022]
+
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email TEXT NOT NULL UNIQUE,
+    name TEXT,
+    picture_url TEXT,
+    google_id TEXT UNIQUE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_google_id ON users(google_id);
+
+-- Project membership links users to projects with roles [added in 022]
+CREATE TABLE project_members (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'member')),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(project_id, user_id)
+);
+
+CREATE INDEX idx_project_members_user ON project_members(user_id);
+CREATE INDEX idx_project_members_project ON project_members(project_id);
+
+-- Sessions for authentication [added in 022]
+CREATE TABLE sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash BYTEA NOT NULL UNIQUE,
+    expires_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_sessions_token ON sessions(token_hash);
+CREATE INDEX idx_sessions_expires ON sessions(expires_at);
 
 --------------------------------------------------------------------------------
 -- STRATEGIES

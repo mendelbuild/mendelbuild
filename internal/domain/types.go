@@ -21,6 +21,43 @@ type ProjectConfig struct {
 	AnthropicAPIKey string `json:"anthropic_api_key,omitempty"`
 }
 
+// User represents an authenticated user.
+type User struct {
+	ID         uuid.UUID `json:"id"`
+	Email      string    `json:"email"`
+	Name       string    `json:"name,omitempty"`
+	PictureURL string    `json:"picture_url,omitempty"`
+	GoogleID   string    `json:"google_id,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// ProjectMemberRole defines the role a user has in a project.
+type ProjectMemberRole string
+
+const (
+	ProjectMemberRoleOwner  ProjectMemberRole = "owner"
+	ProjectMemberRoleMember ProjectMemberRole = "member"
+)
+
+// ProjectMember links a user to a project with a role.
+type ProjectMember struct {
+	ID        uuid.UUID         `json:"id"`
+	ProjectID uuid.UUID         `json:"project_id"`
+	UserID    uuid.UUID         `json:"user_id"`
+	Role      ProjectMemberRole `json:"role"`
+	CreatedAt time.Time         `json:"created_at"`
+}
+
+// Session represents an authenticated session.
+type Session struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	TokenHash []byte    `json:"-"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // Strategy captures OKRs, funding sources, and the roadmap (DAG of Hops).
 type Strategy struct {
 	ID        uuid.UUID  `json:"id"`

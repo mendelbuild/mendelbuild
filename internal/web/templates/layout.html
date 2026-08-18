@@ -152,8 +152,10 @@
         <a href="/p/{{.ProjectID}}/okr">OKRs</a>
         <a href="/p/{{.ProjectID}}/roadmap">Roadmap</a>
         <a href="/p/{{.ProjectID}}/inputs">Input Needed{{if .OpenInputCount}}<span class="nav-badge">{{.OpenInputCount}}</span>{{end}}</a>
-        <a class="right" href="/p/{{.ProjectID}}/settings">Settings</a>{{end}}
-        <a {{if not .ProjectID}}class="right" {{end}}href="/">All Projects</a>
+        <a href="/p/{{.ProjectID}}/settings">Settings</a>{{end}}
+        <a href="/">All Projects</a>
+        {{if .User}}<span class="right" style="color: #aaa; margin-right: 15px;">{{.User.Email}}</span>
+        <a href="/auth/logout">Logout</a>{{end}}
     </nav>
     {{block "page-content" .}}{{end}}
 </body>

@@ -2373,3 +2373,222 @@ func (db *DB) MarkEnvoyConfigApplied(ctx context.Context, id uuid.UUID) error {
 	return tx.Commit(ctx)
 }
 
+// ============================================================================
+// User and Session Queries
+// ============================================================================
+
+// CreateUser creates a new user.
+func (db *DB) CreateUser(ctx context.Context, user *domain.User) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO users (id, email, name, picture_url, google_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, user.ID, user.Email, user.Name, user.PictureURL, user.GoogleID, user.CreatedAt, user.UpdatedAt)
+	return err
+}
+
+// GetUser gets a user by ID.
+func (db *DB) GetUser(ctx context.Context, id uuid.UUID) (*domain.User, error) {
+	var user domain.User
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, email, name, picture_url, google_id, created_at, updated_at
+		FROM users WHERE id = $1
+	`, id).Scan(&user.ID, &user.Email, &user.Name, &user.PictureURL, &user.GoogleID, &user.CreatedAt, &user.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// GetUserByEmail gets a user by email address.
+func (db *DB) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
+	var user domain.User
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, email, name, picture_url, google_id, created_at, updated_at
+		FROM users WHERE email = $1
+	`, email).Scan(&user.ID, &user.Email, &user.Name, &user.PictureURL, &user.GoogleID, &user.CreatedAt, &user.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// GetUserByGoogleID gets a user by Google ID.
+func (db *DB) GetUserByGoogleID(ctx context.Context, googleID string) (*domain.User, error) {
+	var user domain.User
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, email, name, picture_url, google_id, created_at, updated_at
+		FROM users WHERE google_id = $1
+	`, googleID).Scan(&user.ID, &user.Email, &user.Name, &user.PictureURL, &user.GoogleID, &user.CreatedAt, &user.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// UpdateUserGoogleID updates a user's Google ID.
+func (db *DB) UpdateUserGoogleID(ctx context.Context, userID uuid.UUID, googleID string) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE users SET google_id = $1, updated_at = NOW() WHERE id = $2
+	`, googleID, userID)
+	return err
+}
+
+// CreateSession creates a new session.
+func (db *DB) CreateSession(ctx context.Context, session *domain.Session) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, session.ID, session.UserID, session.TokenHash, session.ExpiresAt, session.CreatedAt)
+	return err
+}
+
+// GetSessionByTokenHash gets a session by token hash.
+func (db *DB) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (*domain.Session, error) {
+	var session domain.Session
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, user_id, token_hash, expires_at, created_at
+		FROM sessions WHERE token_hash = $1
+	`, tokenHash).Scan(&session.ID, &session.UserID, &session.TokenHash, &session.ExpiresAt, &session.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
+// DeleteSession deletes a session by ID.
+func (db *DB) DeleteSession(ctx context.Context, id uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, id)
+	return err
+}
+
+// DeleteExpiredSessions deletes all expired sessions.
+func (db *DB) DeleteExpiredSessions(ctx context.Context) error {
+	_, err := db.Pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at < NOW()`)
+	return err
+}
+
+// ============================================================================
+// Project Membership Queries
+// ============================================================================
+
+// AddProjectMember adds a user to a project with a role.
+func (db *DB) AddProjectMember(ctx context.Context, projectID, userID uuid.UUID, role domain.ProjectMemberRole) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO project_members (id, project_id, user_id, role, created_at)
+		VALUES ($1, $2, $3, $4, NOW())
+		ON CONFLICT (project_id, user_id) DO UPDATE SET role = $4
+	`, uuid.New(), projectID, userID, role)
+	return err
+}
+
+// RemoveProjectMember removes a user from a project.
+func (db *DB) RemoveProjectMember(ctx context.Context, projectID, userID uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		DELETE FROM project_members WHERE project_id = $1 AND user_id = $2
+	`, projectID, userID)
+	return err
+}
+
+// IsProjectMember checks if a user is a member of a project.
+func (db *DB) IsProjectMember(ctx context.Context, projectID, userID uuid.UUID) (bool, error) {
+	var exists bool
+	err := db.Pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM project_members WHERE project_id = $1 AND user_id = $2)
+	`, projectID, userID).Scan(&exists)
+	return exists, err
+}
+
+// GetProjectMemberRole gets a user's role in a project.
+func (db *DB) GetProjectMemberRole(ctx context.Context, projectID, userID uuid.UUID) (domain.ProjectMemberRole, error) {
+	var role domain.ProjectMemberRole
+	err := db.Pool.QueryRow(ctx, `
+		SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2
+	`, projectID, userID).Scan(&role)
+	return role, err
+}
+
+// GetProjectMembers gets all members of a project.
+func (db *DB) GetProjectMembers(ctx context.Context, projectID uuid.UUID) ([]struct {
+	User domain.User
+	Role domain.ProjectMemberRole
+}, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT u.id, u.email, u.name, u.picture_url, u.google_id, u.created_at, u.updated_at, pm.role
+		FROM project_members pm
+		JOIN users u ON pm.user_id = u.id
+		WHERE pm.project_id = $1
+		ORDER BY pm.created_at
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var members []struct {
+		User domain.User
+		Role domain.ProjectMemberRole
+	}
+	for rows.Next() {
+		var m struct {
+			User domain.User
+			Role domain.ProjectMemberRole
+		}
+		if err := rows.Scan(&m.User.ID, &m.User.Email, &m.User.Name, &m.User.PictureURL, &m.User.GoogleID, &m.User.CreatedAt, &m.User.UpdatedAt, &m.Role); err != nil {
+			return nil, err
+		}
+		members = append(members, m)
+	}
+	return members, rows.Err()
+}
+
+// GetUserProjects gets all projects a user is a member of.
+func (db *DB) GetUserProjects(ctx context.Context, userID uuid.UUID) ([]struct {
+	Project domain.Project
+	Role    domain.ProjectMemberRole
+}, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT p.id, p.name, p.config, p.created_at, p.updated_at, pm.role
+		FROM project_members pm
+		JOIN projects p ON pm.project_id = p.id
+		WHERE pm.user_id = $1
+		ORDER BY p.name
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var projects []struct {
+		Project domain.Project
+		Role    domain.ProjectMemberRole
+	}
+	for rows.Next() {
+		var p struct {
+			Project domain.Project
+			Role    domain.ProjectMemberRole
+		}
+		if err := rows.Scan(&p.Project.ID, &p.Project.Name, &p.Project.Config, &p.Project.CreatedAt, &p.Project.UpdatedAt, &p.Role); err != nil {
+			return nil, err
+		}
+		projects = append(projects, p)
+	}
+	return projects, rows.Err()
+}
+
+// AssignOwnerToUnownedProjects assigns a user as owner to all projects that have no owner.
+func (db *DB) AssignOwnerToUnownedProjects(ctx context.Context, userID uuid.UUID) (int, error) {
+	result, err := db.Pool.Exec(ctx, `
+		INSERT INTO project_members (id, project_id, user_id, role, created_at)
+		SELECT gen_random_uuid(), p.id, $1, 'owner', NOW()
+		FROM projects p
+		WHERE NOT EXISTS (
+			SELECT 1 FROM project_members pm
+			WHERE pm.project_id = p.id AND pm.role = 'owner'
+		)
+	`, userID)
+	if err != nil {
+		return 0, err
+	}
+	return int(result.RowsAffected()), nil
+}
+
