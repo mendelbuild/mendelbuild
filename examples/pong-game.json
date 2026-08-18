@@ -1,0 +1,44 @@
+{
+  "project": "pong-game",
+  "strategy": {
+    "name": "Single-Player Pong",
+    "objectives": [
+      {
+        "id": "playable-game",
+        "description": "Create a fun, playable single-player Pong game in the browser",
+        "key_results": [
+          {
+            "id": "game-loop",
+            "description": "Smooth 60fps game loop with paddle and ball physics",
+            "target_units": "working"
+          },
+          {
+            "id": "scoring",
+            "description": "Score tracking with game over condition",
+            "target_units": "working"
+          }
+        ]
+      },
+      {
+        "id": "user-auth",
+        "description": "Users can log in to save their high scores",
+        "key_results": [
+          {
+            "id": "login-flow",
+            "description": "Simple email/password authentication",
+            "target_units": "working"
+          },
+          {
+            "id": "high-scores",
+            "description": "Persist and display high scores per user",
+            "target_units": "working"
+          }
+        ]
+      }
+    ],
+    "funding": [
+      {"resource_type": "dollars", "amount": 10.00},
+      {"resource_type": "claude_tokens", "amount": 1000000}
+    ]
+  }
+}
