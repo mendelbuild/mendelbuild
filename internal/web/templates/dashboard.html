@@ -1,13 +1,13 @@
 {{define "page-content"}}
-<h1>MendelBuild Dashboard</h1>
+<h1>Your Projects</h1>
 
 <div class="card">
-    <h2>Projects</h2>
     {{if .Projects}}
     <table>
         <thead>
             <tr>
                 <th>Name</th>
+                <th>Role</th>
                 <th>Created</th>
                 <th>Actions</th>
             </tr>
@@ -15,10 +15,11 @@
         <tbody>
             {{range .Projects}}
             <tr>
-                <td>{{.Name}}</td>
-                <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                <td>{{.Project.Name}}</td>
+                <td><span class="status status-{{if eq .Role "owner"}}active{{else}}pending{{end}}">{{.Role}}</span></td>
+                <td>{{.Project.CreatedAt.Format "2006-01-02 15:04"}}</td>
                 <td>
-                    <a href="/p/{{.ID}}/strategy">View Strategy</a>
+                    <a href="/p/{{.Project.ID}}/strategy">View Strategy</a>
                 </td>
             </tr>
             {{end}}

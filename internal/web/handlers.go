@@ -66,6 +66,13 @@ func renderPage(w http.ResponseWriter, pageName string, data interface{}) error 
 	return t.ExecuteTemplate(w, "layout", data)
 }
 
+// addUserToData adds the current user to template data (if authenticated).
+func (s *Server) addUserToData(r *http.Request, data map[string]interface{}) {
+	if user := UserFromContext(r.Context()); user != nil {
+		data["User"] = user
+	}
+}
+
 // addOpenInputCount adds the open input request count to template data for the nav badge.
 func (s *Server) addOpenInputCount(ctx context.Context, data map[string]interface{}) {
 	projectIDStr, ok := data["ProjectID"].(string)
@@ -104,21 +111,54 @@ type ObjectiveView struct {
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get all projects (for now, just show the first one if any)
-	projects, err := s.listProjects(ctx)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	// Get projects for the current user (or all if auth not enabled)
+	var projects []struct {
+		Project *domain.Project
+		Role    domain.ProjectMemberRole
+	}
+
+	user := UserFromContext(ctx)
+	if user != nil && s.authEnabled {
+		userProjects, err := s.db.GetUserProjects(ctx, user.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for _, p := range userProjects {
+			proj := p.Project
+			projects = append(projects, struct {
+				Project *domain.Project
+				Role    domain.ProjectMemberRole
+			}{Project: &proj, Role: p.Role})
+		}
+	} else {
+		allProjects, err := s.listProjects(ctx)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for i := range allProjects {
+			projects = append(projects, struct {
+				Project *domain.Project
+				Role    domain.ProjectMemberRole
+			}{Project: &allProjects[i], Role: domain.ProjectMemberRoleOwner})
+		}
 	}
 
 	data := map[string]interface{}{
 		"Title":    "MendelBuild Dashboard",
 		"Projects": projects,
 	}
+	s.addUserToData(r, data)
 
 	if err := renderPage(w, "dashboard.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	t := template.Must(template.New("").ParseFS(templatesFS, "templates/login.html"))
+	t.ExecuteTemplate(w, "login", nil)
 }
 
 func (s *Server) handleProjectDashboard(w http.ResponseWriter, r *http.Request) {
@@ -184,6 +224,7 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 		"ProductionDeployedAt": productionDeployedAt,
 	}
 	s.addOpenInputCount(ctx, data)
+	s.addUserToData(r, data)
 
 	if err := renderPage(w, "strategy.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

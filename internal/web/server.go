@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/agent"
+	"github.com/bhs/mendelbuild/internal/auth"
 	"github.com/bhs/mendelbuild/internal/codegen"
 	"github.com/bhs/mendelbuild/internal/db"
 	"github.com/bhs/mendelbuild/internal/demo"
@@ -26,9 +27,21 @@ type Server struct {
 	addr                string
 	router              chi.Router
 	orchestrator        *codegen.Orchestrator
+	auth                *auth.Auth
+	authEnabled         bool
 	stopWorker          chan struct{}
 	processingHops      map[uuid.UUID]bool // tracks hops currently being processed
 	processingHopsMutex sync.Mutex
+}
+
+type contextKey string
+
+const userContextKey contextKey = "user"
+
+// UserFromContext extracts the user from the request context.
+func UserFromContext(ctx context.Context) *domain.User {
+	user, _ := ctx.Value(userContextKey).(*domain.User)
+	return user
 }
 
 // NewServer creates a new Server.
@@ -40,6 +53,18 @@ func NewServer(database *db.DB, addr string) *Server {
 		stopWorker:     make(chan struct{}),
 		processingHops: make(map[uuid.UUID]bool),
 	}
+
+	// Initialize auth if configured
+	authConfig, err := auth.ConfigFromEnv()
+	if err != nil {
+		fmt.Printf("[startup] Auth not configured: %v\n", err)
+		fmt.Printf("[startup] Running without authentication (set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET to enable)\n")
+	} else {
+		s.auth = auth.New(authConfig, database)
+		s.authEnabled = true
+		fmt.Printf("[startup] Authentication enabled\n")
+	}
+
 	s.setupRoutes()
 	s.cleanupStaleDemos()
 	s.startVariationWorker()
@@ -563,11 +588,28 @@ func (s *Server) setupRoutes() {
 	staticSubFS, _ := fs.Sub(staticFS, "static")
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(staticSubFS))))
 
-	// Global pages
-	r.Get("/", s.handleDashboard)
+	// Auth routes (public)
+	if s.authEnabled {
+		r.Get("/auth/login", s.handleLogin)
+		r.Get("/auth/start", s.auth.HandleLogin)
+		r.Get("/auth/callback", s.auth.HandleCallback)
+		r.Get("/auth/logout", s.auth.HandleLogout)
+	}
 
-	// Project-scoped pages
-	r.Route("/p/{projectID}", func(r chi.Router) {
+	// All other routes require auth (when enabled)
+	r.Group(func(r chi.Router) {
+		if s.authEnabled {
+			r.Use(s.requireAuth)
+		}
+
+		// Global pages
+		r.Get("/", s.handleDashboard)
+
+		// Project-scoped pages
+		r.Route("/p/{projectID}", func(r chi.Router) {
+			if s.authEnabled {
+				r.Use(s.requireProjectAccess)
+			}
 		r.Get("/", s.handleProjectDashboard)
 		r.Get("/strategy", s.handleStrategy)
 		r.Get("/roadmap", s.handleRoadmap)
@@ -616,19 +658,20 @@ func (s *Server) setupRoutes() {
 		r.Post("/inputs/{inputRequestID}/reject-all", s.handleRejectAllVariations)
 		r.Post("/inputs/{inputRequestID}/request-more-variations", s.handleRequestMoreVariations)
 		r.Post("/inputs/{inputRequestID}/resolve-conflicts", s.handleResolveConflicts)
-		r.Post("/inputs/{inputRequestID}/provide-credential", s.handleProvideCredential)
-		r.Post("/roadmap/propose", s.handleProposeRoadmap)
-	})
+			r.Post("/inputs/{inputRequestID}/provide-credential", s.handleProvideCredential)
+			r.Post("/roadmap/propose", s.handleProposeRoadmap)
+		})
 
-	// API endpoints (for htmx)
-	r.Route("/api", func(r chi.Router) {
-		r.Get("/projects", s.apiListProjects)
-		r.Get("/projects/{projectID}/strategy", s.apiGetStrategy)
-		r.Get("/projects/{projectID}/hops/{hopID}/evaluate", s.apiEvaluateVariations)
-		r.Post("/projects/{projectID}/okr/tune", s.apiTuneOKRs)
-		r.Get("/demos/{demoID}/logs", s.apiGetDemoLogs)
-		r.Get("/demos/{demoID}/status", s.apiGetDemoStatus)
-	})
+		// API endpoints (for htmx)
+		r.Route("/api", func(r chi.Router) {
+			r.Get("/projects", s.apiListProjects)
+			r.Get("/projects/{projectID}/strategy", s.apiGetStrategy)
+			r.Get("/projects/{projectID}/hops/{hopID}/evaluate", s.apiEvaluateVariations)
+			r.Post("/projects/{projectID}/okr/tune", s.apiTuneOKRs)
+			r.Get("/demos/{demoID}/logs", s.apiGetDemoLogs)
+			r.Get("/demos/{demoID}/status", s.apiGetDemoStatus)
+		})
+	}) // end auth group
 
 	s.router = r
 }
@@ -636,4 +679,43 @@ func (s *Server) setupRoutes() {
 // ListenAndServe starts the HTTP server.
 func (s *Server) ListenAndServe() error {
 	return http.ListenAndServe(s.addr, s.router)
+}
+
+// requireAuth middleware redirects to login if no valid session.
+func (s *Server) requireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, err := s.auth.UserFromRequest(r)
+		if err != nil {
+			http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
+			return
+		}
+		ctx := context.WithValue(r.Context(), userContextKey, user)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// requireProjectAccess middleware checks user is a member of the project.
+func (s *Server) requireProjectAccess(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := UserFromContext(r.Context())
+		if user == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		projectIDStr := chi.URLParam(r, "projectID")
+		projectID, err := uuid.Parse(projectIDStr)
+		if err != nil {
+			http.Error(w, "Invalid project ID", http.StatusBadRequest)
+			return
+		}
+
+		isMember, err := s.db.IsProjectMember(r.Context(), projectID, user.ID)
+		if err != nil || !isMember {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
