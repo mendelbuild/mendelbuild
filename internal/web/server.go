@@ -618,6 +618,8 @@ func (s *Server) setupRoutes() {
 		r.Post("/settings/credentials", s.handleAddCloudCredential)
 		r.Post("/settings/credentials/{credentialID}", s.handleUpdateCloudCredential)
 		r.Post("/settings/credentials/{credentialID}/delete", s.handleDeleteCloudCredential)
+		r.Post("/settings/members", s.handleAddMember)
+		r.Post("/settings/members/{userID}/remove", s.handleRemoveMember)
 		r.Post("/redeploy", s.handleRedeploy)
 
 		// OKR Editor routes

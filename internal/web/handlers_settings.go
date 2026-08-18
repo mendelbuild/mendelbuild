@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/bhs/mendelbuild/internal/crypto"
 	"github.com/bhs/mendelbuild/internal/domain"
@@ -167,6 +168,21 @@ func (s *Server) handleProjectSettings(w http.ResponseWriter, r *http.Request) {
 	// Check for success message
 	success := r.URL.Query().Get("success") == "1"
 
+	// Get members (only if auth is enabled)
+	var members []struct {
+		User domain.User
+		Role domain.ProjectMemberRole
+	}
+	var isOwner bool
+	if s.authEnabled {
+		members, _ = s.db.GetProjectMembers(ctx, projectID)
+		user := UserFromContext(ctx)
+		if user != nil {
+			role, err := s.db.GetProjectMemberRole(ctx, projectID, user.ID)
+			isOwner = err == nil && role == domain.ProjectMemberRoleOwner
+		}
+	}
+
 	data := map[string]interface{}{
 		"Title":               "Project Settings",
 		"ProjectID":           projectID.String(),
@@ -174,8 +190,12 @@ func (s *Server) handleProjectSettings(w http.ResponseWriter, r *http.Request) {
 		"CloudCredentials":    cloudCredentials,
 		"RequiredCredentials": requiredCredentials,
 		"Success":             success,
+		"AuthEnabled":         s.authEnabled,
+		"Members":             members,
+		"IsOwner":             isOwner,
 	}
 	s.addOpenInputCount(ctx, data)
+	s.addUserToData(r, data)
 
 	if err := renderPage(w, "project_settings.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -384,4 +404,103 @@ func (s *Server) handleRedeploy(w http.ResponseWriter, r *http.Request) {
 
 	// For now, just redirect back with a message
 	http.Redirect(w, r, "/p/"+projectID.String()+"/strategy?redeploy=pending", http.StatusSeeOther)
+}
+
+// handleAddMember adds a member to a project.
+func (s *Server) handleAddMember(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	// Check that current user is owner
+	currentUser := UserFromContext(ctx)
+	if currentUser == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	role, err := s.db.GetProjectMemberRole(ctx, projectID, currentUser.ID)
+	if err != nil || role != domain.ProjectMemberRoleOwner {
+		http.Error(w, "only owners can add members", http.StatusForbidden)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	email := r.FormValue("email")
+	if email == "" {
+		http.Redirect(w, r, "/p/"+projectID.String()+"/settings?error=email+required", http.StatusSeeOther)
+		return
+	}
+
+	// Find or create user by email
+	user, err := s.db.GetUserByEmail(ctx, email)
+	if err != nil {
+		// User doesn't exist yet - create a placeholder
+		user = &domain.User{
+			ID:        uuid.New(),
+			Email:     email,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		if err := s.db.CreateUser(ctx, user); err != nil {
+			http.Error(w, "failed to create user", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Add as member
+	if err := s.db.AddProjectMember(ctx, projectID, user.ID, domain.ProjectMemberRoleMember); err != nil {
+		http.Error(w, "failed to add member", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/p/"+projectID.String()+"/settings?success=1", http.StatusSeeOther)
+}
+
+// handleRemoveMember removes a member from a project.
+func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	userID, err := uuid.Parse(chi.URLParam(r, "userID"))
+	if err != nil {
+		http.Error(w, "invalid user ID", http.StatusBadRequest)
+		return
+	}
+
+	// Check that current user is owner
+	currentUser := UserFromContext(ctx)
+	if currentUser == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	role, err := s.db.GetProjectMemberRole(ctx, projectID, currentUser.ID)
+	if err != nil || role != domain.ProjectMemberRoleOwner {
+		http.Error(w, "only owners can remove members", http.StatusForbidden)
+		return
+	}
+
+	// Don't allow removing owners
+	targetRole, _ := s.db.GetProjectMemberRole(ctx, projectID, userID)
+	if targetRole == domain.ProjectMemberRoleOwner {
+		http.Error(w, "cannot remove owner", http.StatusForbidden)
+		return
+	}
+
+	if err := s.db.RemoveProjectMember(ctx, projectID, userID); err != nil {
+		http.Error(w, "failed to remove member", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/p/"+projectID.String()+"/settings?success=1", http.StatusSeeOther)
 }
