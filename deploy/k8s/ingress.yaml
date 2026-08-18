@@ -1,0 +1,30 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mendel
+  namespace: mendel
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    kubernetes.io/ingress.global-static-ip-name: "mendel-ip"
+    networking.gke.io/managed-certificates: "mendel-cert"
+spec:
+  rules:
+  - host: MENDEL_DOMAIN_PLACEHOLDER
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: mendel
+            port:
+              number: 80
+---
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: mendel-cert
+  namespace: mendel
+spec:
+  domains:
+  - MENDEL_DOMAIN_PLACEHOLDER

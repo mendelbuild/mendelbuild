@@ -588,6 +588,12 @@ func (s *Server) setupRoutes() {
 	staticSubFS, _ := fs.Sub(staticFS, "static")
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(staticSubFS))))
 
+	// Health check (public, for load balancer)
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+
 	// Auth routes (public)
 	if s.authEnabled {
 		r.Get("/auth/login", s.handleLogin)

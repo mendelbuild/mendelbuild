@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mendel
+  namespace: mendel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mendel
+  template:
+    metadata:
+      labels:
+        app: mendel
+    spec:
+      containers:
+      - name: mendel
+        image: MENDEL_IMAGE_PLACEHOLDER
+        env:
+        - name: MENDEL_DB_URL
+          valueFrom:
+            secretKeyRef:
+              name: mendel-secret
+              key: database-url
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: mendel-secret
+              key: anthropic-api-key
+        - name: GOOGLE_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: mendel-secret
+              key: google-client-id
+        - name: GOOGLE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: mendel-secret
+              key: google-client-secret
+        - name: MENDEL_BASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: mendel-secret
+              key: base-url
+        - name: SESSION_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: mendel-secret
+              key: session-secret
+        - name: MENDEL_WORK_DIR
+          value: "/work"
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: work
+          mountPath: /work
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: work
+        persistentVolumeClaim:
+          claimName: mendel-work
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mendel-work
+  namespace: mendel
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mendel
+  namespace: mendel
+spec:
+  selector:
+    app: mendel
+  ports:
+  - port: 80
+    targetPort: 8080
