@@ -15,7 +15,7 @@ import (
 //go:embed templates/*.html
 var templatesFS embed.FS
 
-//go:embed static/js/*.js
+//go:embed static/js/*.js static/*.png
 var staticFS embed.FS
 
 // templateFuncs provides custom functions for templates.
