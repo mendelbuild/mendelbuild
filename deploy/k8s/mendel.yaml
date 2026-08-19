@@ -5,6 +5,8 @@ metadata:
   namespace: mendel
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: mendel
@@ -13,6 +15,7 @@ spec:
       labels:
         app: mendel
     spec:
+      terminationGracePeriodSeconds: 5
       containers:
       - name: mendel
         image: MENDEL_IMAGE_PLACEHOLDER
