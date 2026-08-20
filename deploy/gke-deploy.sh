@@ -11,7 +11,8 @@ set -e
 : "${GCP_PROJECT:?Set GCP_PROJECT to your GCP project ID}"
 
 REGION=${REGION:-us-central1}
-TAG=$(git rev-parse --short HEAD)
+# Include timestamp to ensure unique tag even with uncommitted changes
+TAG="$(git rev-parse --short HEAD)-$(date +%s)"
 IMAGE="$REGION-docker.pkg.dev/$GCP_PROJECT/mendel/mendel:$TAG"
 
 echo "=== Building $IMAGE ==="
