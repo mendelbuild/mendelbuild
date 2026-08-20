@@ -12,7 +12,7 @@ import (
 
 const (
 	anthropicAPIURL = "https://api.anthropic.com/v1/messages"
-	defaultModel    = "claude-sonnet-4-20250514"
+	defaultModel    = "claude-sonnet-4-6"
 	maxTokens       = 16384
 	maxRounds       = 50
 )
