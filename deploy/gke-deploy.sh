@@ -16,7 +16,7 @@ TAG="$(git rev-parse --short HEAD)-$(date +%s)"
 IMAGE="$REGION-docker.pkg.dev/$GCP_PROJECT/mendel/mendel:$TAG"
 
 echo "=== Building $IMAGE ==="
-docker build --platform linux/amd64 -t "$IMAGE" .
+docker build --platform linux/amd64 --build-arg VERSION="$TAG" -t "$IMAGE" .
 
 echo "=== Pushing ==="
 docker push "$IMAGE"

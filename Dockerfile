@@ -3,7 +3,8 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o mendel ./cmd/mendel
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -ldflags="-X main.Version=${VERSION}" -o mendel ./cmd/mendel
 
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates git docker-cli docker-cli-compose

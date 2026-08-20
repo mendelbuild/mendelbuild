@@ -25,6 +25,7 @@ import (
 type Server struct {
 	db                  *db.DB
 	addr                string
+	version             string
 	router              chi.Router
 	orchestrator        *codegen.Orchestrator
 	auth                *auth.Auth
@@ -45,10 +46,11 @@ func UserFromContext(ctx context.Context) *domain.User {
 }
 
 // NewServer creates a new Server.
-func NewServer(database *db.DB, addr string) *Server {
+func NewServer(database *db.DB, addr, version string) *Server {
 	s := &Server{
 		db:             database,
 		addr:           addr,
+		version:        version,
 		orchestrator:   codegen.NewOrchestrator(database, codegen.DefaultConcurrency),
 		stopWorker:     make(chan struct{}),
 		processingHops: make(map[uuid.UUID]bool),
@@ -598,6 +600,12 @@ func (s *Server) setupRoutes() {
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
+	})
+
+	// Version info (public)
+	r.Get("/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"version": s.version})
 	})
 
 	// Auth routes (public)
