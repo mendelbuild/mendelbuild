@@ -1252,6 +1252,12 @@ func (s *Server) approveRoadmap(w http.ResponseWriter, r *http.Request, inputReq
 		}
 	}
 
+	// Activate root hops (those with no dependencies)
+	if _, err := s.db.ActivateRootHops(ctx, *inputRequest.SubjectID); err != nil {
+		http.Error(w, "error activating root hops: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	// Update input request status
 	inputRequest.Status = domain.InputRequestStatusResolved
 	resolution := "approved"

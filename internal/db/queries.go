@@ -1623,6 +1623,24 @@ func (db *DB) ActivateDependentHops(ctx context.Context, completedHopID uuid.UUI
 	return int(result.RowsAffected()), nil
 }
 
+// ActivateRootHops marks pending hops that have no dependencies as active.
+// Call this after creating a roadmap to start root hops.
+func (db *DB) ActivateRootHops(ctx context.Context, strategyID uuid.UUID) (int, error) {
+	result, err := db.Pool.Exec(ctx, `
+		UPDATE hops
+		SET status = 'active', updated_at = NOW()
+		WHERE strategy_id = $1
+		  AND status = 'pending'
+		  AND NOT EXISTS (
+			SELECT 1 FROM hop_dependencies hd WHERE hd.hop_id = hops.id
+		  )
+	`, strategyID)
+	if err != nil {
+		return 0, err
+	}
+	return int(result.RowsAffected()), nil
+}
+
 // =====================================================
 // Demo Instance Queries (added in 008)
 // =====================================================
