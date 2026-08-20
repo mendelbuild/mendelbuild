@@ -21,6 +21,30 @@ type ProjectConfig struct {
 	AnthropicAPIKey string `json:"anthropic_api_key,omitempty"`
 }
 
+// ProjectReadiness describes whether a project has the required settings configured.
+type ProjectReadiness struct {
+	HasRepoURL   bool
+	HasAuthToken bool
+	HasAPIKey    bool
+}
+
+// IsReady returns true if all required settings are configured.
+func (pr ProjectReadiness) IsReady() bool {
+	return pr.HasRepoURL && pr.HasAuthToken
+}
+
+// MissingSettings returns a human-readable list of missing settings.
+func (pr ProjectReadiness) MissingSettings() []string {
+	var missing []string
+	if !pr.HasRepoURL {
+		missing = append(missing, "Repository URL")
+	}
+	if !pr.HasAuthToken {
+		missing = append(missing, "GitHub Auth Token")
+	}
+	return missing
+}
+
 // User represents an authenticated user.
 type User struct {
 	ID         uuid.UUID `json:"id"`

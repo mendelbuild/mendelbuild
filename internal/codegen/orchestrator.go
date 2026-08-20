@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -301,6 +302,9 @@ func (o *Orchestrator) buildConfig(ctx context.Context, strategyID uuid.UUID) (G
 	}
 	config.AuthToken = repoConfig.AuthToken
 	config.APIKey = projectConfig.AnthropicAPIKey
+	if config.APIKey == "" {
+		config.APIKey = os.Getenv("ANTHROPIC_API_KEY")
+	}
 
 	return config, nil
 }

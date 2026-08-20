@@ -151,6 +151,20 @@
             min-width: 18px;
             text-align: center;
         }
+        .settings-warning {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            color: #856404;
+            padding: 12px 20px;
+            margin: -20px -20px 20px -20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .settings-warning a {
+            color: #856404;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
@@ -165,6 +179,11 @@
         {{if .User}}<span class="right" style="color: rgba(255,255,255,0.6); margin-right: 15px;">{{.User.Email}}</span>
         <a href="/auth/logout">Logout</a>{{end}}
     </nav>
+    {{if .MissingSettings}}
+    <div class="settings-warning">
+        <strong>Setup Required:</strong> Configure {{range $i, $s := .MissingSettings}}{{if $i}}, {{end}}{{$s}}{{end}} in <a href="/p/{{.ProjectID}}/settings">Settings</a> before Mendel can work on this project.
+    </div>
+    {{end}}
     {{block "page-content" .}}{{end}}
 </body>
 </html>

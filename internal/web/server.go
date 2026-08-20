@@ -248,6 +248,12 @@ func (s *Server) proposeVariationsForHop(ctx context.Context, hop *domain.Hop) e
 		return fmt.Errorf("get strategy: %w", err)
 	}
 
+	// Check project readiness before proceeding
+	readiness, _ := s.db.GetProjectReadiness(ctx, strategy.ProjectID)
+	if !readiness.IsReady() {
+		return fmt.Errorf("project not ready: missing %v", readiness.MissingSettings())
+	}
+
 	// Get objectives from hop params
 	var objectiveDescs []string
 	if hop.Params != nil {

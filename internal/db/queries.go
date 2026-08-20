@@ -233,6 +233,26 @@ func (db *DB) GetProjectByName(ctx context.Context, name string) (*domain.Projec
 	return &p, nil
 }
 
+// GetProjectReadiness checks if a project has required settings configured.
+func (db *DB) GetProjectReadiness(ctx context.Context, projectID uuid.UUID) (domain.ProjectReadiness, error) {
+	var readiness domain.ProjectReadiness
+
+	var repoURL, authToken *string
+	err := db.Pool.QueryRow(ctx, `
+		SELECT r.url, r.config->>'auth_token'
+		FROM repositories r
+		WHERE r.project_id = $1
+		LIMIT 1
+	`, projectID).Scan(&repoURL, &authToken)
+
+	if err == nil {
+		readiness.HasRepoURL = repoURL != nil && *repoURL != ""
+		readiness.HasAuthToken = authToken != nil && *authToken != ""
+	}
+
+	return readiness, nil
+}
+
 // GetStrategiesByProject retrieves all strategies for a project.
 func (db *DB) GetStrategiesByProject(ctx context.Context, projectID uuid.UUID) ([]domain.Strategy, error) {
 	rows, err := db.Pool.Query(ctx, `

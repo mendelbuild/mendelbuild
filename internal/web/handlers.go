@@ -92,6 +92,26 @@ func (s *Server) addOpenInputCount(ctx context.Context, data map[string]interfac
 	}
 }
 
+// addProjectReadiness adds project readiness info to template data.
+func (s *Server) addProjectReadiness(ctx context.Context, data map[string]interface{}) {
+	projectIDStr, ok := data["ProjectID"].(string)
+	if !ok || projectIDStr == "" {
+		return
+	}
+	projectID, err := uuid.Parse(projectIDStr)
+	if err != nil {
+		return
+	}
+	readiness, err := s.db.GetProjectReadiness(ctx, projectID)
+	if err != nil {
+		return
+	}
+	data["ProjectReadiness"] = readiness
+	if !readiness.IsReady() {
+		data["MissingSettings"] = readiness.MissingSettings()
+	}
+}
+
 // StrategyView holds data for rendering the strategy page.
 type StrategyView struct {
 	Project    *domain.Project
@@ -224,6 +244,7 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 		"ProductionDeployedAt": productionDeployedAt,
 	}
 	s.addOpenInputCount(ctx, data)
+	s.addProjectReadiness(ctx, data)
 	s.addUserToData(r, data)
 
 	if err := renderPage(w, "strategy.html", data); err != nil {
@@ -279,6 +300,8 @@ func (s *Server) handleInputRequests(w http.ResponseWriter, r *http.Request) {
 		"ActiveTab":         activeTab,
 	}
 	s.addOpenInputCount(ctx, data)
+	s.addProjectReadiness(ctx, data)
+	s.addUserToData(r, data)
 
 	if err := renderPage(w, "input_requests.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -408,6 +431,8 @@ func (s *Server) handleRoadmap(w http.ResponseWriter, r *http.Request) {
 		"EdgesJSON": template.JS(edgesJSON),
 	}
 	s.addOpenInputCount(ctx, data)
+	s.addProjectReadiness(ctx, data)
+	s.addUserToData(r, data)
 
 	if err := renderPage(w, "roadmap.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

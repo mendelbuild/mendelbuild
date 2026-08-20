@@ -90,6 +90,8 @@ func (s *Server) handleOKREditor(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	s.addOpenInputCount(ctx, data)
+	s.addProjectReadiness(ctx, data)
+	s.addUserToData(r, data)
 
 	if err := renderPage(w, "okr_editor.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

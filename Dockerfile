@@ -6,7 +6,8 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o mendel ./cmd/mendel
 
 FROM alpine:3.19
-RUN apk add --no-cache ca-certificates git
+RUN apk add --no-cache ca-certificates git nodejs npm docker-cli docker-cli-compose
+RUN npm install -g @anthropic-ai/claude-code
 COPY --from=builder /app/mendel /usr/local/bin/mendel
 COPY --from=builder /app/schema /schema
 EXPOSE 8080
