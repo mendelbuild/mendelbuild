@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/bhs/mendelbuild/internal/codegen/executor"
 	"github.com/bhs/mendelbuild/internal/db"
 	"github.com/bhs/mendelbuild/internal/demo"
 	"github.com/bhs/mendelbuild/internal/domain"
@@ -39,6 +40,45 @@ func NewGenerator(database *db.DB, config GeneratorConfig) *Generator {
 		config: config,
 	}
 }
+
+// createEventHandler creates an executor event handler that logs to the database.
+func (g *Generator) createEventHandler(ctx context.Context, variationID uuid.UUID, logger func(domain.LogLevel, string)) executor.EventHandler {
+	return func(event executor.Event) {
+		switch event.Type {
+		case executor.EventToolCall:
+			switch event.ToolName {
+			case "Read":
+				if path, ok := event.ToolInput["file_path"].(string); ok {
+					logger(domain.LogLevelInfo, fmt.Sprintf("Reading: %s", shortenPath(path)))
+				}
+			case "Write":
+				if path, ok := event.ToolInput["file_path"].(string); ok {
+					logger(domain.LogLevelMilestone, fmt.Sprintf("Writing: %s", shortenPath(path)))
+				}
+			case "Edit":
+				if path, ok := event.ToolInput["file_path"].(string); ok {
+					logger(domain.LogLevelMilestone, fmt.Sprintf("Editing: %s", shortenPath(path)))
+				}
+			case "Bash":
+				if cmd, ok := event.ToolInput["command"].(string); ok {
+					if len(cmd) > 80 {
+						cmd = cmd[:77] + "..."
+					}
+					logger(domain.LogLevelInfo, fmt.Sprintf("Running: %s", cmd))
+				}
+			case "Glob", "Grep":
+				logger(domain.LogLevelInfo, "Searching files...")
+			}
+		case executor.EventAPIResponse:
+			logger(domain.LogLevelInfo, fmt.Sprintf("API: +%d in, +%d out tokens", event.InputTokens, event.OutputTokens))
+		case executor.EventComplete:
+			logger(domain.LogLevelMilestone, "Code generation complete")
+		case executor.EventError:
+			logger(domain.LogLevelError, fmt.Sprintf("Error: %v", event.Error))
+		}
+	}
+}
+
 
 // GenerateResult contains the result of code generation.
 type GenerateResult struct {
@@ -104,24 +144,25 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 		return result, nil
 	}
 
-	// 3. Run Claude CLI
-	cli := NewCLI(workDir, g.config.APIKey).WithLogger(logger)
-	prompt := BuildImplementationPrompt(hopName, variation.Name, variation.Approach)
+	// 3. Run code generation via API tool loop
+	exec := executor.New(g.config.APIKey, workDir).
+		WithEventHandler(g.createEventHandler(ctx, variation.ID, logger))
 
-	cliResult, err := cli.Run(ctx, prompt)
+	prompt := BuildImplementationPrompt(hopName, variation.Name, variation.Approach)
+	execResult, err := exec.Run(ctx, executor.SystemPrompt(), prompt)
 	if err != nil {
-		// CLI couldn't start - infrastructure error
-		result.Error = fmt.Sprintf("cli run error: %v", err)
+		result.Error = fmt.Sprintf("executor error: %v", err)
 		logger(domain.LogLevelError, result.Error)
 		g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusError, result.Error)
 		return result, nil
 	}
 
-	result.TokensUsed = cliResult.InputTokens + cliResult.OutputTokens
+	result.TokensUsed = execResult.Stats.InputTokens + execResult.Stats.OutputTokens
+	logger(domain.LogLevelInfo, fmt.Sprintf("API stats: %d rounds, %d tool calls, %d input tokens, %d output tokens",
+		execResult.Stats.APIRounds, execResult.Stats.ToolCalls, execResult.Stats.InputTokens, execResult.Stats.OutputTokens))
 
-	if !cliResult.Success {
-		// CLI ran but code generation failed - code issue, not retryable
-		result.Error = fmt.Sprintf("cli failed: %s", cliResult.Error)
+	if !execResult.Success {
+		result.Error = fmt.Sprintf("code generation failed: %v", execResult.Error)
 		logger(domain.LogLevelError, result.Error)
 		g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusTerminated, result.Error)
 		return result, nil
@@ -151,7 +192,7 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 
 	// 6. Verify demo works (if demo config exists)
 	if demo.HasDockerCompose(workDir) {
-		demoPassed, demoErr := g.verifyDemo(ctx, workDir, cli, logger)
+		demoPassed, demoErr := g.verifyDemo(ctx, workDir, exec, logger)
 		if !demoPassed {
 			reason := "demo verification failed"
 			if demoErr != "" {
@@ -276,9 +317,9 @@ func (g *Generator) runTests(ctx context.Context, workDir string, logger func(do
 	return false, testResult.Error
 }
 
-// verifyDemo starts the demo, checks health, and lets Claude Code fix issues if needed.
+// verifyDemo starts the demo, checks health, and lets the executor fix issues if needed.
 // Returns (passed, errorMessage).
-func (g *Generator) verifyDemo(ctx context.Context, workDir string, cli *CLI, logger func(domain.LogLevel, string)) (bool, string) {
+func (g *Generator) verifyDemo(ctx context.Context, workDir string, exec *executor.Executor, logger func(domain.LogLevel, string)) (bool, string) {
 	const maxAttempts = 3
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
@@ -303,7 +344,7 @@ func (g *Generator) verifyDemo(ctx context.Context, workDir string, cli *CLI, lo
 
 			if attempt < maxAttempts {
 				// Let Claude Code fix the issue
-				if !g.fixDemoIssue(ctx, workDir, cli, errMsg, logger) {
+				if !g.fixDemoIssue(ctx, workDir, exec, errMsg, logger) {
 					return false, "Claude Code failed to fix demo issue"
 				}
 				continue
@@ -319,7 +360,7 @@ func (g *Generator) verifyDemo(ctx context.Context, workDir string, cli *CLI, lo
 			demo.DockerComposeDown(workDir, true)
 
 			if attempt < maxAttempts {
-				if !g.fixDemoIssue(ctx, workDir, cli, errMsg, logger) {
+				if !g.fixDemoIssue(ctx, workDir, exec, errMsg, logger) {
 					return false, "Claude Code failed to fix demo issue"
 				}
 				continue
@@ -358,7 +399,7 @@ func (g *Generator) verifyDemo(ctx context.Context, workDir string, cli *CLI, lo
 		logger(domain.LogLevelError, errMsg)
 
 		if attempt < maxAttempts {
-			if !g.fixDemoIssue(ctx, workDir, cli, errMsg, logger) {
+			if !g.fixDemoIssue(ctx, workDir, exec, errMsg, logger) {
 				return false, "Claude Code failed to fix demo issue"
 			}
 			continue
@@ -369,9 +410,9 @@ func (g *Generator) verifyDemo(ctx context.Context, workDir string, cli *CLI, lo
 	return false, "demo verification failed after max attempts"
 }
 
-// fixDemoIssue runs Claude Code to fix a demo issue.
-func (g *Generator) fixDemoIssue(ctx context.Context, workDir string, cli *CLI, errMsg string, logger func(domain.LogLevel, string)) bool {
-	logger(domain.LogLevelInfo, "Asking Claude Code to fix demo issue...")
+// fixDemoIssue runs the executor to fix a demo issue.
+func (g *Generator) fixDemoIssue(ctx context.Context, workDir string, exec *executor.Executor, errMsg string, logger func(domain.LogLevel, string)) bool {
+	logger(domain.LogLevelInfo, "Asking Claude to fix demo issue...")
 
 	prompt := fmt.Sprintf(`The demo failed to start. Fix the issue and try again.
 
@@ -390,18 +431,18 @@ func (g *Generator) fixDemoIssue(ctx context.Context, workDir string, cli *CLI, 
 2. Fix the Docker Compose, Dockerfile, or application configuration
 3. Make sure the fix addresses the actual error, not just symptoms`, errMsg)
 
-	result, err := cli.Run(ctx, prompt)
+	result, err := exec.Run(ctx, executor.SystemPrompt(), prompt)
 	if err != nil {
-		logger(domain.LogLevelError, fmt.Sprintf("Claude Code error: %v", err))
+		logger(domain.LogLevelError, fmt.Sprintf("Executor error: %v", err))
 		return false
 	}
 
 	if !result.Success {
-		logger(domain.LogLevelError, fmt.Sprintf("Claude Code failed: %s", result.Error))
+		logger(domain.LogLevelError, fmt.Sprintf("Fix attempt failed: %v", result.Error))
 		return false
 	}
 
-	logger(domain.LogLevelMilestone, "Claude Code applied fix, retrying demo...")
+	logger(domain.LogLevelMilestone, "Applied fix, retrying demo...")
 	return true
 }
 
