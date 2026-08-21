@@ -172,10 +172,18 @@ func (e *ToolExecutor) Execute(ctx context.Context, name string, input map[strin
 }
 
 func (e *ToolExecutor) resolvePath(path string) string {
-	if filepath.IsAbs(path) {
-		return path
+	// Always resolve relative to workDir, even if path looks absolute.
+	// Claude often provides paths like "/index.html" meaning "root of repo"
+	// not "root of filesystem".
+	cleanPath := filepath.Clean(path)
+	// Strip leading slashes to make it relative
+	for len(cleanPath) > 0 && cleanPath[0] == '/' {
+		cleanPath = cleanPath[1:]
 	}
-	return filepath.Join(e.workDir, path)
+	if cleanPath == "" {
+		return e.workDir
+	}
+	return filepath.Join(e.workDir, cleanPath)
 }
 
 func (e *ToolExecutor) read(input map[string]interface{}) (string, error) {
