@@ -15,8 +15,10 @@ REGION=${REGION:-us-central1}
 TAG="$(git rev-parse --short HEAD)-$(date +%s)"
 IMAGE="$REGION-docker.pkg.dev/$GCP_PROJECT/mendel/mendel:$TAG"
 
+BUILD_TIME=$(date +%s)
+
 echo "=== Building $IMAGE ==="
-docker build --platform linux/amd64 --build-arg VERSION="$TAG" -t "$IMAGE" .
+docker build --platform linux/amd64 --build-arg VERSION="$TAG" --build-arg BUILD_TIME="$BUILD_TIME" -t "$IMAGE" .
 
 echo "=== Pushing ==="
 docker push "$IMAGE"

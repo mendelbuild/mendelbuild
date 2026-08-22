@@ -18,8 +18,9 @@ import (
 
 const defaultConnString = "postgres://localhost:5432/mendelbuild?sslmode=disable"
 
-// Version is set at build time via ldflags
+// Version and BuildTime are set at build time via ldflags
 var Version = "dev"
+var BuildTime = ""
 
 func main() {
 	if len(os.Args) < 2 {
@@ -89,7 +90,7 @@ func runServer(args []string) {
 	}
 	defer database.Close()
 
-	server := web.NewServer(database, *addr, Version)
+	server := web.NewServer(database, *addr, Version, BuildTime)
 	fmt.Printf("Starting server on %s (version: %s)\n", *addr, Version)
 	if err := server.ListenAndServe(); err != nil {
 		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)

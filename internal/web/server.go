@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -26,6 +27,7 @@ type Server struct {
 	db                  *db.DB
 	addr                string
 	version             string
+	buildTime           string
 	router              chi.Router
 	orchestrator        *codegen.Orchestrator
 	auth                *auth.Auth
@@ -46,11 +48,12 @@ func UserFromContext(ctx context.Context) *domain.User {
 }
 
 // NewServer creates a new Server.
-func NewServer(database *db.DB, addr, version string) *Server {
+func NewServer(database *db.DB, addr, version, buildTime string) *Server {
 	s := &Server{
 		db:             database,
 		addr:           addr,
 		version:        version,
+		buildTime:      buildTime,
 		orchestrator:   codegen.NewOrchestrator(database, codegen.DefaultConcurrency),
 		stopWorker:     make(chan struct{}),
 		processingHops: make(map[uuid.UUID]bool),
@@ -605,7 +608,17 @@ func (s *Server) setupRoutes() {
 	// Version info (public)
 	r.Get("/version", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"version": s.version})
+		info := map[string]interface{}{
+			"version": s.version,
+		}
+		if s.buildTime != "" {
+			info["build_time_unix"] = s.buildTime
+			// Parse unix timestamp to human-readable
+			if ts, err := strconv.ParseInt(s.buildTime, 10, 64); err == nil {
+				info["build_time"] = time.Unix(ts, 0).UTC().Format(time.RFC3339)
+			}
+		}
+		json.NewEncoder(w).Encode(info)
 	})
 
 	// Auth routes (public)
