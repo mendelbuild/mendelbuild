@@ -75,6 +75,23 @@ func HasTestCompose(workDir string) bool {
 	return err == nil
 }
 
+// ProjectName returns a unique docker-compose project name for a workDir.
+// This ensures parallel test runs don't conflict.
+func ProjectName(workDir string) string {
+	return "mendel-" + filepath.Base(workDir)
+}
+
+// CleanupProject removes all containers/networks for a project.
+// Safe to call even if nothing is running.
+func CleanupProject(workDir string) {
+	mendelDir := filepath.Join(workDir, ".mendel")
+	projectName := ProjectName(workDir)
+
+	cmd := exec.Command("docker-compose", "-p", projectName, "-f", "docker-compose.test.yml", "down", "-v", "--remove-orphans", "--timeout", "5")
+	cmd.Dir = mendelDir
+	cmd.Run()
+}
+
 // CreateDefaultConfig creates a default test-config.yml that passes immediately.
 // Used when no test configuration exists.
 func CreateDefaultConfig(workDir string) error {
@@ -122,9 +139,15 @@ services:
 // Returns nil if tests pass, error otherwise.
 func RunTests(workDir string, cfg *Config) error {
 	mendelDir := filepath.Join(workDir, ".mendel")
+	projectName := ProjectName(workDir)
 
-	// Start test infrastructure
-	upCmd := exec.Command("docker-compose", "-f", "docker-compose.test.yml", "up", "-d", "--build", "--wait")
+	// Clean up any leftover containers from previous runs
+	downCmd := exec.Command("docker-compose", "-p", projectName, "-f", "docker-compose.test.yml", "down", "-v", "--remove-orphans")
+	downCmd.Dir = mendelDir
+	downCmd.Run() // Ignore errors
+
+	// Start test infrastructure with force-recreate
+	upCmd := exec.Command("docker-compose", "-p", projectName, "-f", "docker-compose.test.yml", "up", "-d", "--build", "--wait", "--force-recreate", "--remove-orphans")
 	upCmd.Dir = mendelDir
 	upOutput, err := upCmd.CombinedOutput()
 	if err != nil {
@@ -133,14 +156,14 @@ func RunTests(workDir string, cfg *Config) error {
 
 	// Run tests inside the container
 	// Use sh -c to handle complex commands with pipes, etc.
-	execCmd := exec.Command("docker-compose", "-f", "docker-compose.test.yml", "exec", "-T", cfg.Service, "sh", "-c", cfg.TestCommand)
+	execCmd := exec.Command("docker-compose", "-p", projectName, "-f", "docker-compose.test.yml", "exec", "-T", cfg.Service, "sh", "-c", cfg.TestCommand)
 	execCmd.Dir = mendelDir
 	testOutput, testErr := execCmd.CombinedOutput()
 
 	// Always clean up, regardless of test result
-	downCmd := exec.Command("docker-compose", "-f", "docker-compose.test.yml", "down", "-v")
-	downCmd.Dir = mendelDir
-	downCmd.Run() // Ignore cleanup errors
+	cleanupCmd := exec.Command("docker-compose", "-p", projectName, "-f", "docker-compose.test.yml", "down", "-v", "--remove-orphans")
+	cleanupCmd.Dir = mendelDir
+	cleanupCmd.Run() // Ignore cleanup errors
 
 	if testErr != nil {
 		return fmt.Errorf("tests failed: %w\n%s", testErr, string(testOutput))
@@ -160,9 +183,15 @@ type TestOutput struct {
 func RunTestsWithOutput(workDir string, cfg *Config) *TestOutput {
 	mendelDir := filepath.Join(workDir, ".mendel")
 	result := &TestOutput{}
+	projectName := ProjectName(workDir)
 
-	// Start test infrastructure
-	upCmd := exec.Command("docker-compose", "-f", "docker-compose.test.yml", "up", "-d", "--build", "--wait")
+	// Clean up any leftover containers from previous runs
+	downCmd := exec.Command("docker-compose", "-p", projectName, "-f", "docker-compose.test.yml", "down", "-v", "--remove-orphans")
+	downCmd.Dir = mendelDir
+	downCmd.Run() // Ignore errors - might not exist yet
+
+	// Start test infrastructure with force-recreate to avoid conflicts
+	upCmd := exec.Command("docker-compose", "-p", projectName, "-f", "docker-compose.test.yml", "up", "-d", "--build", "--wait", "--force-recreate", "--remove-orphans")
 	upCmd.Dir = mendelDir
 	upOutput, err := upCmd.CombinedOutput()
 	if err != nil {
@@ -171,15 +200,15 @@ func RunTestsWithOutput(workDir string, cfg *Config) *TestOutput {
 	}
 
 	// Run tests inside the container
-	execCmd := exec.Command("docker-compose", "-f", "docker-compose.test.yml", "exec", "-T", cfg.Service, "sh", "-c", cfg.TestCommand)
+	execCmd := exec.Command("docker-compose", "-p", projectName, "-f", "docker-compose.test.yml", "exec", "-T", cfg.Service, "sh", "-c", cfg.TestCommand)
 	execCmd.Dir = mendelDir
 	testOutput, testErr := execCmd.CombinedOutput()
 	result.Output = string(testOutput)
 
 	// Always clean up
-	downCmd := exec.Command("docker-compose", "-f", "docker-compose.test.yml", "down", "-v")
-	downCmd.Dir = mendelDir
-	downCmd.Run()
+	cleanupCmd := exec.Command("docker-compose", "-p", projectName, "-f", "docker-compose.test.yml", "down", "-v", "--remove-orphans")
+	cleanupCmd.Dir = mendelDir
+	cleanupCmd.Run()
 
 	if testErr != nil {
 		result.Error = testErr.Error()
