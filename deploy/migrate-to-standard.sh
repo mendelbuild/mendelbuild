@@ -57,8 +57,28 @@ echo ""
 echo "=== Step 3: Setting up namespace and secrets ==="
 kubectl apply -f deploy/k8s/namespace.yaml
 
-# Remove resource version and other cluster-specific fields before applying
-kubectl apply -f /tmp/mendel-secret.yaml
+# Create postgres-secret with new password
+PG_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)
+kubectl create secret generic postgres-secret -n mendel \
+  --from-literal=username=mendel \
+  --from-literal=password="$PG_PASSWORD"
+echo "Created postgres-secret"
+
+# Extract values from old mendel-secret and recreate with new DB URL
+ANTHROPIC_KEY=$(grep 'anthropic-api-key' /tmp/mendel-secret.yaml | awk '{print $2}' | base64 -d)
+GOOGLE_CLIENT_ID=$(grep 'google-client-id' /tmp/mendel-secret.yaml | awk '{print $2}' | base64 -d)
+GOOGLE_CLIENT_SECRET=$(grep 'google-client-secret' /tmp/mendel-secret.yaml | awk '{print $2}' | base64 -d)
+BASE_URL=$(grep 'base-url' /tmp/mendel-secret.yaml | awk '{print $2}' | base64 -d)
+SESSION_SECRET=$(grep 'session-secret' /tmp/mendel-secret.yaml | awk '{print $2}' | base64 -d)
+
+kubectl create secret generic mendel-secret -n mendel \
+  --from-literal=database-url="postgres://mendel:${PG_PASSWORD}@postgres:5432/mendel?sslmode=disable" \
+  --from-literal=anthropic-api-key="$ANTHROPIC_KEY" \
+  --from-literal=google-client-id="$GOOGLE_CLIENT_ID" \
+  --from-literal=google-client-secret="$GOOGLE_CLIENT_SECRET" \
+  --from-literal=base-url="$BASE_URL" \
+  --from-literal=session-secret="$SESSION_SECRET"
+echo "Created mendel-secret with correct database URL"
 
 # Step 4: Deploy Postgres
 echo ""
