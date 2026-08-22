@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -166,7 +167,7 @@ func RunTests(workDir string, cfg *Config) error {
 	cleanupCmd.Run() // Ignore cleanup errors
 
 	if testErr != nil {
-		return fmt.Errorf("tests failed: %w\n%s", testErr, string(testOutput))
+		return fmt.Errorf("tests failed: %s\n%s", interpretTestError(testErr, string(testOutput)), string(testOutput))
 	}
 
 	return nil
@@ -211,11 +212,33 @@ func RunTestsWithOutput(workDir string, cfg *Config) *TestOutput {
 	cleanupCmd.Run()
 
 	if testErr != nil {
-		result.Error = testErr.Error()
+		result.Error = interpretTestError(testErr, result.Output)
 		result.Passed = false
 	} else {
 		result.Passed = true
 	}
 
 	return result
+}
+
+// interpretTestError provides helpful context for common exit codes.
+func interpretTestError(err error, output string) string {
+	errStr := err.Error()
+
+	// Exit code 137 = SIGKILL (128 + 9), usually OOM
+	if strings.Contains(errStr, "exit status 137") {
+		return "exit status 137 (SIGKILL - container was killed, likely out of memory). Try increasing container memory limits in docker-compose.test.yml or reducing test parallelism."
+	}
+
+	// Exit code 139 = SIGSEGV
+	if strings.Contains(errStr, "exit status 139") {
+		return "exit status 139 (SIGSEGV - segmentation fault in container)"
+	}
+
+	// Exit code 143 = SIGTERM
+	if strings.Contains(errStr, "exit status 143") {
+		return "exit status 143 (SIGTERM - container was terminated, possibly due to timeout)"
+	}
+
+	return errStr
 }

@@ -101,8 +101,11 @@ func (c *Client) CommitAll(ctx context.Context, message string) error {
 		return nil
 	}
 
-	// Commit
-	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", message)
+	// Commit (use -c flags to set identity without requiring global git config)
+	commitCmd := exec.CommandContext(ctx, "git",
+		"-c", "user.email=mendel@mendel.build",
+		"-c", "user.name=MendelBuild",
+		"commit", "-m", message)
 	commitCmd.Dir = c.workDir
 	stderr.Reset()
 	commitCmd.Stderr = &stderr
@@ -148,7 +151,8 @@ func (c *Client) Push(ctx context.Context, authToken string) error {
 		}()
 	}
 
-	cmd := exec.CommandContext(ctx, "git", "push", "-u", "origin", branchName)
+	// Use --force because Mendel-managed branches may need to be overwritten on retry
+	cmd := exec.CommandContext(ctx, "git", "push", "--force", "-u", "origin", branchName)
 	cmd.Dir = c.workDir
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 
@@ -230,7 +234,11 @@ func (c *Client) Fetch(ctx context.Context, authToken string) error {
 // MergeBranch merges a branch into the current branch.
 func (c *Client) MergeBranch(ctx context.Context, branchName string) error {
 	// Use --no-ff to create a merge commit even if fast-forward is possible
-	cmd := exec.CommandContext(ctx, "git", "merge", "--no-ff", "-m",
+	// Use -c flags to set identity without requiring global git config
+	cmd := exec.CommandContext(ctx, "git",
+		"-c", "user.email=mendel@mendel.build",
+		"-c", "user.name=MendelBuild",
+		"merge", "--no-ff", "-m",
 		fmt.Sprintf("Merge branch '%s'", branchName), branchName)
 	cmd.Dir = c.workDir
 
@@ -251,8 +259,12 @@ func (c *Client) MergeRemoteBranch(ctx context.Context, branchName, authToken st
 	}
 
 	// Merge the remote tracking branch
+	// Use -c flags to set identity without requiring global git config
 	remoteBranch := fmt.Sprintf("origin/%s", branchName)
-	cmd := exec.CommandContext(ctx, "git", "merge", "--no-ff", "-m",
+	cmd := exec.CommandContext(ctx, "git",
+		"-c", "user.email=mendel@mendel.build",
+		"-c", "user.name=MendelBuild",
+		"merge", "--no-ff", "-m",
 		fmt.Sprintf("Merge branch '%s' [MendelBuild]", branchName), remoteBranch)
 	cmd.Dir = c.workDir
 

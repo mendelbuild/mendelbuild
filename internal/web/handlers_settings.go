@@ -3,8 +3,10 @@ package web
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -225,6 +227,14 @@ func (s *Server) handleSaveProjectSettings(w http.ResponseWriter, r *http.Reques
 		mainBranch = "main"
 	}
 
+	// Validate GitHub token has push permissions before saving
+	if repoURL != "" && authToken != "" {
+		if err := validateGitHubToken(repoURL, authToken); err != nil {
+			renderSettingsWithError(w, projectID, err.Error())
+			return
+		}
+	}
+
 	// Update repository config
 	repoConfig, _ := json.Marshal(map[string]string{
 		"main_branch": mainBranch,
@@ -258,6 +268,75 @@ func renderSettingsWithError(w http.ResponseWriter, projectID uuid.UUID, errMsg 
 		"Settings":  ProjectSettings{MainBranch: "main"},
 	}
 	renderPage(w, "project_settings.html", data)
+}
+
+// validateGitHubToken checks if a GitHub token has push permission to the repo.
+// Returns nil if valid, or an error with clear guidance on how to fix.
+func validateGitHubToken(repoURL, token string) error {
+	if token == "" {
+		return nil // No token is allowed (public repos, or user will add later)
+	}
+
+	// Extract owner/repo from URL
+	// Handles: https://github.com/owner/repo, https://github.com/owner/repo.git
+	pattern := regexp.MustCompile(`github\.com[/:]([^/]+)/([^/.]+)`)
+	matches := pattern.FindStringSubmatch(repoURL)
+	if len(matches) < 3 {
+		return nil // Not a GitHub URL, skip validation
+	}
+	owner, repo := matches[1], matches[2]
+
+	// Call GitHub API to check permissions
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s", owner, repo)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to connect to GitHub: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 401 {
+		return fmt.Errorf("GitHub token is invalid or expired. Please generate a new token at https://github.com/settings/tokens")
+	}
+
+	if resp.StatusCode == 404 {
+		return fmt.Errorf("Repository not found or token doesn't have access. Check that the repo URL is correct and the token has repository access.")
+	}
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("GitHub API error (%d): %s", resp.StatusCode, string(body))
+	}
+
+	// Parse response to check permissions
+	var repoInfo struct {
+		Permissions struct {
+			Push bool `json:"push"`
+		} `json:"permissions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&repoInfo); err != nil {
+		return fmt.Errorf("failed to parse GitHub response: %w", err)
+	}
+
+	if !repoInfo.Permissions.Push {
+		return fmt.Errorf(`Token doesn't have push permission to this repository.
+
+To fix this, create a new token at https://github.com/settings/tokens with:
+• For Fine-grained tokens: Set "Contents" permission to "Read and write"
+• For Classic tokens: Enable the "repo" scope
+
+Then paste the new token here.`)
+	}
+
+	return nil
 }
 
 // handleAddCloudCredential handles adding a new cloud credential.

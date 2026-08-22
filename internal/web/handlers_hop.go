@@ -393,11 +393,14 @@ func (s *Server) handleRetryVariation(w http.ResponseWriter, r *http.Request) {
 
 	oldStatus := variation.Status
 
-	// Reset status to creating - background worker will pick it up
-	variation.Status = domain.VariationStatusCreating
-	variation.UpdatedAt = time.Now()
-	if err := s.db.UpdateVariation(ctx, variation); err != nil {
-		http.Error(w, "error updating variation: "+err.Error(), http.StatusInternalServerError)
+	// Atomically transition to creating - if this fails, someone else got there first
+	updated, err := s.db.AtomicUpdateVariationStatus(ctx, variationID, oldStatus, domain.VariationStatusCreating)
+	if err != nil {
+		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !updated {
+		http.Error(w, "variation is already being processed", http.StatusConflict)
 		return
 	}
 
@@ -461,9 +464,20 @@ func (s *Server) handleRetryWithFix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only allow retry-fix for terminated status
+	// Only allow retry-fix for terminated status - use atomic update to prevent race
 	if variation.Status != domain.VariationStatusTerminated {
 		http.Error(w, "can only retry-fix terminated variations", http.StatusBadRequest)
+		return
+	}
+
+	// Atomically transition to creating - if this fails, someone else got there first
+	updated, err := s.db.AtomicUpdateVariationStatus(ctx, variationID, domain.VariationStatusTerminated, domain.VariationStatusCreating)
+	if err != nil {
+		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !updated {
+		http.Error(w, "variation is already being processed", http.StatusConflict)
 		return
 	}
 
@@ -520,16 +534,8 @@ func (s *Server) handleRetryWithFix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set status back to creating
-	oldStatus := variation.Status
-	variation.Status = domain.VariationStatusCreating
-	variation.UpdatedAt = time.Now()
-	if err := s.db.UpdateVariation(ctx, variation); err != nil {
-		http.Error(w, "error updating variation: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	s.db.CreateVariationStateTransition(ctx, variationID, string(oldStatus), string(domain.VariationStatusCreating), "retry with fix")
+	// Status was already atomically updated above, just record the transition
+	s.db.CreateVariationStateTransition(ctx, variationID, string(domain.VariationStatusTerminated), string(domain.VariationStatusCreating), "retry with fix")
 
 	// Run the fix in background
 	go s.runFixForVariation(strategy.ProjectID, variation, hop, workDir, errorContext.String())
@@ -625,6 +631,57 @@ Focus on fixing the specific error - don't rewrite everything.`, errorContext)
 		return
 	}
 
+	// Get repo config for commit/push
+	repo, err := s.db.GetRepositoryByProject(ctx, projectID)
+	if err != nil || repo == nil {
+		logger(domain.LogLevelError, "Could not get repository config")
+		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: no repository")
+		return
+	}
+
+	var repoConfig struct {
+		AuthToken string `json:"auth_token"`
+	}
+	if repo.Config != nil {
+		json.Unmarshal(repo.Config, &repoConfig)
+	}
+
+	// Commit changes (before tests so branch is visible on GitHub even if tests fail)
+	logger(domain.LogLevelInfo, "Committing fix...")
+	gitClient := git.NewClient(workDir)
+
+	commitMsg := fmt.Sprintf("[MendelBuild] Fix: %s\n\nFixed error in variation '%s'", hop.Name, variation.Name)
+	if err := gitClient.CommitAll(ctx, commitMsg); err != nil {
+		logger(domain.LogLevelError, fmt.Sprintf("Commit failed: %v", err))
+		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: commit error")
+		return
+	}
+
+	// Get commit ref
+	commitRef, err := gitClient.GetCurrentCommit(ctx)
+	if err != nil {
+		logger(domain.LogLevelError, fmt.Sprintf("Get commit ref failed: %v", err))
+		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: could not get commit")
+		return
+	}
+	logger(domain.LogLevelMilestone, fmt.Sprintf("Committed: %s", commitRef[:8]))
+
+	// Push (before tests so branch is visible on GitHub even if tests fail)
+	logger(domain.LogLevelInfo, "Pushing to remote...")
+	if err := gitClient.Push(ctx, repoConfig.AuthToken); err != nil {
+		logger(domain.LogLevelError, fmt.Sprintf("Push failed: %v", err))
+		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: push error")
+		return
+	}
+	logger(domain.LogLevelMilestone, "Pushed successfully")
+
+	// Update variation with commit ref (before tests, so we have the ref even if tests fail)
+	variation.CommitRef = &commitRef
+	variation.UpdatedAt = time.Now()
+	if err := s.db.UpdateVariation(ctx, variation); err != nil {
+		logger(domain.LogLevelInfo, fmt.Sprintf("Could not save commit ref: %v", err))
+	}
+
 	// Re-run tests
 	logger(domain.LogLevelMilestone, "Re-running tests...")
 	testCfg, err := test.LoadConfig(workDir)
@@ -653,52 +710,7 @@ Focus on fixing the specific error - don't rewrite everything.`, errorContext)
 		logger(domain.LogLevelMilestone, "Tests passed!")
 	}
 
-	// Get repo config for commit/push
-	repo, err := s.db.GetRepositoryByProject(ctx, projectID)
-	if err != nil || repo == nil {
-		logger(domain.LogLevelError, "Could not get repository config")
-		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: no repository")
-		return
-	}
-
-	var repoConfig struct {
-		AuthToken string `json:"auth_token"`
-	}
-	if repo.Config != nil {
-		json.Unmarshal(repo.Config, &repoConfig)
-	}
-
-	// Commit changes
-	logger(domain.LogLevelInfo, "Committing fix...")
-	gitClient := git.NewClient(workDir)
-
-	commitMsg := fmt.Sprintf("[MendelBuild] Fix: %s\n\nFixed error in variation '%s'", hop.Name, variation.Name)
-	if err := gitClient.CommitAll(ctx, commitMsg); err != nil {
-		logger(domain.LogLevelError, fmt.Sprintf("Commit failed: %v", err))
-		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: commit error")
-		return
-	}
-
-	// Get commit ref
-	commitRef, err := gitClient.GetCurrentCommit(ctx)
-	if err != nil {
-		logger(domain.LogLevelError, fmt.Sprintf("Get commit ref failed: %v", err))
-		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: could not get commit")
-		return
-	}
-	logger(domain.LogLevelMilestone, fmt.Sprintf("Committed: %s", commitRef[:8]))
-
-	// Push
-	logger(domain.LogLevelInfo, "Pushing to remote...")
-	if err := gitClient.Push(ctx, repoConfig.AuthToken); err != nil {
-		logger(domain.LogLevelError, fmt.Sprintf("Push failed: %v", err))
-		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: push error")
-		return
-	}
-	logger(domain.LogLevelMilestone, "Pushed successfully")
-
-	// Update variation
-	variation.CommitRef = &commitRef
+	// Update variation status to pending (tests passed)
 	variation.Status = domain.VariationStatusPending
 	variation.UpdatedAt = time.Now()
 	if err := s.db.UpdateVariation(ctx, variation); err != nil {

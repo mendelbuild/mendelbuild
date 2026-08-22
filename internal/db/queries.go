@@ -666,6 +666,19 @@ func (db *DB) UpdateVariation(ctx context.Context, v *domain.Variation) error {
 	return err
 }
 
+// AtomicUpdateVariationStatus atomically updates a variation's status only if it's in the expected current state.
+// Returns true if the update succeeded, false if the current status didn't match (meaning someone else changed it).
+func (db *DB) AtomicUpdateVariationStatus(ctx context.Context, variationID uuid.UUID, fromStatus, toStatus domain.VariationStatus) (bool, error) {
+	result, err := db.Pool.Exec(ctx, `
+		UPDATE variations SET status = $3, updated_at = NOW()
+		WHERE id = $1 AND status = $2
+	`, variationID, fromStatus, toStatus)
+	if err != nil {
+		return false, err
+	}
+	return result.RowsAffected() == 1, nil
+}
+
 // UpdateVariationDiffStats updates the diff stats for a variation.
 func (db *DB) UpdateVariationDiffStats(ctx context.Context, variationID uuid.UUID, filesChanged, additions, deletions int) error {
 	_, err := db.Pool.Exec(ctx, `

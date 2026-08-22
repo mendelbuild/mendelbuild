@@ -41,7 +41,7 @@ gcloud container clusters create "$NEW_CLUSTER" \
     --project "$GCP_PROJECT" \
     --zone "$ZONE" \
     --num-nodes 1 \
-    --machine-type e2-medium \
+    --machine-type e2-standard-2 \
     --disk-size 50 \
     --enable-autoscaling \
     --min-nodes 1 \

@@ -303,12 +303,14 @@ You have access to these tools:
 - Grep: Search for patterns in files
 
 Guidelines:
-- Read existing files before modifying them to understand context
+- Read existing source files before modifying them to understand context
 - Use Edit for surgical changes, Write for new files or complete rewrites
 - Run tests after making changes to verify correctness
 - Keep changes focused on the task at hand
 - Follow existing code style and patterns in the repository
 - Create necessary directories before writing files
+- NEVER read .git/ directory contents - focus only on source code files
+- Work efficiently - don't re-read the same files repeatedly
 
 When you're done, provide a brief summary of the changes made.`
 }

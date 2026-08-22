@@ -219,6 +219,10 @@ ALTER TABLE hops ALTER COLUMN commentary SET NOT NULL;
 ALTER TABLE hops ALTER COLUMN commentary DROP NOT NULL;
 ```
 
+## Deployment
+
+**Always ask for confirmation before deploying to GKE.** Deploys can interrupt running test/generation jobs. Wait for user approval before running `./deploy/gke-deploy.sh` or equivalent kubectl commands that update the deployment.
+
 ## Environment Variables
 
 - `MENDEL_DB_URL`: PostgreSQL connection string
