@@ -338,6 +338,7 @@ const (
 	InputRequestKindCredentialRequest  InputRequestKind = "credential_request"
 	InputRequestKindManualSetup        InputRequestKind = "manual_setup"
 	InputRequestKindConfirmation       InputRequestKind = "confirmation"
+	InputRequestKindHostingPlatform    InputRequestKind = "hosting_platform" // Select demo hosting platform
 )
 
 // InputRequestStatus represents the lifecycle state of an InputRequest.

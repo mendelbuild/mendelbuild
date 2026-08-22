@@ -78,10 +78,11 @@
             {{end}}
         </div>
 
-        {{/* Demo Panel - shown when variation has a demo instance running */}}
-        {{if .DemoInstance}}
+        {{/* Demo Panel - shown when variation is ready for demo */}}
+        {{if or .DemoInstance (eq .Variation.Status "pending")}}
         <div class="card">
             <h2>Demo</h2>
+            {{if .DemoInstance}}
             <div style="margin-bottom: 15px;">
                 <table>
                     <tr>
@@ -179,6 +180,57 @@
                     </table>
                 </div>
             </div>
+            {{else}}
+            {{/* No demo instance - show Start Demo button or hosting setup message */}}
+            {{if .DemoReady}}
+            <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/start-demo">
+                <button type="submit" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    Start Demo
+                </button>
+            </form>
+            <p style="color: #666; font-size: 0.85em; margin-top: 10px;">
+                Deploy this variation to your configured hosting platform.
+            </p>
+            {{else if .DemoScriptsExist}}
+            {{/* Scripts exist but missing credentials */}}
+            <div style="padding: 15px; background: #fff3cd; border-radius: 4px; border: 1px solid #ffc107;">
+                <strong style="color: #856404;">Missing Credentials</strong>
+                <p style="color: #856404; margin: 8px 0 0 0; font-size: 0.9em;">
+                    Demo hosting is configured but these secrets are missing from project settings:
+                </p>
+                <ul style="color: #856404; margin: 8px 0 0 0; font-size: 0.9em;">
+                    {{range .DemoMissingSecrets}}
+                    <li><code>{{.}}</code></li>
+                    {{end}}
+                </ul>
+            </div>
+            {{else if .DemoPlatformSelected}}
+            {{/* Platform selected but scripts not generated yet */}}
+            <div style="padding: 15px; background: #e7f1ff; border-radius: 4px; border: 1px solid #b8daff;">
+                <strong style="color: #004085;">Platform: {{.DemoPlatformSelected}}</strong>
+                <p style="color: #004085; margin: 8px 0 0 0; font-size: 0.9em;">
+                    Platform selected. Generate deployment scripts to enable demos for this variation.
+                </p>
+                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/generate-demo-scripts" style="margin-top: 12px;">
+                    <button type="submit" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Generate Demo Scripts
+                    </button>
+                </form>
+            </div>
+            {{else}}
+            <div style="padding: 15px; background: #e7f1ff; border-radius: 4px; border: 1px solid #b8daff;">
+                <strong style="color: #004085;">Demo Hosting Not Configured</strong>
+                <p style="color: #004085; margin: 8px 0 0 0; font-size: 0.9em;">
+                    To enable demos, select a hosting platform. Mendel will generate deployment scripts
+                    and prompt you for any required credentials.
+                </p>
+                <form method="POST" action="/p/{{$.ProjectID}}/configure-demo-hosting" style="margin-top: 12px;">
+                    <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Configure Demo Hosting
+                    </button>
+                </form>
+            </div>
+            {{end}}
             {{end}}
         </div>
         {{end}}

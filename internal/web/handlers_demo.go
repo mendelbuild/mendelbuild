@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bhs/mendelbuild/internal/crypto"
 	"github.com/bhs/mendelbuild/internal/demo"
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/bhs/mendelbuild/internal/git"
@@ -269,7 +270,13 @@ func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uu
 		logMilestone("Branch cloned successfully")
 	}
 
-	// Check for .mendel/docker-compose.demo.yml
+	// Check if cloud hosting is configured (demo-hosting.yml)
+	if hostingCfg, err := demo.LoadHostingConfig(workDir); err == nil && hostingCfg != nil {
+		s.runCloudDemoDeployment(ctx, projectID, variationID, demoInstanceID, workDir, hostingCfg, logMilestone, logInfo, logError, failDemo)
+		return
+	}
+
+	// Check for .mendel/docker-compose.demo.yml (local Docker demo)
 	if !demo.HasDockerCompose(workDir) {
 		failDemoWithFix(
 			"Docker configuration not found: .mendel/docker-compose.demo.yml",
@@ -403,6 +410,174 @@ func (s *Server) createErrorDemoInstance(ctx context.Context, variationID uuid.U
 	}
 	demoInstance.ErrorMessage = &errMsg
 	s.db.CreateDemoInstance(ctx, demoInstance)
+}
+
+// runCloudDemoDeployment deploys a demo using the cloud hosting scripts (demo-hosting.yml).
+func (s *Server) runCloudDemoDeployment(
+	ctx context.Context,
+	projectID string,
+	variationID uuid.UUID,
+	demoInstanceID uuid.UUID,
+	workDir string,
+	hostingCfg *demo.HostingConfig,
+	logMilestone func(string),
+	logInfo func(string),
+	logError func(string),
+	failDemo func(string),
+) {
+	logMilestone("Deploying to cloud platform...")
+
+	// Get project credentials
+	projID, err := uuid.Parse(projectID)
+	if err != nil {
+		failDemo("Invalid project ID")
+		return
+	}
+
+	// Check that all required secrets are present
+	creds, err := s.db.ListProjectCredentials(ctx, projID)
+	if err != nil {
+		failDemo("Failed to load project credentials: " + err.Error())
+		return
+	}
+
+	credMap := make(map[string]string)
+	for _, c := range creds {
+		credMap[c.Name] = c.Name // Store name to verify presence
+	}
+
+	var missingSecrets []string
+	for _, secretName := range hostingCfg.RequiredSecrets {
+		if _, ok := credMap[secretName]; !ok {
+			missingSecrets = append(missingSecrets, secretName)
+		}
+	}
+
+	if len(missingSecrets) > 0 {
+		failDemo(fmt.Sprintf("Missing required credentials: %s. Add them in Project Settings.", strings.Join(missingSecrets, ", ")))
+		return
+	}
+
+	// Build environment with decrypted secrets
+	env := os.Environ()
+	env = append(env, fmt.Sprintf("MENDEL_VARIATION_ID=%s", variationID.String()))
+
+	for _, c := range creds {
+		// Check if this credential is required
+		isRequired := false
+		for _, secretName := range hostingCfg.RequiredSecrets {
+			if c.Name == secretName {
+				isRequired = true
+				break
+			}
+		}
+		if !isRequired {
+			continue
+		}
+
+		// Decrypt the credential
+		key, err := crypto.GetKey()
+		if err != nil {
+			failDemo("Encryption not configured: " + err.Error())
+			return
+		}
+
+		decrypted, err := crypto.Decrypt(c.EncryptedValue, key)
+		if err != nil {
+			failDemo(fmt.Sprintf("Failed to decrypt %s: %v", c.Name, err))
+			return
+		}
+
+		env = append(env, fmt.Sprintf("%s=%s", c.Name, string(decrypted)))
+	}
+
+	// Run the deploy script
+	deployScriptPath := workDir + "/.mendel/" + hostingCfg.DeployScript
+	if _, err := os.Stat(deployScriptPath); os.IsNotExist(err) {
+		failDemo(fmt.Sprintf("Deploy script not found: %s", hostingCfg.DeployScript))
+		return
+	}
+
+	logInfo(fmt.Sprintf("Running deploy script: %s", hostingCfg.DeployScript))
+
+	cmd := exec.CommandContext(ctx, "bash", deployScriptPath)
+	cmd.Dir = workDir + "/.mendel"
+	cmd.Env = env
+
+	output, err := cmd.CombinedOutput()
+	outputStr := string(output)
+
+	if outputStr != "" {
+		logInfo(truncateOutput(outputStr, 4000))
+	}
+
+	if err != nil {
+		failDemo(fmt.Sprintf("Deploy script failed: %v", err))
+		return
+	}
+
+	// Extract URL from output
+	var demoURL string
+	if hostingCfg.URLFrom == "" || hostingCfg.URLFrom == "stdout" {
+		// Look for URL in stdout
+		demoURL = extractURLFromOutput(outputStr)
+	} else if strings.HasPrefix(hostingCfg.URLFrom, "file:") {
+		// Read URL from file
+		urlFile := strings.TrimPrefix(hostingCfg.URLFrom, "file:")
+		urlFilePath := workDir + "/.mendel/" + urlFile
+		urlBytes, err := os.ReadFile(urlFilePath)
+		if err != nil {
+			failDemo(fmt.Sprintf("Failed to read URL from %s: %v", urlFile, err))
+			return
+		}
+		demoURL = strings.TrimSpace(string(urlBytes))
+	}
+
+	if demoURL == "" {
+		failDemo("Deploy script did not output a URL. The script must print the deployed URL to stdout.")
+		return
+	}
+
+	logMilestone(fmt.Sprintf("Demo deployed at %s", demoURL))
+
+	// Build teardown command
+	teardownCmd := fmt.Sprintf("cd %s/.mendel && bash %s", workDir, hostingCfg.TeardownScript)
+
+	// Update demo instance
+	processInfo, _ := json.Marshal(map[string]interface{}{
+		"work_dir":     workDir,
+		"deploy_mode":  "cloud",
+		"hosting_file": "demo-hosting.yml",
+	})
+
+	s.db.Pool.Exec(ctx, `
+		UPDATE demo_instances
+		SET url = $2, teardown_instructions = $3, status = $4, process_info = $5
+		WHERE id = $1
+	`, demoInstanceID, demoURL, teardownCmd, domain.DemoInstanceStatusRunning, processInfo)
+}
+
+// extractURLFromOutput finds the first https:// URL in the output.
+func extractURLFromOutput(output string) string {
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "https://") {
+			// Take just the URL part (stop at whitespace)
+			parts := strings.Fields(line)
+			if len(parts) > 0 {
+				return parts[0]
+			}
+		}
+		// Also check for http:// in case of local-ish deployments
+		if strings.HasPrefix(line, "http://") {
+			parts := strings.Fields(line)
+			if len(parts) > 0 {
+				return parts[0]
+			}
+		}
+	}
+	return ""
 }
 
 // copyFile copies a file from src to dst.
@@ -1002,4 +1177,443 @@ func getRecentlyModifiedFiles(workDir string, lastModTimes map[string]time.Time)
 	}
 
 	return modified
+}
+
+// platformCredentials maps platform IDs to their required credentials.
+var platformCredentials = map[string][]struct {
+	Name        string
+	Description string
+}{
+	"cloud-run": {
+		{Name: "GCP_PROJECT_ID", Description: "Your Google Cloud project ID"},
+		{Name: "GCP_SERVICE_ACCOUNT_KEY", Description: "Service account JSON key with Cloud Run deploy permissions"},
+	},
+	"fly-io": {
+		{Name: "FLY_API_TOKEN", Description: "Fly.io API token (from 'fly tokens create deploy')"},
+	},
+	"railway": {
+		{Name: "RAILWAY_TOKEN", Description: "Railway API token (from railway.app/account/tokens)"},
+	},
+	"vercel": {
+		{Name: "VERCEL_TOKEN", Description: "Vercel API token (from vercel.com/account/tokens)"},
+		{Name: "VERCEL_ORG_ID", Description: "Vercel organization ID (optional for personal accounts)"},
+	},
+	"render": {
+		{Name: "RENDER_API_KEY", Description: "Render API key (from dashboard.render.com/account/api-keys)"},
+	},
+}
+
+// handleSelectHostingPlatform handles the platform selection form submission.
+func (s *Server) handleSelectHostingPlatform(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	inputRequestID, err := uuid.Parse(chi.URLParam(r, "inputRequestID"))
+	if err != nil {
+		http.Error(w, "invalid input request ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	platform := r.FormValue("platform")
+	if platform == "" {
+		http.Error(w, "platform is required", http.StatusBadRequest)
+		return
+	}
+
+	// Get the InputRequest
+	inputRequest, err := s.db.GetInputRequest(ctx, inputRequestID)
+	if err != nil {
+		http.Error(w, "input request not found", http.StatusNotFound)
+		return
+	}
+
+	if inputRequest.Kind != domain.InputRequestKindHostingPlatform {
+		http.Error(w, "wrong input request kind", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve the InputRequest
+	now := time.Now()
+	resolution := platform
+	inputRequest.Status = domain.InputRequestStatusResolved
+	inputRequest.Resolution = &resolution
+	inputRequest.ResolvedAt = &now
+	inputRequest.UpdatedAt = now
+
+	if err := s.db.UpdateInputRequest(ctx, inputRequest); err != nil {
+		http.Error(w, "failed to update input request", http.StatusInternalServerError)
+		return
+	}
+
+	// Create credential InputRequests for the selected platform
+	creds, ok := platformCredentials[platform]
+	if ok && len(creds) > 0 {
+		for _, cred := range creds {
+			details := fmt.Sprintf("Provide your %s credential.\n\n%s", cred.Name, cred.Description)
+			instructions := fmt.Sprintf("Add this credential to project settings with the name: %s", cred.Name)
+
+			credIR := &domain.InputRequest{
+				ID:                   uuid.New(),
+				ProjectID:            projectID,
+				Kind:                 domain.InputRequestKindCredentialRequest,
+				Title:                fmt.Sprintf("Provide %s", cred.Name),
+				Details:              &details,
+				Instructions:         &instructions,
+				RequiredCapabilities: []string{cred.Name},
+				ObjectivityScore:     0.9,
+				ImportanceScore:      0.9,
+				Status:               domain.InputRequestStatusNeedsAssignment,
+				CreatedAt:            now,
+				UpdatedAt:            now,
+			}
+
+			if err := s.db.CreateInputRequest(ctx, credIR); err != nil {
+				// Log but continue
+				fmt.Printf("Failed to create credential InputRequest: %v\n", err)
+			}
+		}
+	}
+
+	// Store the selected platform in project config for later use
+	project, err := s.db.GetProject(ctx, projectID)
+	if err == nil && project != nil {
+		var config map[string]interface{}
+		if project.Config != nil {
+			json.Unmarshal(project.Config, &config)
+		}
+		if config == nil {
+			config = make(map[string]interface{})
+		}
+		config["demo_hosting_platform"] = platform
+		configBytes, _ := json.Marshal(config)
+		s.db.UpdateProjectConfig(ctx, projectID, configBytes)
+	}
+
+	// Redirect to inputs page to show the new credential requests
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs", projectID), http.StatusSeeOther)
+}
+
+// handleConfigureDemoHosting creates an InputRequest for selecting a demo hosting platform.
+// AI will suggest options based on project context, and user picks one.
+func (s *Server) handleConfigureDemoHosting(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	// Check if there's already a pending hosting platform InputRequest
+	existingIRs, _ := s.db.GetInputRequestsByProject(ctx, projectID)
+	for _, ir := range existingIRs {
+		if ir.Kind == domain.InputRequestKindHostingPlatform &&
+			ir.Status != domain.InputRequestStatusResolved {
+			// Already have a pending one - redirect to it
+			http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, ir.ID), http.StatusSeeOther)
+			return
+		}
+	}
+
+	// Get project context for AI to suggest appropriate platforms
+	project, err := s.db.GetProject(ctx, projectID)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	// Build context for the InputRequest
+	var details strings.Builder
+	details.WriteString("Select a hosting platform for running demos of this project.\n\n")
+	details.WriteString("**Project:** " + project.Name + "\n")
+	details.WriteString("\nMendel will generate deployment scripts for the selected platform ")
+	details.WriteString("and prompt you for any required credentials (API keys, project IDs, etc.).")
+
+	detailsStr := details.String()
+
+	// Create the InputRequest
+	ir := &domain.InputRequest{
+		ID:               uuid.New(),
+		ProjectID:        projectID,
+		Kind:             domain.InputRequestKindHostingPlatform,
+		Title:            "Select Demo Hosting Platform",
+		Details:          &detailsStr,
+		ObjectivityScore: 0.7, // Somewhat objective - depends on project needs
+		ImportanceScore:  0.8, // Important for enabling demos
+		Status:           domain.InputRequestStatusNeedsAssignment,
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+	}
+
+	if err := s.db.CreateInputRequest(ctx, ir); err != nil {
+		http.Error(w, "failed to create input request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Redirect to the InputRequest page
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, ir.ID), http.StatusSeeOther)
+}
+
+// handleGenerateDemoScripts uses AI to generate demo-hosting.yml and deployment scripts.
+func (s *Server) handleGenerateDemoScripts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID := chi.URLParam(r, "projectID")
+
+	variationID, err := uuid.Parse(chi.URLParam(r, "variationID"))
+	if err != nil {
+		http.Error(w, "invalid variation ID", http.StatusBadRequest)
+		return
+	}
+
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	// Get selected platform from project config
+	project, err := s.db.GetProject(ctx, projectUUID)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	var cfg map[string]interface{}
+	if project.Config != nil {
+		json.Unmarshal(project.Config, &cfg)
+	}
+	platform, _ := cfg["demo_hosting_platform"].(string)
+	if platform == "" {
+		http.Error(w, "no hosting platform selected", http.StatusBadRequest)
+		return
+	}
+
+	// Get work directory
+	workDir := git.WorkDirForVariation(projectID, variationID.String())
+
+	// Create a demo instance to track progress (reusing the demo log system)
+	demoInstanceID := uuid.New()
+	processInfo, _ := json.Marshal(map[string]interface{}{
+		"work_dir": workDir,
+		"phase":    "generating_scripts",
+	})
+
+	demoInstance := &domain.DemoInstance{
+		ID:          demoInstanceID,
+		VariationID: variationID,
+		Status:      domain.DemoInstanceStatusStarting,
+		ProcessInfo: processInfo,
+	}
+
+	if err := s.db.CreateDemoInstance(ctx, demoInstance); err != nil {
+		http.Error(w, "failed to create demo instance: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Run script generation in background
+	go s.runDemoScriptGeneration(ctx, projectID, variationID, demoInstanceID, workDir, platform)
+
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
+}
+
+// runDemoScriptGeneration generates demo-hosting.yml and deployment scripts using Claude Code.
+func (s *Server) runDemoScriptGeneration(ctx context.Context, projectID string, variationID uuid.UUID, demoInstanceID uuid.UUID, workDir string, platform string) {
+	// Helper to log progress
+	logMilestone := func(msg string) {
+		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelMilestone, msg, domain.SourceTypeDemo, &demoInstanceID)
+	}
+
+	logInfo := func(msg string) {
+		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelInfo, msg, domain.SourceTypeDemo, &demoInstanceID)
+	}
+
+	logError := func(msg string) {
+		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelError, msg, domain.SourceTypeDemo, &demoInstanceID)
+	}
+
+	logMilestone(fmt.Sprintf("Generating demo scripts for %s platform...", platform))
+
+	// Build the prompt for Claude Code
+	prompt := buildDemoScriptPrompt(platform)
+
+	logInfo("Running Claude Code to generate deployment scripts...")
+
+	// Run Claude Code
+	cmd := exec.CommandContext(ctx, "claude", "--print", "--dangerously-skip-permissions", prompt)
+	cmd.Dir = workDir
+
+	done := make(chan struct{})
+	go monitorClaudeProgress(workDir, logInfo, done)
+
+	output, err := cmd.CombinedOutput()
+	close(done)
+
+	if err != nil {
+		errMsg := fmt.Sprintf("Claude Code failed: %v", err)
+		if len(output) > 0 {
+			errMsg += "\n" + string(output)
+		}
+		logError(errMsg)
+		s.db.Pool.Exec(ctx, `
+			UPDATE demo_instances SET status = $2, error_message = $3 WHERE id = $1
+		`, demoInstanceID, domain.DemoInstanceStatusError, errMsg)
+		return
+	}
+
+	logMilestone("Demo scripts generated successfully")
+
+	// Verify the files were created
+	hostingConfigPath := workDir + "/.mendel/demo-hosting.yml"
+	if _, err := os.Stat(hostingConfigPath); os.IsNotExist(err) {
+		errMsg := "demo-hosting.yml was not created"
+		logError(errMsg)
+		s.db.Pool.Exec(ctx, `
+			UPDATE demo_instances SET status = $2, error_message = $3 WHERE id = $1
+		`, demoInstanceID, domain.DemoInstanceStatusError, errMsg)
+		return
+	}
+
+	// Get repo info for pushing
+	projectUUID, _ := uuid.Parse(projectID)
+	repo, err := s.db.GetRepositoryByProject(ctx, projectUUID)
+	if err != nil || repo.URL == nil {
+		logError("Repository not configured - cannot push scripts")
+		s.db.Pool.Exec(ctx, `
+			UPDATE demo_instances SET status = $2, error_message = $3 WHERE id = $1
+		`, demoInstanceID, domain.DemoInstanceStatusError, "Repository not configured")
+		return
+	}
+
+	var repoConfig struct {
+		AuthToken string `json:"auth_token"`
+	}
+	if repo.Config != nil {
+		json.Unmarshal(repo.Config, &repoConfig)
+	}
+
+	// Commit and push the scripts
+	logInfo("Committing demo scripts...")
+	gitClient := git.NewClient(workDir)
+	if err := gitClient.CommitAll(ctx, "Add demo deployment scripts for "+platform); err != nil {
+		logError("Failed to commit scripts: " + err.Error())
+		s.db.Pool.Exec(ctx, `
+			UPDATE demo_instances SET status = $2, error_message = $3 WHERE id = $1
+		`, demoInstanceID, domain.DemoInstanceStatusError, "Failed to commit: "+err.Error())
+		return
+	}
+
+	// Get current branch and push
+	variation, err := s.db.GetVariation(ctx, variationID)
+	if err != nil {
+		logError("Failed to get variation: " + err.Error())
+		return
+	}
+
+	hop, err := s.db.GetHop(ctx, variation.HopID)
+	if err != nil {
+		logError("Failed to get hop: " + err.Error())
+		return
+	}
+
+	branchName := fmt.Sprintf("mendel/%s/%s", sanitizeBranchName(hop.Name), sanitizeBranchName(variation.Name))
+	logInfo(fmt.Sprintf("Pushing to branch %s...", branchName))
+
+	if err := gitClient.Push(ctx, repoConfig.AuthToken); err != nil {
+		logError("Failed to push scripts: " + err.Error())
+		s.db.Pool.Exec(ctx, `
+			UPDATE demo_instances SET status = $2, error_message = $3 WHERE id = $1
+		`, demoInstanceID, domain.DemoInstanceStatusError, "Failed to push: "+err.Error())
+		return
+	}
+
+	logMilestone("Demo scripts committed and pushed")
+
+	// Mark as stopped (ready for user to start demo)
+	s.db.Pool.Exec(ctx, `
+		UPDATE demo_instances SET status = $2 WHERE id = $1
+	`, demoInstanceID, domain.DemoInstanceStatusStopped)
+}
+
+// buildDemoScriptPrompt creates a prompt for Claude Code to generate demo deployment scripts.
+func buildDemoScriptPrompt(platform string) string {
+	platformInstructions := map[string]string{
+		"cloud-run": `Google Cloud Run deployment:
+- Use 'gcloud run deploy' command
+- Required env vars: GCP_PROJECT_ID, GCP_SERVICE_ACCOUNT_KEY (JSON)
+- Deploy script should authenticate with service account key, build and push to gcr.io, deploy to Cloud Run
+- Teardown script should delete the Cloud Run service`,
+
+		"fly-io": `Fly.io deployment:
+- Use 'flyctl' CLI commands
+- Required env var: FLY_API_TOKEN
+- Deploy script should create app if needed, deploy using fly.toml or Dockerfile
+- Teardown script should destroy the app`,
+
+		"railway": `Railway deployment:
+- Use Railway CLI or API
+- Required env var: RAILWAY_TOKEN
+- Deploy script should link project and deploy
+- Teardown script should remove the deployment`,
+
+		"vercel": `Vercel deployment:
+- Use 'vercel' CLI
+- Required env vars: VERCEL_TOKEN, optionally VERCEL_ORG_ID
+- Deploy script should deploy using vercel CLI
+- Teardown script should remove the deployment`,
+
+		"render": `Render deployment:
+- Use Render API (render.com/docs/api)
+- Required env var: RENDER_API_KEY
+- Deploy script should create service via API and trigger deploy
+- Teardown script should delete the service`,
+	}
+
+	instructions, ok := platformInstructions[platform]
+	if !ok {
+		instructions = fmt.Sprintf("Generic deployment for platform: %s", platform)
+	}
+
+	return fmt.Sprintf(`Generate demo deployment scripts for this project.
+
+Look at the existing Dockerfile, docker-compose files, and project structure to understand how to build and run this application.
+
+Create these files in the .mendel/ directory:
+
+1. demo-hosting.yml - Configuration file with this structure:
+   version: 1
+   required_secrets:
+     - <list of env var names needed, based on platform>
+   deploy_script: deploy.sh
+   teardown_script: teardown.sh
+   url_from: stdout
+
+2. deploy.sh - Deployment script that:
+   - Uses secrets from environment variables
+   - Builds and deploys the application
+   - Prints the deployed URL to stdout (CRITICAL - this is how Mendel captures the URL)
+   - Has MENDEL_VARIATION_ID env var available for naming resources
+
+3. teardown.sh - Teardown script that:
+   - Cleans up all deployed resources
+   - Uses same env vars as deploy.sh
+   - Has MENDEL_VARIATION_ID env var available
+
+Platform: %s
+
+%s
+
+Make the scripts executable (chmod +x).
+Print ONLY the URL on success (e.g., echo "https://my-app-xyz.run.app").
+Handle errors gracefully with clear error messages.
+Make scripts idempotent where possible.
+
+Commit the files when done.`, platform, instructions)
 }

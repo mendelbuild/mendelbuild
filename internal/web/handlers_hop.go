@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/codegen/executor"
+	"github.com/bhs/mendelbuild/internal/demo"
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/bhs/mendelbuild/internal/git"
 	"github.com/bhs/mendelbuild/internal/test"
@@ -267,6 +268,13 @@ type VariationDetailView struct {
 	DiffURL      string                // Link to GitHub compare (main...branch)
 	CanRetryFix  bool                  // True if "Retry with Fix" is available
 	LastError    string                // Last error message (for retry context)
+
+	// Demo hosting status
+	DemoPlatformSelected  string   // Platform ID if selected (e.g., "fly-io")
+	DemoScriptsExist      bool     // True if demo-hosting.yml exists
+	DemoHostingConfigured bool     // True if demo-hosting.yml exists (alias for template compat)
+	DemoMissingSecrets    []string // Secrets required but not in project settings
+	DemoReady             bool     // True if hosting configured AND all secrets present
 }
 
 func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
@@ -345,16 +353,63 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Check demo hosting configuration
+	var demoPlatformSelected string
+	var demoScriptsExist bool
+	var demoMissingSecrets []string
+	var demoReady bool
+
+	// Check if platform is selected in project config
+	project, _ := s.db.GetProject(ctx, projectID)
+	if project != nil && project.Config != nil {
+		var cfg map[string]interface{}
+		if err := json.Unmarshal(project.Config, &cfg); err == nil {
+			if platform, ok := cfg["demo_hosting_platform"].(string); ok && platform != "" {
+				demoPlatformSelected = platform
+			}
+		}
+	}
+
+	// Check if demo-hosting.yml exists in work directory
+	workDir := git.WorkDirForVariation(projectID.String(), variationID.String())
+	if hostingCfg, err := demo.LoadHostingConfig(workDir); err == nil && hostingCfg != nil {
+		demoScriptsExist = true
+
+		// Check if all required secrets are present in project credentials
+		if project != nil {
+			// Get existing credentials
+			creds, _ := s.db.ListProjectCredentials(ctx, projectID)
+			credSet := make(map[string]bool)
+			for _, c := range creds {
+				credSet[c.Name] = true
+			}
+
+			// Check each required secret
+			for _, secretName := range hostingCfg.RequiredSecrets {
+				if !credSet[secretName] {
+					demoMissingSecrets = append(demoMissingSecrets, secretName)
+				}
+			}
+
+			demoReady = len(demoMissingSecrets) == 0
+		}
+	}
+
 	view := &VariationDetailView{
-		Variation:    variation,
-		Hop:          hop,
-		Logs:         logs,
-		DemoInstance: demoInstance,
-		DemoLogs:     demoLogs,
-		GitHubURL:    githubURL,
-		DiffURL:      diffURL,
-		CanRetryFix:  canRetryFix,
-		LastError:    lastError,
+		Variation:             variation,
+		Hop:                   hop,
+		Logs:                  logs,
+		DemoInstance:          demoInstance,
+		DemoLogs:              demoLogs,
+		GitHubURL:             githubURL,
+		DiffURL:               diffURL,
+		CanRetryFix:           canRetryFix,
+		LastError:             lastError,
+		DemoPlatformSelected:  demoPlatformSelected,
+		DemoScriptsExist:      demoScriptsExist,
+		DemoHostingConfigured: demoScriptsExist, // Alias for backwards compat
+		DemoMissingSecrets:    demoMissingSecrets,
+		DemoReady:             demoReady,
 	}
 
 	data := map[string]interface{}{

@@ -179,6 +179,81 @@ func ExtractURL(output, pattern string) string {
 	return match
 }
 
+// HostingConfig represents .mendel/demo-hosting.yml - the platform-agnostic
+// configuration for deploying demos to a cloud hosting platform.
+// Mendel doesn't understand specific platforms - it just runs the scripts
+// with secrets injected as environment variables.
+type HostingConfig struct {
+	Version int `yaml:"version"`
+
+	// Names of secrets that must exist in Mendel project settings.
+	// These are injected as environment variables when running scripts.
+	RequiredSecrets []string `yaml:"required_secrets"`
+
+	// Path to the deployment script (relative to .mendel/)
+	// Script receives secrets as env vars and MENDEL_VARIATION_ID.
+	// Must print the demo URL to stdout on success.
+	DeployScript string `yaml:"deploy_script"`
+
+	// Path to the teardown script (relative to .mendel/)
+	// Called when stopping a demo.
+	TeardownScript string `yaml:"teardown_script"`
+
+	// How to extract the URL from deploy script output.
+	// "stdout" (default) - first https:// URL from stdout
+	// "file:<path>" - read URL from file written by script
+	URLFrom string `yaml:"url_from"`
+}
+
+// LoadHostingConfig reads and parses .mendel/demo-hosting.yml from the given directory.
+func LoadHostingConfig(workDir string) (*HostingConfig, error) {
+	configPath := filepath.Join(workDir, ".mendel", "demo-hosting.yml")
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // No hosting config is valid - just means demos aren't configured
+		}
+		return nil, fmt.Errorf("read hosting config: %w", err)
+	}
+
+	var cfg HostingConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse hosting config: %w", err)
+	}
+
+	cfg.applyHostingDefaults()
+
+	if err := cfg.validateHosting(); err != nil {
+		return nil, fmt.Errorf("invalid hosting config: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+func (c *HostingConfig) applyHostingDefaults() {
+	if c.URLFrom == "" {
+		c.URLFrom = "stdout"
+	}
+}
+
+func (c *HostingConfig) validateHosting() error {
+	if c.DeployScript == "" {
+		return fmt.Errorf("deploy_script is required")
+	}
+	if c.TeardownScript == "" {
+		return fmt.Errorf("teardown_script is required")
+	}
+	return nil
+}
+
+// HasHostingConfig checks if .mendel/demo-hosting.yml exists.
+func HasHostingConfig(workDir string) bool {
+	configPath := filepath.Join(workDir, ".mendel", "demo-hosting.yml")
+	_, err := os.Stat(configPath)
+	return err == nil
+}
+
 // IsComposeRunning checks if any containers are running for the docker-compose project
 // in the .mendel directory. Returns true if at least one container is "running".
 func IsComposeRunning(workDir string) bool {

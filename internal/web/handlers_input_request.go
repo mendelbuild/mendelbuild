@@ -38,6 +38,14 @@ type InputRequestDetailView struct {
 	ExistingHopsJSON           template.JS  // JSON of existing hops for DAG rendering (template.JS to avoid HTML escaping)
 	ObjectivesJSON             template.JS  // JSON map of objective ID to description
 	NeedsProductionCredentials bool         // requires_production but no credentials configured
+	HostingPlatforms           []HostingPlatformOption // For hosting_platform kind
+}
+
+// HostingPlatformOption represents a hosting platform choice.
+type HostingPlatformOption struct {
+	ID          string
+	Name        string
+	Description string
 }
 
 // ExistingVariationView holds an existing variation for display in variation review.
@@ -444,6 +452,18 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 				// Can select if all variations are done (none creating) and at least one is pending
 				view.CanSelect = creatingCount == 0 && pendingCount > 0 && inputRequest.Status != domain.InputRequestStatusResolved
 			}
+		}
+
+	case domain.InputRequestKindHostingPlatform:
+		templateName = "input_request_hosting.html"
+		// Provide common hosting platform options
+		// In the future, AI could suggest based on project context
+		view.HostingPlatforms = []HostingPlatformOption{
+			{ID: "cloud-run", Name: "Google Cloud Run", Description: "Serverless containers on GCP. Good for projects already using Google Cloud."},
+			{ID: "fly-io", Name: "Fly.io", Description: "Deploy containers globally. Simple CLI, generous free tier."},
+			{ID: "railway", Name: "Railway", Description: "Deploy from GitHub with zero config. Great for Node.js/Python apps."},
+			{ID: "vercel", Name: "Vercel", Description: "Optimized for frontend/Next.js. Automatic previews on PRs."},
+			{ID: "render", Name: "Render", Description: "Managed containers and databases. Good all-around choice."},
 		}
 	}
 

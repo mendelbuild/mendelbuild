@@ -81,6 +81,33 @@ startup_timeout: 60       # Seconds to wait for test services
 
 Flow: `docker-compose.test.yml up` → `exec <service> <test_command>` → check exit code → `down`
 
+### `demo-hosting.yml` Spec
+
+Defined in `internal/demo/config.go`. This is a **platform-agnostic** config for deploying demos to cloud hosting. Mendel doesn't understand specific platforms - it just runs scripts with secrets injected as environment variables.
+
+```yaml
+version: 1
+required_secrets:           # Secrets that must exist in Mendel project settings
+  - GCP_PROJECT_ID          # Injected as env vars when running scripts
+  - GCP_SERVICE_ACCOUNT_KEY
+deploy_script: deploy-demo.sh    # Script to deploy (relative to .mendel/)
+teardown_script: teardown-demo.sh # Script to tear down
+url_from: stdout            # How to get URL: "stdout" or "file:<path>"
+```
+
+**Flow:**
+1. AI asks user to select hosting platform via InputRequest
+2. AI asks for platform-specific credentials via InputRequests
+3. AI generates platform-specific deploy/teardown scripts
+4. AI generates `demo-hosting.yml` listing required secrets
+5. Mendel validates secrets exist, injects as env vars, runs scripts
+
+**Script requirements:**
+- `deploy_script`: Receives `MENDEL_VARIATION_ID` env var, prints demo URL to stdout
+- `teardown_script`: Receives `MENDEL_VARIATION_ID` env var, cleans up resources
+
+This keeps platform-specific logic in AI-generated scripts, not hardcoded in Mendel.
+
 Codegen prompts instruct Claude Code to follow these rules.
 
 ## Structured LLM API Conventions
