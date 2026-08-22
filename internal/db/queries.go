@@ -856,17 +856,22 @@ func (db *DB) CreateVariationLogWithSource(ctx context.Context, variationID uuid
 	return err
 }
 
-// GetVariationLogs retrieves logs for a variation in chronological order.
+// GetVariationLogs retrieves logs for a variation.
+// Returns the most recent `limit` logs in chronological order (oldest first for display).
 func (db *DB) GetVariationLogs(ctx context.Context, variationID uuid.UUID, limit int) ([]domain.VariationLog, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	rows, err := db.Pool.Query(ctx, `
 		SELECT id, variation_id, logged_at, level, message, source_type, source_id
-		FROM variation_logs
-		WHERE variation_id = $1
+		FROM (
+			SELECT id, variation_id, logged_at, level, message, source_type, source_id
+			FROM variation_logs
+			WHERE variation_id = $1
+			ORDER BY logged_at DESC
+			LIMIT $2
+		) recent
 		ORDER BY logged_at ASC
-		LIMIT $2
 	`, variationID, limit)
 	if err != nil {
 		return nil, err
@@ -891,10 +896,14 @@ func (db *DB) GetVariationLogsBySource(ctx context.Context, sourceType domain.So
 	}
 	rows, err := db.Pool.Query(ctx, `
 		SELECT id, variation_id, logged_at, level, message, source_type, source_id
-		FROM variation_logs
-		WHERE source_type = $1 AND source_id = $2
+		FROM (
+			SELECT id, variation_id, logged_at, level, message, source_type, source_id
+			FROM variation_logs
+			WHERE source_type = $1 AND source_id = $2
+			ORDER BY logged_at DESC
+			LIMIT $3
+		) recent
 		ORDER BY logged_at ASC
-		LIMIT $3
 	`, string(sourceType), sourceID, limit)
 	if err != nil {
 		return nil, err
@@ -917,17 +926,23 @@ func (db *DB) GetRecentVariationLogs(ctx context.Context, variationID uuid.UUID,
 	return db.GetVariationLogs(ctx, variationID, limit)
 }
 
-// GetVariationLogsByType retrieves logs for a variation filtered by source type (chronological order).
+// GetVariationLogsByType retrieves logs for a variation filtered by source type.
+// Returns the most recent `limit` logs in chronological order (oldest first for display).
 func (db *DB) GetVariationLogsByType(ctx context.Context, variationID uuid.UUID, sourceType domain.SourceType, limit int) ([]domain.VariationLog, error) {
 	if limit <= 0 {
 		limit = 100
 	}
+	// Subquery gets most recent N logs, outer query orders them chronologically
 	rows, err := db.Pool.Query(ctx, `
 		SELECT id, variation_id, logged_at, level, message, source_type, source_id
-		FROM variation_logs
-		WHERE variation_id = $1 AND source_type = $2
+		FROM (
+			SELECT id, variation_id, logged_at, level, message, source_type, source_id
+			FROM variation_logs
+			WHERE variation_id = $1 AND source_type = $2
+			ORDER BY logged_at DESC
+			LIMIT $3
+		) recent
 		ORDER BY logged_at ASC
-		LIMIT $3
 	`, variationID, string(sourceType), limit)
 	if err != nil {
 		return nil, err

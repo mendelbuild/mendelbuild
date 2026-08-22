@@ -1,13 +1,18 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/bhs/mendelbuild/internal/codegen/executor"
 	"github.com/bhs/mendelbuild/internal/domain"
+	"github.com/bhs/mendelbuild/internal/git"
+	"github.com/bhs/mendelbuild/internal/test"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -260,6 +265,8 @@ type VariationDetailView struct {
 	DemoLogs     []domain.VariationLog // Logs specific to the current demo
 	GitHubURL    string                // Link to branch on GitHub (if applicable)
 	DiffURL      string                // Link to GitHub compare (main...branch)
+	CanRetryFix  bool                  // True if "Retry with Fix" is available
+	LastError    string                // Last error message (for retry context)
 }
 
 func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
@@ -289,7 +296,7 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get codegen logs only (not demo logs)
-	logs, _ := s.db.GetVariationLogsByType(ctx, variationID, domain.SourceTypeCodegen, 100)
+	logs, _ := s.db.GetVariationLogsByType(ctx, variationID, domain.SourceTypeCodegen, 500)
 
 	// Get the most recent demo instance (any status) for display
 	demoInstance, _ := s.db.GetLatestDemoByVariation(ctx, variationID)
@@ -318,6 +325,26 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		diffURL = buildGitHubDiffURL(*repo.URL, mainBranch, branchName)
 	}
 
+	// Check if retry-fix is available (terminated + work dir exists)
+	var canRetryFix bool
+	var lastError string
+	if variation.Status == domain.VariationStatusTerminated {
+		strategy, _ := s.db.GetStrategy(ctx, hop.StrategyID)
+		if strategy != nil {
+			workDir := git.WorkDirForVariation(strategy.ProjectID.String(), variation.ID.String())
+			if _, err := os.Stat(workDir); err == nil {
+				canRetryFix = true
+				// Find the last error message
+				for i := len(logs) - 1; i >= 0; i-- {
+					if logs[i].Level == domain.LogLevelError {
+						lastError = logs[i].Message
+						break
+					}
+				}
+			}
+		}
+	}
+
 	view := &VariationDetailView{
 		Variation:    variation,
 		Hop:          hop,
@@ -326,6 +353,8 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		DemoLogs:     demoLogs,
 		GitHubURL:    githubURL,
 		DiffURL:      diffURL,
+		CanRetryFix:  canRetryFix,
+		LastError:    lastError,
 	}
 
 	data := map[string]interface{}{
@@ -414,4 +443,278 @@ func (s *Server) handleTerminateVariation(w http.ResponseWriter, r *http.Request
 
 	// Redirect back to variation detail
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
+}
+
+func (s *Server) handleRetryWithFix(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID := chi.URLParam(r, "projectID")
+
+	variationID, err := uuid.Parse(chi.URLParam(r, "variationID"))
+	if err != nil {
+		http.Error(w, "invalid variation ID", http.StatusBadRequest)
+		return
+	}
+
+	variation, err := s.db.GetVariation(ctx, variationID)
+	if err != nil {
+		http.Error(w, "variation not found", http.StatusNotFound)
+		return
+	}
+
+	// Only allow retry-fix for terminated status
+	if variation.Status != domain.VariationStatusTerminated {
+		http.Error(w, "can only retry-fix terminated variations", http.StatusBadRequest)
+		return
+	}
+
+	hop, err := s.db.GetHop(ctx, variation.HopID)
+	if err != nil {
+		http.Error(w, "hop not found", http.StatusNotFound)
+		return
+	}
+
+	strategy, err := s.db.GetStrategy(ctx, hop.StrategyID)
+	if err != nil {
+		http.Error(w, "strategy not found", http.StatusNotFound)
+		return
+	}
+
+	// Check work directory exists
+	workDir := git.WorkDirForVariation(strategy.ProjectID.String(), variation.ID.String())
+	if _, err := os.Stat(workDir); os.IsNotExist(err) {
+		http.Error(w, "work directory not found - use regular Retry instead", http.StatusBadRequest)
+		return
+	}
+
+	// Build error context from recent logs (last 20 lines or so)
+	logs, _ := s.db.GetVariationLogsByType(ctx, variationID, domain.SourceTypeCodegen, 100)
+	var errorContext strings.Builder
+	var foundError bool
+
+	// Find the last error and include context around it
+	for i := len(logs) - 1; i >= 0; i-- {
+		if logs[i].Level == domain.LogLevelError {
+			foundError = true
+			// Include up to 15 lines before the error for context
+			startIdx := i - 15
+			if startIdx < 0 {
+				startIdx = 0
+			}
+			for j := startIdx; j <= i; j++ {
+				prefix := ""
+				if logs[j].Level == domain.LogLevelError {
+					prefix = "[ERROR] "
+				} else if logs[j].Level == domain.LogLevelMilestone {
+					prefix = "[MILESTONE] "
+				}
+				errorContext.WriteString(prefix)
+				errorContext.WriteString(logs[j].Message)
+				errorContext.WriteString("\n")
+			}
+			break
+		}
+	}
+
+	if !foundError {
+		http.Error(w, "no error found to fix", http.StatusBadRequest)
+		return
+	}
+
+	// Set status back to creating
+	oldStatus := variation.Status
+	variation.Status = domain.VariationStatusCreating
+	variation.UpdatedAt = time.Now()
+	if err := s.db.UpdateVariation(ctx, variation); err != nil {
+		http.Error(w, "error updating variation: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.db.CreateVariationStateTransition(ctx, variationID, string(oldStatus), string(domain.VariationStatusCreating), "retry with fix")
+
+	// Run the fix in background
+	go s.runFixForVariation(strategy.ProjectID, variation, hop, workDir, errorContext.String())
+
+	// Redirect back to variation detail to watch progress
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
+}
+
+// runFixForVariation runs the executor to fix a failed variation, re-runs tests, and commits if passing.
+func (s *Server) runFixForVariation(projectID uuid.UUID, variation *domain.Variation, hop *domain.Hop, workDir, errorContext string) {
+	ctx := context.Background()
+
+	logger := func(level domain.LogLevel, message string) {
+		s.db.CreateVariationLog(ctx, variation.ID, level, message)
+	}
+
+	logger(domain.LogLevelMilestone, "Attempting to fix previous error...")
+	// Log just the first 500 chars of context to avoid huge log entries
+	contextPreview := errorContext
+	if len(contextPreview) > 500 {
+		contextPreview = contextPreview[:500] + "..."
+	}
+	logger(domain.LogLevelInfo, fmt.Sprintf("Error context: %s", contextPreview))
+
+	// Get API key
+	project, err := s.db.GetProject(ctx, projectID)
+	if err != nil {
+		logger(domain.LogLevelError, fmt.Sprintf("Failed to get project: %v", err))
+		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: could not get project")
+		return
+	}
+
+	var projectConfig domain.ProjectConfig
+	if project.Config != nil {
+		json.Unmarshal(project.Config, &projectConfig)
+	}
+	apiKey := projectConfig.AnthropicAPIKey
+	if apiKey == "" {
+		apiKey = os.Getenv("ANTHROPIC_API_KEY")
+	}
+	if apiKey == "" {
+		logger(domain.LogLevelError, "No API key configured")
+		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: no API key")
+		return
+	}
+
+	// Build fix prompt
+	fixPrompt := fmt.Sprintf(`The previous code generation attempt failed. Here is the log context leading up to the error:
+
+%s
+
+Please fix the issue. Read the relevant files mentioned above, understand what went wrong, and make the necessary corrections.
+Focus on fixing the specific error - don't rewrite everything.`, errorContext)
+
+	// Run executor
+	exec := executor.New(apiKey, workDir).
+		WithEventHandler(func(event executor.Event) {
+			switch event.Type {
+			case executor.EventToolCall:
+				switch event.ToolName {
+				case "Write":
+					if path, ok := event.ToolInput["file_path"].(string); ok {
+						logger(domain.LogLevelMilestone, fmt.Sprintf("Writing: %s", path))
+					}
+				case "Edit":
+					if path, ok := event.ToolInput["file_path"].(string); ok {
+						logger(domain.LogLevelMilestone, fmt.Sprintf("Editing: %s", path))
+					}
+				case "Read":
+					if path, ok := event.ToolInput["file_path"].(string); ok {
+						logger(domain.LogLevelInfo, fmt.Sprintf("Reading: %s", path))
+					}
+				}
+			case executor.EventAPIResponse:
+				logger(domain.LogLevelInfo, fmt.Sprintf("API: +%d in, +%d out tokens", event.InputTokens, event.OutputTokens))
+			case executor.EventComplete:
+				logger(domain.LogLevelMilestone, "Fix attempt complete")
+			}
+		})
+
+	result, err := exec.Run(ctx, executor.SystemPrompt(), fixPrompt)
+	if err != nil {
+		logger(domain.LogLevelError, fmt.Sprintf("Executor error: %v", err))
+		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: executor error")
+		return
+	}
+
+	logger(domain.LogLevelInfo, fmt.Sprintf("Fix stats: %d rounds, %d tool calls", result.Stats.APIRounds, result.Stats.ToolCalls))
+
+	if !result.Success {
+		logger(domain.LogLevelError, fmt.Sprintf("Fix failed: %v", result.Error))
+		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed")
+		return
+	}
+
+	// Re-run tests
+	logger(domain.LogLevelMilestone, "Re-running tests...")
+	testCfg, err := test.LoadConfig(workDir)
+	if err != nil {
+		logger(domain.LogLevelError, fmt.Sprintf("Invalid test config: %v", err))
+		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: invalid test config")
+		return
+	}
+
+	if testCfg == nil {
+		logger(domain.LogLevelInfo, "No test config, skipping tests")
+	} else {
+		testResult := test.RunTestsWithOutput(workDir, testCfg)
+		if testResult.Output != "" {
+			output := testResult.Output
+			if len(output) > 4000 {
+				output = output[:2000] + "\n...(truncated)...\n" + output[len(output)-1500:]
+			}
+			logger(domain.LogLevelInfo, output)
+		}
+		if !testResult.Passed {
+			logger(domain.LogLevelError, fmt.Sprintf("Tests still failing: %s", testResult.Error))
+			s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: tests still failing")
+			return
+		}
+		logger(domain.LogLevelMilestone, "Tests passed!")
+	}
+
+	// Get repo config for commit/push
+	repo, err := s.db.GetRepositoryByProject(ctx, projectID)
+	if err != nil || repo == nil {
+		logger(domain.LogLevelError, "Could not get repository config")
+		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: no repository")
+		return
+	}
+
+	var repoConfig struct {
+		AuthToken string `json:"auth_token"`
+	}
+	if repo.Config != nil {
+		json.Unmarshal(repo.Config, &repoConfig)
+	}
+
+	// Commit changes
+	logger(domain.LogLevelInfo, "Committing fix...")
+	gitClient := git.NewClient(workDir)
+
+	commitMsg := fmt.Sprintf("[MendelBuild] Fix: %s\n\nFixed error in variation '%s'", hop.Name, variation.Name)
+	if err := gitClient.CommitAll(ctx, commitMsg); err != nil {
+		logger(domain.LogLevelError, fmt.Sprintf("Commit failed: %v", err))
+		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: commit error")
+		return
+	}
+
+	// Get commit ref
+	commitRef, err := gitClient.GetCurrentCommit(ctx)
+	if err != nil {
+		logger(domain.LogLevelError, fmt.Sprintf("Get commit ref failed: %v", err))
+		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: could not get commit")
+		return
+	}
+	logger(domain.LogLevelMilestone, fmt.Sprintf("Committed: %s", commitRef[:8]))
+
+	// Push
+	logger(domain.LogLevelInfo, "Pushing to remote...")
+	if err := gitClient.Push(ctx, repoConfig.AuthToken); err != nil {
+		logger(domain.LogLevelError, fmt.Sprintf("Push failed: %v", err))
+		s.transitionVariation(ctx, variation, domain.VariationStatusTerminated, "fix failed: push error")
+		return
+	}
+	logger(domain.LogLevelMilestone, "Pushed successfully")
+
+	// Update variation
+	variation.CommitRef = &commitRef
+	variation.Status = domain.VariationStatusPending
+	variation.UpdatedAt = time.Now()
+	if err := s.db.UpdateVariation(ctx, variation); err != nil {
+		logger(domain.LogLevelError, fmt.Sprintf("Update variation failed: %v", err))
+		return
+	}
+
+	s.db.CreateVariationStateTransition(ctx, variation.ID, string(domain.VariationStatusCreating), string(domain.VariationStatusPending), "fix successful")
+	logger(domain.LogLevelMilestone, "Fix completed successfully!")
+}
+
+// transitionVariation updates variation status and records the transition.
+func (s *Server) transitionVariation(ctx context.Context, variation *domain.Variation, newStatus domain.VariationStatus, reason string) {
+	oldStatus := variation.Status
+	variation.Status = newStatus
+	variation.UpdatedAt = time.Now()
+	s.db.UpdateVariation(ctx, variation)
+	s.db.CreateVariationStateTransition(ctx, variation.ID, string(oldStatus), string(newStatus), reason)
 }
