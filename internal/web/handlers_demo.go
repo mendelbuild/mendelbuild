@@ -338,19 +338,34 @@ func (s *Server) runCloudDemoDeployment(
 		env = append(env, fmt.Sprintf("%s=%s", secretName, string(decrypted)))
 	}
 
-	// Run the deploy script
+	// Run the deploy script inside a Docker container with the appropriate CLI tools
 	deployScriptPath := workDir + "/.mendel/" + hostingCfg.DeployScript
 	if _, err := os.Stat(deployScriptPath); os.IsNotExist(err) {
 		failDemo(fmt.Sprintf("Deploy script not found: %s", hostingCfg.DeployScript))
 		return
 	}
 
-	logInfo(fmt.Sprintf("Running deploy script: %s", hostingCfg.DeployScript))
+	logInfo(fmt.Sprintf("Running deploy script in %s container", hostingCfg.DeployerImage))
 
-	cmd := exec.CommandContext(ctx, "bash", deployScriptPath)
-	cmd.Dir = workDir + "/.mendel"
-	cmd.Env = env
+	// Build docker run command:
+	// - Mount the entire workDir so scripts can access repo files
+	// - Pass environment variables
+	// - Run the deploy script
+	dockerArgs := []string{
+		"run", "--rm",
+		"-v", workDir + ":/workspace",
+		"-w", "/workspace/.mendel",
+	}
 
+	// Add environment variables
+	for _, e := range env {
+		dockerArgs = append(dockerArgs, "-e", e)
+	}
+
+	// Add the image and command
+	dockerArgs = append(dockerArgs, hostingCfg.DeployerImage, "bash", "/workspace/.mendel/"+hostingCfg.DeployScript)
+
+	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
 	output, err := cmd.CombinedOutput()
 	outputStr := string(output)
 
@@ -1149,43 +1164,67 @@ func (s *Server) handleConfigureDemoHosting(w http.ResponseWriter, r *http.Reque
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, ir.ID), http.StatusSeeOther)
 }
 
+// platformConfig holds configuration for each hosting platform
+type platformConfig struct {
+	deployerImage string
+	instructions  string
+}
+
 // buildDemoScriptPrompt creates a prompt for Claude Code to generate demo deployment scripts.
 func buildDemoScriptPrompt(platform string) string {
-	platformInstructions := map[string]string{
-		"cloud-run": `Google Cloud Run deployment:
+	platforms := map[string]platformConfig{
+		"cloud-run": {
+			deployerImage: "google/cloud-sdk:slim",
+			instructions: `Google Cloud Run deployment:
 - Use 'gcloud run deploy' command
 - Required env vars: GCP_PROJECT_ID, GCP_SERVICE_ACCOUNT_KEY (JSON)
 - Deploy script should authenticate with service account key, build and push to gcr.io, deploy to Cloud Run
 - Teardown script should delete the Cloud Run service`,
+		},
 
-		"fly-io": `Fly.io deployment:
-- Use 'flyctl' CLI commands
+		"fly-io": {
+			deployerImage: "flyio/flyctl:latest",
+			instructions: `Fly.io deployment:
+- Use 'flyctl' CLI commands (available as 'flyctl' in the container)
 - Required env var: FLY_API_TOKEN
 - Deploy script should create app if needed, deploy using fly.toml or Dockerfile
 - Teardown script should destroy the app`,
+		},
 
-		"railway": `Railway deployment:
-- Use Railway CLI or API
+		"railway": {
+			deployerImage: "node:20-slim",
+			instructions: `Railway deployment:
+- Use Railway CLI (install with: npm install -g @railway/cli)
 - Required env var: RAILWAY_TOKEN
 - Deploy script should link project and deploy
 - Teardown script should remove the deployment`,
+		},
 
-		"vercel": `Vercel deployment:
-- Use 'vercel' CLI
+		"vercel": {
+			deployerImage: "node:20-slim",
+			instructions: `Vercel deployment:
+- Use 'vercel' CLI (install with: npm install -g vercel)
 - Required env vars: VERCEL_TOKEN, optionally VERCEL_ORG_ID
 - Deploy script should deploy using vercel CLI
 - Teardown script should remove the deployment`,
+		},
 
-		"render": `Render deployment:
-- Use Render API (render.com/docs/api)
+		"render": {
+			deployerImage: "curlimages/curl:latest",
+			instructions: `Render deployment:
+- Use Render API with curl (render.com/docs/api)
 - Required env var: RENDER_API_KEY
 - Deploy script should create service via API and trigger deploy
 - Teardown script should delete the service`,
+		},
 	}
 
-	instructions, ok := platformInstructions[platform]
+	cfg, ok := platforms[platform]
 	if !ok {
-		instructions = fmt.Sprintf("Generic deployment for platform: %s", platform)
+		cfg = platformConfig{
+			deployerImage: "alpine:latest",
+			instructions:  fmt.Sprintf("Generic deployment for platform: %s", platform),
+		}
 	}
 
 	return fmt.Sprintf(`Generate demo deployment scripts for this project.
@@ -1194,19 +1233,24 @@ Look at the existing Dockerfile, docker-compose files, and project structure to 
 
 Create these files in the .mendel/ directory:
 
-1. demo-hosting.yml - Configuration file with this structure:
+1. demo-hosting.yml - Configuration file with this EXACT structure:
    version: 1
+   deployer_image: %s
    required_secrets:
      - <list of env var names needed, based on platform>
    deploy_script: deploy.sh
    teardown_script: teardown.sh
    url_from: stdout
 
+   NOTE: deployer_image specifies the Docker image used to run the scripts.
+   This image has the necessary CLI tools pre-installed.
+
 2. deploy.sh - Deployment script that:
    - Uses secrets from environment variables
    - Builds and deploys the application
    - Prints the deployed URL to stdout (CRITICAL - this is how Mendel captures the URL)
    - Has MENDEL_VARIATION_ID env var available for naming resources
+   - The script runs inside the deployer container with /workspace mounted
 
 3. teardown.sh - Teardown script that:
    - Cleans up all deployed resources
@@ -1220,5 +1264,5 @@ Platform: %s
 Make the scripts executable (chmod +x).
 Print ONLY the URL on success (e.g., echo "https://my-app-xyz.run.app").
 Handle errors gracefully with clear error messages.
-Make scripts idempotent where possible.`, platform, instructions)
+Make scripts idempotent where possible.`, cfg.deployerImage, platform, cfg.instructions)
 }

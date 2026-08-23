@@ -190,6 +190,11 @@ type HostingConfig struct {
 	// These are injected as environment variables when running scripts.
 	RequiredSecrets []string `yaml:"required_secrets"`
 
+	// Docker image to use for running deploy/teardown scripts.
+	// This image should have the necessary CLI tools (flyctl, gcloud, etc.)
+	// Examples: "flyio/flyctl", "google/cloud-sdk", "node:20"
+	DeployerImage string `yaml:"deployer_image"`
+
 	// Path to the deployment script (relative to .mendel/)
 	// Script receives secrets as env vars and MENDEL_VARIATION_ID.
 	// Must print the demo URL to stdout on success.
@@ -238,6 +243,9 @@ func (c *HostingConfig) applyHostingDefaults() {
 }
 
 func (c *HostingConfig) validateHosting() error {
+	if c.DeployerImage == "" {
+		return fmt.Errorf("deployer_image is required (Docker image with CLI tools)")
+	}
 	if c.DeployScript == "" {
 		return fmt.Errorf("deploy_script is required")
 	}
