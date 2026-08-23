@@ -50,6 +50,11 @@ spec:
             secretKeyRef:
               name: mendel-secret
               key: session-secret
+        - name: MENDEL_CREDENTIAL_KEY
+          valueFrom:
+            secretKeyRef:
+              name: mendel-secret
+              key: credential-key
         - name: MENDEL_WORK_DIR
           value: "/work"
         - name: DOCKER_HOST
