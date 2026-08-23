@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bhs/mendelbuild/internal/codegen/executor"
 	"github.com/bhs/mendelbuild/internal/crypto"
 	"github.com/bhs/mendelbuild/internal/demo"
 	"github.com/bhs/mendelbuild/internal/domain"
@@ -1001,6 +1002,27 @@ func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platform string
 		json.Unmarshal(repo.Config, &repoConfig)
 	}
 
+	// Get API key - check project config first, then env
+	project, err := s.db.GetProject(ctx, projectID)
+	if err != nil {
+		fmt.Printf("[demo-scripts] Failed to get project: %v\n", err)
+		return
+	}
+	var projectConfig struct {
+		AnthropicAPIKey string `json:"anthropic_api_key"`
+	}
+	if project.Config != nil {
+		json.Unmarshal(project.Config, &projectConfig)
+	}
+	apiKey := projectConfig.AnthropicAPIKey
+	if apiKey == "" {
+		apiKey = os.Getenv("ANTHROPIC_API_KEY")
+	}
+	if apiKey == "" {
+		fmt.Printf("[demo-scripts] No Anthropic API key available\n")
+		return
+	}
+
 	// Create a temporary work directory for main branch
 	workDir := fmt.Sprintf("/work/%s/demo-setup", projectID)
 	os.MkdirAll(workDir, 0755)
@@ -1020,18 +1042,34 @@ func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platform string
 		return
 	}
 
-	// Build the prompt for Claude Code
+	// Build the prompt
 	prompt := buildDemoScriptPrompt(platform)
 
 	fmt.Printf("[demo-scripts] Generating scripts for platform %s...\n", platform)
 
-	// Run Claude Code
-	cmd := exec.CommandContext(ctx, "claude", "--print", "--dangerously-skip-permissions", prompt)
-	cmd.Dir = workDir
+	// Run executor (same mechanism as code generation)
+	exec := executor.New(apiKey, workDir).
+		WithEventHandler(func(event executor.Event) {
+			switch event.Type {
+			case executor.EventToolCall:
+				if event.ToolName == "Write" {
+					if path, ok := event.ToolInput["file_path"].(string); ok {
+						fmt.Printf("[demo-scripts] Writing: %s\n", path)
+					}
+				}
+			case executor.EventComplete:
+				fmt.Printf("[demo-scripts] Generation complete\n")
+			}
+		})
 
-	output, err := cmd.CombinedOutput()
+	result, err := exec.Run(ctx, executor.SystemPrompt(), prompt)
 	if err != nil {
-		fmt.Printf("[demo-scripts] Claude Code failed: %v\n%s\n", err, string(output))
+		fmt.Printf("[demo-scripts] Executor error: %v\n", err)
+		return
+	}
+
+	if !result.Success {
+		fmt.Printf("[demo-scripts] Generation failed: %v\n", result.Error)
 		return
 	}
 
@@ -1186,7 +1224,5 @@ Platform: %s
 Make the scripts executable (chmod +x).
 Print ONLY the URL on success (e.g., echo "https://my-app-xyz.run.app").
 Handle errors gracefully with clear error messages.
-Make scripts idempotent where possible.
-
-Commit the files when done.`, platform, instructions)
+Make scripts idempotent where possible.`, platform, instructions)
 }
