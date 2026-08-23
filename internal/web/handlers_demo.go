@@ -276,6 +276,21 @@ func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uu
 		return
 	}
 
+	// Check if cloud hosting platform is selected but scripts not generated yet
+	projID, _ := uuid.Parse(projectID)
+	if project, err := s.db.GetProject(ctx, projID); err == nil && project != nil && project.Config != nil {
+		var cfg map[string]interface{}
+		if err := json.Unmarshal(project.Config, &cfg); err == nil {
+			if platform, ok := cfg["demo_hosting_platform"].(string); ok && platform != "" {
+				failDemoWithFix(
+					fmt.Sprintf("Cloud hosting (%s) is configured but deployment scripts haven't been generated yet.", platform),
+					"Click 'Generate Demo Scripts' on the variation page to create the deployment scripts, then try again.",
+				)
+				return
+			}
+		}
+	}
+
 	// Check for .mendel/docker-compose.demo.yml (local Docker demo)
 	if !demo.HasDockerCompose(workDir) {
 		failDemoWithFix(
