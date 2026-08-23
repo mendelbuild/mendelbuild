@@ -494,9 +494,11 @@ CREATE TABLE input_requests (
     --   'credential_request'  - Need an API key or credential [added in 019]
     --   'manual_setup'        - Human needs to do something external [added in 019]
     --   'confirmation'        - Simple proceed/cancel confirmation [added in 019]
+    --   'hosting_platform'    - Select demo hosting platform [added in 023]
     kind TEXT NOT NULL CHECK (kind IN ('pass_fail', 'choose_one', 'choose_many', 'roadmap_review',
                                         'variation_review', 'variation_selection',
-                                        'credential_request', 'manual_setup', 'confirmation')),
+                                        'credential_request', 'manual_setup', 'confirmation',
+                                        'hosting_platform')),
 
     -- Human- and agent-readable summary
     title TEXT NOT NULL,
