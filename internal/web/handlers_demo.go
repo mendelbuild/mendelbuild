@@ -313,33 +313,29 @@ func (s *Server) runCloudDemoDeployment(
 	env := os.Environ()
 	env = append(env, fmt.Sprintf("MENDEL_VARIATION_ID=%s", variationID.String()))
 
-	for _, c := range creds {
-		// Check if this credential is required
-		isRequired := false
-		for _, secretName := range hostingCfg.RequiredSecrets {
-			if c.Name == secretName {
-				isRequired = true
-				break
-			}
-		}
-		if !isRequired {
-			continue
+	// Get encryption key once
+	key, err := crypto.GetKey()
+	if err != nil {
+		failDemo("Encryption not configured: " + err.Error())
+		return
+	}
+
+	for _, secretName := range hostingCfg.RequiredSecrets {
+		// Fetch the full credential (ListProjectCredentials doesn't include encrypted_value)
+		cred, err := s.db.GetProjectCredential(ctx, projID, secretName)
+		if err != nil {
+			failDemo(fmt.Sprintf("Failed to load credential %s: %v", secretName, err))
+			return
 		}
 
 		// Decrypt the credential
-		key, err := crypto.GetKey()
+		decrypted, err := crypto.Decrypt(cred.EncryptedValue, key)
 		if err != nil {
-			failDemo("Encryption not configured: " + err.Error())
+			failDemo(fmt.Sprintf("Failed to decrypt %s: %v", secretName, err))
 			return
 		}
 
-		decrypted, err := crypto.Decrypt(c.EncryptedValue, key)
-		if err != nil {
-			failDemo(fmt.Sprintf("Failed to decrypt %s: %v", c.Name, err))
-			return
-		}
-
-		env = append(env, fmt.Sprintf("%s=%s", c.Name, string(decrypted)))
+		env = append(env, fmt.Sprintf("%s=%s", secretName, string(decrypted)))
 	}
 
 	// Run the deploy script
