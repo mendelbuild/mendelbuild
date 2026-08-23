@@ -90,9 +90,10 @@ docker push "$IMAGE"
 echo "=== Creating namespace ==="
 kubectl apply -f deploy/k8s/namespace.yaml
 
-# Generate passwords
+# Generate passwords and keys
 PG_PASSWORD=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 24)
 SESSION_SECRET=$(openssl rand -hex 32)
+CREDENTIAL_KEY=$(openssl rand -base64 32)
 
 # Create secrets
 echo "=== Creating secrets ==="
@@ -110,6 +111,7 @@ kubectl create secret generic mendel-secret \
     --from-literal=google-client-secret="$GOOGLE_CLIENT_SECRET" \
     --from-literal=base-url="https://$MENDEL_DOMAIN" \
     --from-literal=session-secret="$SESSION_SECRET" \
+    --from-literal=credential-key="$CREDENTIAL_KEY" \
     --dry-run=client -o yaml | kubectl apply -f -
 
 # Deploy Postgres
