@@ -230,6 +230,41 @@
     </div>
 </div>
 
+{{if .DemoHostingPlatform}}
+<div class="card" style="margin-top: 20px;">
+    <h2>Demo Hosting</h2>
+    <table style="margin-bottom: 15px;">
+        <tr>
+            <th style="text-align: left; padding-right: 20px;">Platform</th>
+            <td><code>{{.DemoHostingPlatform}}</code></td>
+        </tr>
+        <tr>
+            <th style="text-align: left; padding-right: 20px;">Script Status</th>
+            <td>
+                {{if eq .DemoScriptStatus "ready"}}
+                <span style="color: #28a745;">Ready</span>
+                {{else if eq .DemoScriptStatus "generating"}}
+                <span style="color: #ffc107;">Generating...</span>
+                {{else if eq .DemoScriptStatus "failed"}}
+                <span style="color: #dc3545;">Failed</span>
+                {{else}}
+                <span style="color: #666;">Unknown</span>
+                {{end}}
+            </td>
+        </tr>
+    </table>
+
+    <form method="POST" action="/p/{{.ProjectID}}/regenerate-demo-scripts">
+        <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+            Regenerate Demo Scripts
+        </button>
+        <span style="margin-left: 10px; color: #666; font-size: 0.9em;">
+            Force regeneration if scripts are missing or outdated
+        </span>
+    </form>
+</div>
+{{end}}
+
 <!-- Edit Credential Modal -->
 <div id="edit-credential-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000;">
     <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 8px; width: 400px;">

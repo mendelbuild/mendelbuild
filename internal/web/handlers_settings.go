@@ -185,6 +185,20 @@ func (s *Server) handleProjectSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Get demo hosting status from project config
+	var demoHostingPlatform, demoScriptStatus string
+	if project != nil && project.Config != nil {
+		var cfg map[string]interface{}
+		if json.Unmarshal(project.Config, &cfg) == nil {
+			if platform, ok := cfg["demo_hosting_platform"].(string); ok {
+				demoHostingPlatform = platform
+			}
+			if status, ok := cfg["demo_script_status"].(string); ok {
+				demoScriptStatus = status
+			}
+		}
+	}
+
 	data := map[string]interface{}{
 		"Title":               "Project Settings",
 		"ProjectID":           projectID.String(),
@@ -195,6 +209,8 @@ func (s *Server) handleProjectSettings(w http.ResponseWriter, r *http.Request) {
 		"AuthEnabled":         s.authEnabled,
 		"Members":             members,
 		"IsOwner":             isOwner,
+		"DemoHostingPlatform": demoHostingPlatform,
+		"DemoScriptStatus":    demoScriptStatus,
 	}
 	s.addOpenInputCount(ctx, data)
 	s.addUserToData(r, data)

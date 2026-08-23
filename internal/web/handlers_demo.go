@@ -1070,12 +1070,17 @@ func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platform string
 		return
 	}
 
-	// Check if demo-hosting.yml already exists
+	// Check if demo-hosting.yml exists AND has all required fields
 	hostingConfigPath := workDir + "/.mendel/demo-hosting.yml"
 	if _, err := os.Stat(hostingConfigPath); err == nil {
-		fmt.Printf("[demo-scripts] demo-hosting.yml already exists, skipping generation\n")
-		s.updateDemoScriptStatus(projectID, "ready")
-		return
+		// File exists - check if it has all required fields
+		if cfg, err := demo.LoadHostingConfig(workDir); err == nil && cfg != nil && cfg.DeployerImage != "" {
+			fmt.Printf("[demo-scripts] demo-hosting.yml already exists and is valid, skipping generation\n")
+			s.updateDemoScriptStatus(projectID, "ready")
+			return
+		}
+		// File exists but is missing required fields - will regenerate
+		fmt.Printf("[demo-scripts] demo-hosting.yml exists but is missing required fields, regenerating\n")
 	}
 
 	// Build the prompt
@@ -1133,6 +1138,44 @@ func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platform string
 
 	fmt.Printf("[demo-scripts] Successfully committed demo scripts to main branch\n")
 	s.updateDemoScriptStatus(projectID, "ready")
+}
+
+// handleRegenerateDemoScripts forces regeneration of demo scripts for the configured platform.
+func (s *Server) handleRegenerateDemoScripts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	// Get the configured platform from project config
+	project, err := s.db.GetProject(ctx, projectID)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	var platform string
+	if project.Config != nil {
+		var cfg map[string]interface{}
+		if json.Unmarshal(project.Config, &cfg) == nil {
+			if p, ok := cfg["demo_hosting_platform"].(string); ok {
+				platform = p
+			}
+		}
+	}
+
+	if platform == "" {
+		http.Redirect(w, r, fmt.Sprintf("/p/%s/settings?error=no_platform", projectID), http.StatusSeeOther)
+		return
+	}
+
+	// Set status to generating and trigger regeneration
+	s.updateDemoScriptStatus(projectID, "generating")
+	go s.generateDemoScriptsForMain(projectID, platform)
+
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/settings?regenerating=1", projectID), http.StatusSeeOther)
 }
 
 // handleConfigureDemoHosting creates an InputRequest for selecting a demo hosting platform.

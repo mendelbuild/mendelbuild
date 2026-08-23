@@ -688,6 +688,9 @@ func (s *Server) setupRoutes() {
 		// Debug route (prototype only)
 		r.Get("/debug", s.handleDebug)
 
+		// Demo script management
+		r.Post("/regenerate-demo-scripts", s.handleRegenerateDemoScripts)
+
 		// Input request routes
 		r.Get("/inputs", s.handleInputRequests)
 		r.Get("/inputs/{inputRequestID}", s.handleInputRequestDetail)
