@@ -972,7 +972,7 @@ func (s *Server) handleSelectHostingPlatform(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	// Store the selected platform in project config for later use
+	// Store the selected platform and set status to "generating"
 	project, err := s.db.GetProject(ctx, projectID)
 	if err == nil && project != nil {
 		var config map[string]interface{}
@@ -983,6 +983,7 @@ func (s *Server) handleSelectHostingPlatform(w http.ResponseWriter, r *http.Requ
 			config = make(map[string]interface{})
 		}
 		config["demo_hosting_platform"] = platform
+		config["demo_script_status"] = "generating"
 		configBytes, _ := json.Marshal(config)
 		s.db.UpdateProjectConfig(ctx, projectID, configBytes)
 	}
@@ -994,6 +995,25 @@ func (s *Server) handleSelectHostingPlatform(w http.ResponseWriter, r *http.Requ
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs", projectID), http.StatusSeeOther)
 }
 
+// updateDemoScriptStatus updates the demo_script_status in project config
+func (s *Server) updateDemoScriptStatus(projectID uuid.UUID, status string) {
+	ctx := context.Background()
+	project, err := s.db.GetProject(ctx, projectID)
+	if err != nil {
+		return
+	}
+	var config map[string]interface{}
+	if project.Config != nil {
+		json.Unmarshal(project.Config, &config)
+	}
+	if config == nil {
+		config = make(map[string]interface{})
+	}
+	config["demo_script_status"] = status
+	configBytes, _ := json.Marshal(config)
+	s.db.UpdateProjectConfig(ctx, projectID, configBytes)
+}
+
 // generateDemoScriptsForMain generates demo-hosting.yml and deployment scripts,
 // committing them to the main branch so all future variations inherit them.
 func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platform string) {
@@ -1003,6 +1023,7 @@ func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platform string
 	repo, err := s.db.GetRepositoryByProject(ctx, projectID)
 	if err != nil || repo.URL == nil {
 		fmt.Printf("[demo-scripts] Repository not found for project %s\n", projectID)
+		s.updateDemoScriptStatus(projectID, "failed")
 		return
 	}
 
@@ -1017,6 +1038,7 @@ func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platform string
 	project, err := s.db.GetProject(ctx, projectID)
 	if err != nil {
 		fmt.Printf("[demo-scripts] Failed to get project: %v\n", err)
+		s.updateDemoScriptStatus(projectID, "failed")
 		return
 	}
 	var projectConfig struct {
@@ -1031,6 +1053,7 @@ func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platform string
 	}
 	if apiKey == "" {
 		fmt.Printf("[demo-scripts] No Anthropic API key available\n")
+		s.updateDemoScriptStatus(projectID, "failed")
 		return
 	}
 
@@ -1043,6 +1066,7 @@ func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platform string
 	gitClient := git.NewClient(workDir)
 	if err := gitClient.Clone(ctx, *repo.URL, "main", repoConfig.AuthToken); err != nil {
 		fmt.Printf("[demo-scripts] Failed to clone main branch: %v\n", err)
+		s.updateDemoScriptStatus(projectID, "failed")
 		return
 	}
 
@@ -1050,6 +1074,7 @@ func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platform string
 	hostingConfigPath := workDir + "/.mendel/demo-hosting.yml"
 	if _, err := os.Stat(hostingConfigPath); err == nil {
 		fmt.Printf("[demo-scripts] demo-hosting.yml already exists, skipping generation\n")
+		s.updateDemoScriptStatus(projectID, "ready")
 		return
 	}
 
@@ -1076,32 +1101,38 @@ func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platform string
 	result, err := exec.Run(ctx, executor.SystemPrompt(), prompt)
 	if err != nil {
 		fmt.Printf("[demo-scripts] Executor error: %v\n", err)
+		s.updateDemoScriptStatus(projectID, "failed")
 		return
 	}
 
 	if !result.Success {
 		fmt.Printf("[demo-scripts] Generation failed: %v\n", result.Error)
+		s.updateDemoScriptStatus(projectID, "failed")
 		return
 	}
 
 	// Verify the files were created
 	if _, err := os.Stat(hostingConfigPath); os.IsNotExist(err) {
 		fmt.Printf("[demo-scripts] demo-hosting.yml was not created\n")
+		s.updateDemoScriptStatus(projectID, "failed")
 		return
 	}
 
 	// Commit and push
 	if err := gitClient.CommitAll(ctx, fmt.Sprintf("Add demo hosting configuration for %s", platform)); err != nil {
 		fmt.Printf("[demo-scripts] Failed to commit: %v\n", err)
+		s.updateDemoScriptStatus(projectID, "failed")
 		return
 	}
 
 	if err := gitClient.Push(ctx, repoConfig.AuthToken); err != nil {
 		fmt.Printf("[demo-scripts] Failed to push: %v\n", err)
+		s.updateDemoScriptStatus(projectID, "failed")
 		return
 	}
 
 	fmt.Printf("[demo-scripts] Successfully committed demo scripts to main branch\n")
+	s.updateDemoScriptStatus(projectID, "ready")
 }
 
 // handleConfigureDemoHosting creates an InputRequest for selecting a demo hosting platform.

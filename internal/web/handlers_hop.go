@@ -271,6 +271,7 @@ type VariationDetailView struct {
 
 	// Demo hosting status
 	DemoPlatformSelected  string   // Platform ID if selected (e.g., "fly-io")
+	DemoScriptStatus      string   // "generating", "ready", "failed", or empty
 	DemoScriptsExist      bool     // True if demo-hosting.yml exists
 	DemoHostingConfigured bool     // True if demo-hosting.yml exists (alias for template compat)
 	DemoMissingSecrets    []string // Secrets required but not in project settings
@@ -359,13 +360,17 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 	var demoMissingSecrets []string
 	var demoReady bool
 
-	// Check if platform is selected in project config
+	// Check if platform is selected and script status in project config
+	var demoScriptStatus string
 	project, _ := s.db.GetProject(ctx, projectID)
 	if project != nil && project.Config != nil {
 		var cfg map[string]interface{}
 		if err := json.Unmarshal(project.Config, &cfg); err == nil {
 			if platform, ok := cfg["demo_hosting_platform"].(string); ok && platform != "" {
 				demoPlatformSelected = platform
+			}
+			if status, ok := cfg["demo_script_status"].(string); ok {
+				demoScriptStatus = status
 			}
 		}
 	}
@@ -406,6 +411,7 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		CanRetryFix:           canRetryFix,
 		LastError:             lastError,
 		DemoPlatformSelected:  demoPlatformSelected,
+		DemoScriptStatus:      demoScriptStatus,
 		DemoScriptsExist:      demoScriptsExist,
 		DemoHostingConfigured: demoScriptsExist, // Alias for backwards compat
 		DemoMissingSecrets:    demoMissingSecrets,
