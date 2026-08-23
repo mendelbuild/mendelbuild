@@ -207,17 +207,13 @@
                 </ul>
             </div>
             {{else if .DemoPlatformSelected}}
-            {{/* Platform selected but scripts not generated yet */}}
-            <div style="padding: 15px; background: #e7f1ff; border-radius: 4px; border: 1px solid #b8daff;">
-                <strong style="color: #004085;">Platform: {{.DemoPlatformSelected}}</strong>
-                <p style="color: #004085; margin: 8px 0 0 0; font-size: 0.9em;">
-                    Platform selected. Generate deployment scripts to enable demos for this variation.
+            {{/* Platform selected but scripts not in this branch */}}
+            <div style="padding: 15px; background: #fff3cd; border-radius: 4px; border: 1px solid #ffc107;">
+                <strong style="color: #856404;">Demo Scripts Not Available</strong>
+                <p style="color: #856404; margin: 8px 0 0 0; font-size: 0.9em;">
+                    Demo hosting ({{.DemoPlatformSelected}}) was configured after this variation was created.
+                    The variation needs to be regenerated to include the demo scripts.
                 </p>
-                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/generate-demo-scripts" style="margin-top: 12px;">
-                    <button type="submit" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Generate Demo Scripts
-                    </button>
-                </form>
             </div>
             {{else}}
             <div style="padding: 15px; background: #e7f1ff; border-radius: 4px; border: 1px solid #b8daff;">

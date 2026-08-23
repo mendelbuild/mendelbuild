@@ -47,78 +47,8 @@ func executeMigrationInstructions(ctx context.Context, workDir, instructions str
 	return nil
 }
 
-// generateMissingDockerPrompt creates a prompt for setting up Docker configuration from scratch.
-func generateMissingDockerPrompt() string {
-	return `The project needs Docker configuration for demos. Create two files in the .mendel/ directory.
-
-## Requirements
-
-### .mendel/docker-compose.demo.yml
-
-This file must:
-1. Define a service that runs the application
-2. Include any dependencies (database, cache, etc.) the app needs
-3. Use healthchecks so "docker-compose up --wait" knows when services are ready
-4. Expose the app's port WITHOUT a fixed host mapping (e.g., "3000" not "3000:3000") — Mendel assigns the host port dynamically
-
-If the project already has a docker-compose.yml or Dockerfile, use/reference those. If not, create what's needed.
-
-Services should communicate via Docker networking (e.g., db:5432, not localhost:5432).
-
-### .mendel/demo-config.yml
-
-This file tells Mendel which service to expose:
-
-` + "```yaml" + `
-version: 1
-service: <name of the docker-compose service to expose>
-container_port: <port the app listens on inside the container>
-health_path: <HTTP path to check, e.g., "/", "/health", "/api/health">
-
-# Optional: commands to run after containers start (migrations, seed data)
-after_up:
-  - "docker-compose exec -T <service> <command>"
-` + "```" + `
-
-## Instructions
-
-1. Examine the project to understand its stack (look at package.json, requirements.txt, go.mod, Dockerfile, existing docker-compose.yml, etc.)
-2. Create .mendel/docker-compose.demo.yml appropriate for this specific project
-3. Create .mendel/demo-config.yml pointing to the right service and port
-4. Commit the changes`
-}
-
-// generateFixPrompt creates a well-contextualized prompt for Claude Code to fix a Docker-based dev environment issue.
-func generateFixPrompt(errMsg string) string {
-	return fmt.Sprintf(`I'm trying to run the local development environment using Docker, but encountered an error.
-
-## Error
-%s
-
-## Context
-The demo runs via Docker Compose from the .mendel/ directory:
-- .mendel/docker-compose.demo.yml defines all services (app, database, etc.)
-- .mendel/demo-config.yml specifies which service to expose and any setup scripts
-
-## What to check
-1. Does .mendel/docker-compose.demo.yml exist and define all needed services?
-2. Are service health checks configured correctly?
-3. Do after_up scripts in .mendel/demo-config.yml work? (migrations, seed data)
-4. Are environment variables and connection strings correct for Docker networking?
-   - Services communicate via service names (e.g., db:5432, not localhost:5432)
-
-## What to do
-1. Diagnose the root cause from the error message
-2. Fix the Docker Compose or demo-config.yml configuration
-3. If the main app needs a Dockerfile, create/update it
-4. Make sure the fix is committed to this branch
-
-The goal is a working Docker-based local dev environment.`, errMsg)
-}
-
-// handleStartDemo starts a demo instance for a variation using Docker.
-// Uses .mendel/docker-compose.demo.yml and .mendel/demo-config.yml for configuration.
-// The actual startup runs in a background goroutine with output logged to variation_logs.
+// handleStartDemo starts a demo instance for a variation.
+// Uses cloud hosting via .mendel/demo-hosting.yml configuration.
 func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	projectID := chi.URLParam(r, "projectID")
@@ -196,16 +126,14 @@ func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uu
 		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, suggestedFix)
 	}
 
-	// Helper to handle failures - tears down containers before recording error
+	// Helper to handle failures
 	failDemo := func(errMsg string) {
 		logError(errMsg)
-		logInfo("Tearing down containers...")
-		if output, err := demo.DockerComposeDown(workDir, true); err != nil {
-			logInfo(fmt.Sprintf("Teardown warning: %v\n%s", err, output))
-		}
-		suggestedFix := generateFixPrompt(errMsg)
-		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, suggestedFix)
+		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, "")
 	}
+
+	// Silence unused variable warning
+	_ = failDemo
 
 	logMilestone("Checking demo configuration...")
 
@@ -271,128 +199,35 @@ func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uu
 	}
 
 	// Check if cloud hosting is configured (demo-hosting.yml)
-	if hostingCfg, err := demo.LoadHostingConfig(workDir); err == nil && hostingCfg != nil {
-		s.runCloudDemoDeployment(ctx, projectID, variationID, demoInstanceID, workDir, hostingCfg, logMilestone, logInfo, logError, failDemo)
+	hostingCfg, err := demo.LoadHostingConfig(workDir)
+	if err != nil {
+		failDemo(fmt.Sprintf("Failed to load demo hosting config: %v", err))
 		return
 	}
 
-	// Check if cloud hosting platform is selected but scripts not generated yet
-	projID, _ := uuid.Parse(projectID)
-	if project, err := s.db.GetProject(ctx, projID); err == nil && project != nil && project.Config != nil {
-		var cfg map[string]interface{}
-		if err := json.Unmarshal(project.Config, &cfg); err == nil {
-			if platform, ok := cfg["demo_hosting_platform"].(string); ok && platform != "" {
-				failDemoWithFix(
-					fmt.Sprintf("Cloud hosting (%s) is configured but deployment scripts haven't been generated yet.", platform),
-					"Click 'Generate Demo Scripts' on the variation page to create the deployment scripts, then try again.",
-				)
-				return
+	if hostingCfg == nil {
+		// No demo-hosting.yml - check if hosting is configured at project level
+		projID, _ := uuid.Parse(projectID)
+		if project, err := s.db.GetProject(ctx, projID); err == nil && project != nil && project.Config != nil {
+			var cfg map[string]interface{}
+			if err := json.Unmarshal(project.Config, &cfg); err == nil {
+				if platform, ok := cfg["demo_hosting_platform"].(string); ok && platform != "" {
+					failDemoWithFix(
+						"Demo hosting scripts not found in this variation.",
+						fmt.Sprintf("Hosting platform (%s) was configured after this variation was created. The variation needs to be regenerated or rebased on main to include the demo scripts.", platform),
+					)
+					return
+				}
 			}
 		}
-	}
-
-	// Check for .mendel/docker-compose.demo.yml (local Docker demo)
-	if !demo.HasDockerCompose(workDir) {
 		failDemoWithFix(
-			"Docker configuration not found: .mendel/docker-compose.demo.yml",
-			generateMissingDockerPrompt(),
+			"Demo hosting not configured.",
+			"Configure a hosting platform in project settings to enable demos.",
 		)
 		return
 	}
 
-	// Load demo config from .mendel/demo-config.yml
-	cfg, err := demo.LoadConfig(workDir)
-	if err != nil {
-		failDemoWithFix(
-			fmt.Sprintf("Failed to load demo config: %v", err),
-			generateFixPrompt(fmt.Sprintf("Demo config error: %v", err)),
-		)
-		return
-	}
-
-	logMilestone("Starting Docker containers...")
-
-	// Run docker-compose up
-	logInfo("Running: docker-compose up -d --build --wait")
-	output, err := demo.DockerComposeUp(workDir)
-	if output != "" {
-		logInfo(truncateOutput(output, 6000))
-	}
-	if err != nil {
-		failDemo(fmt.Sprintf("docker-compose up failed: %v\n\nOutput tail:\n%s", err, lastNChars(output, 2000)))
-		return
-	}
-	logMilestone("Containers started")
-
-	// Run after_up scripts (migrations, seed data, etc.)
-	for i, script := range cfg.AfterUp {
-		logInfo(fmt.Sprintf("Running after_up [%d/%d]: %s", i+1, len(cfg.AfterUp), script))
-		output, err := demo.RunScript(workDir, script)
-		if output != "" {
-			logInfo(truncateOutput(output, 2000))
-		}
-		if err != nil {
-			failDemo(fmt.Sprintf("after_up script failed: %s\n\nError: %v", script, err))
-			return
-		}
-	}
-	if len(cfg.AfterUp) > 0 {
-		logMilestone("Setup scripts complete")
-	}
-
-	// Get the exposed port for the service
-	logInfo(fmt.Sprintf("Getting port for service '%s'...", cfg.Service))
-	port, err := demo.GetServicePort(workDir, cfg.Service, cfg.ContainerPort)
-	if err != nil {
-		failDemo(fmt.Sprintf("Failed to get service port: %v", err))
-		return
-	}
-	demoURL := fmt.Sprintf("http://localhost:%d", port)
-	logInfo(fmt.Sprintf("Service available at %s", demoURL))
-
-	// Wait for health check
-	healthURL := fmt.Sprintf("http://localhost:%d%s", port, cfg.HealthPath)
-	logInfo(fmt.Sprintf("Waiting for health check: %s", healthURL))
-
-	healthy := false
-	deadline := time.Now().Add(time.Duration(cfg.HealthTimeout) * time.Second)
-	attempts := 0
-	for time.Now().Before(deadline) {
-		attempts++
-		resp, err := http.Get(healthURL)
-		if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 400 {
-			resp.Body.Close()
-			healthy = true
-			break
-		}
-		if resp != nil {
-			resp.Body.Close()
-		}
-		if attempts%5 == 0 {
-			logInfo(fmt.Sprintf("Health check attempt %d...", attempts))
-		}
-		time.Sleep(time.Duration(cfg.HealthInterval) * time.Second)
-	}
-
-	if !healthy {
-		failDemo(fmt.Sprintf("Health check failed after %d seconds (%d attempts)", cfg.HealthTimeout, attempts))
-		return
-	}
-
-	logMilestone(fmt.Sprintf("Demo running at %s", demoURL))
-
-	// Update demo instance to running status
-	processInfo, _ := json.Marshal(map[string]interface{}{
-		"work_dir": workDir,
-		"service":  cfg.Service,
-		"port":     port,
-	})
-
-	s.db.Pool.Exec(ctx, `
-		UPDATE demo_instances
-		SET url = $2, teardown_instructions = $3, status = $4, process_info = $5
-		WHERE id = $1
-	`, demoInstanceID, demoURL, fmt.Sprintf("cd %s/.mendel && docker-compose -f docker-compose.demo.yml down -v", workDir), domain.DemoInstanceStatusRunning, processInfo)
+	s.runCloudDemoDeployment(ctx, projectID, variationID, demoInstanceID, workDir, hostingCfg, logMilestone, logInfo, logError, failDemo)
 }
 
 // truncateOutput truncates output to maxLen characters, keeping both beginning and end.
@@ -803,13 +638,15 @@ func (s *Server) runFixAndDemo(projectID string, variationID, demoInstanceID uui
 	logError := func(msg string) {
 		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelError, msg, domain.SourceTypeDemo, &demoInstanceID)
 	}
+	failDemo := func(errMsg string) {
+		logError(errMsg)
+		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, fixPrompt)
+	}
 
 	logMilestone("Applying fix via Claude Code...")
 	logInfo(fmt.Sprintf("Prompt: %s", fixPrompt))
 
 	// Run Claude Code with the fix prompt
-	// --print: non-interactive output mode
-	// --dangerously-skip-permissions: allow file writes without approval
 	cmd := exec.CommandContext(ctx, "claude", "--print", "--dangerously-skip-permissions", fixPrompt)
 	cmd.Dir = workDir
 
@@ -818,10 +655,9 @@ func (s *Server) runFixAndDemo(projectID string, variationID, demoInstanceID uui
 	go monitorClaudeProgress(workDir, logInfo, done)
 
 	output, err := cmd.CombinedOutput()
-	close(done) // Stop the monitor
+	close(done)
 
 	if len(output) > 0 {
-		// Log output in chunks if very long
 		outStr := string(output)
 		if len(outStr) > 4000 {
 			outStr = outStr[:4000] + "\n... (truncated)"
@@ -830,199 +666,25 @@ func (s *Server) runFixAndDemo(projectID string, variationID, demoInstanceID uui
 	}
 
 	if err != nil {
-		errMsg := fmt.Sprintf("Claude Code failed: %v", err)
-		logError(errMsg)
-		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, fixPrompt)
+		failDemo(fmt.Sprintf("Claude Code failed: %v", err))
 		return
 	}
 
 	logMilestone("Fix applied, starting demo...")
 
-	// Check for docker-compose
-	if !demo.HasDockerCompose(workDir) {
-		errMsg := "Docker configuration not found: .mendel/docker-compose.demo.yml"
-		logError(errMsg)
-		missingDockerPrompt := `The project needs Docker configuration for demos.
-
-Create .mendel/docker-compose.demo.yml that defines all services needed to run the application. Example:
-
-` + "```yaml" + `
-# .mendel/docker-compose.demo.yml
-
-# Include the project's existing docker-compose if it has one
-# include:
-#   - path: ../docker-compose.yml
-#     project_directory: ..
-
-services:
-  web:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-    ports:
-      - "3000"  # Mendel will allocate a host port dynamically
-    environment:
-      - DATABASE_URL=postgresql://dev:dev@db:5432/app
-    depends_on:
-      db:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
-      interval: 2s
-      timeout: 5s
-      retries: 30
-
-  db:
-    image: postgres:15
-    environment:
-      POSTGRES_DB: app
-      POSTGRES_USER: dev
-      POSTGRES_PASSWORD: dev
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dev -d app"]
-      interval: 2s
-      timeout: 5s
-      retries: 30
-` + "```" + `
-
-Also create .mendel/demo-config.yml:
-
-` + "```yaml" + `
-version: 1
-service: web
-container_port: 3000
-health_path: /health
-after_up:
-  - "docker-compose exec -T web npm run db:migrate"
-  - "docker-compose exec -T web npm run db:seed"
-` + "```" + `
-
-Adapt to match the project's actual stack.`
-		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, missingDockerPrompt)
-		return
-	}
-
-	// Load demo config
-	cfg, err := demo.LoadConfig(workDir)
+	// Load cloud hosting config
+	hostingCfg, err := demo.LoadHostingConfig(workDir)
 	if err != nil {
-		errMsg := fmt.Sprintf("Failed to load demo config: %v", err)
-		logError(errMsg)
-		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, generateFixPrompt(errMsg))
+		failDemo(fmt.Sprintf("Failed to load demo hosting config: %v", err))
+		return
+	}
+	if hostingCfg == nil {
+		failDemo("Demo hosting not configured. Configure a hosting platform in project settings.")
 		return
 	}
 
-	// Continue with Docker-based demo startup
-	s.continueDemoStartup(ctx, projectID, variationID, demoInstanceID, workDir, cfg)
-}
-
-// continueDemoStartup continues the Docker-based demo startup after a fix has been applied.
-func (s *Server) continueDemoStartup(ctx context.Context, projectID string, variationID, demoInstanceID uuid.UUID, workDir string, cfg *demo.Config) {
-	// Helper to log with source tracking
-	logInfo := func(msg string) {
-		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelInfo, msg, domain.SourceTypeDemo, &demoInstanceID)
-	}
-	logMilestone := func(msg string) {
-		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelMilestone, msg, domain.SourceTypeDemo, &demoInstanceID)
-	}
-	logError := func(msg string) {
-		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelError, msg, domain.SourceTypeDemo, &demoInstanceID)
-	}
-
-	// Helper to handle failures - tears down containers before recording error
-	failDemo := func(errMsg string) {
-		logError(errMsg)
-		logInfo("Tearing down containers...")
-		if output, err := demo.DockerComposeDown(workDir, true); err != nil {
-			logInfo(fmt.Sprintf("Teardown warning: %v\n%s", err, output))
-		}
-		suggestedFix := generateFixPrompt(errMsg)
-		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, suggestedFix)
-	}
-
-	logMilestone("Starting Docker containers...")
-
-	// Run docker-compose up
-	logInfo("Running: docker-compose up -d --build --wait")
-	output, err := demo.DockerComposeUp(workDir)
-	if output != "" {
-		logInfo(truncateOutput(output, 6000))
-	}
-	if err != nil {
-		failDemo(fmt.Sprintf("docker-compose up failed: %v\n\nOutput tail:\n%s", err, lastNChars(output, 2000)))
-		return
-	}
-	logMilestone("Containers started")
-
-	// Run after_up scripts (migrations, seed data, etc.)
-	for i, script := range cfg.AfterUp {
-		logInfo(fmt.Sprintf("Running after_up [%d/%d]: %s", i+1, len(cfg.AfterUp), script))
-		output, err := demo.RunScript(workDir, script)
-		if output != "" {
-			logInfo(truncateOutput(output, 2000))
-		}
-		if err != nil {
-			failDemo(fmt.Sprintf("after_up script failed: %s\n\nError: %v", script, err))
-			return
-		}
-	}
-	if len(cfg.AfterUp) > 0 {
-		logMilestone("Setup scripts complete")
-	}
-
-	// Get the exposed port for the service
-	logInfo(fmt.Sprintf("Getting port for service '%s'...", cfg.Service))
-	port, err := demo.GetServicePort(workDir, cfg.Service, cfg.ContainerPort)
-	if err != nil {
-		failDemo(fmt.Sprintf("Failed to get service port: %v", err))
-		return
-	}
-	demoURL := fmt.Sprintf("http://localhost:%d", port)
-	logInfo(fmt.Sprintf("Service available at %s", demoURL))
-
-	// Wait for health check
-	healthURL := fmt.Sprintf("http://localhost:%d%s", port, cfg.HealthPath)
-	logInfo(fmt.Sprintf("Waiting for health check: %s", healthURL))
-
-	healthy := false
-	deadline := time.Now().Add(time.Duration(cfg.HealthTimeout) * time.Second)
-	attempts := 0
-	for time.Now().Before(deadline) {
-		attempts++
-		resp, err := http.Get(healthURL)
-		if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 400 {
-			resp.Body.Close()
-			healthy = true
-			break
-		}
-		if resp != nil {
-			resp.Body.Close()
-		}
-		if attempts%5 == 0 {
-			logInfo(fmt.Sprintf("Health check attempt %d...", attempts))
-		}
-		time.Sleep(time.Duration(cfg.HealthInterval) * time.Second)
-	}
-
-	if !healthy {
-		failDemo(fmt.Sprintf("Health check failed after %d seconds (%d attempts)", cfg.HealthTimeout, attempts))
-		return
-	}
-
-	logMilestone(fmt.Sprintf("Demo running at %s", demoURL))
-
-	// Update demo instance to running status
-	processInfo, _ := json.Marshal(map[string]interface{}{
-		"work_dir": workDir,
-		"service":  cfg.Service,
-		"port":     port,
-	})
-
-	teardownCmd := fmt.Sprintf("cd %s/.mendel && docker-compose -f docker-compose.demo.yml down -v", workDir)
-	s.db.Pool.Exec(ctx, `
-		UPDATE demo_instances
-		SET url = $2, teardown_instructions = $3, status = $4, process_info = $5
-		WHERE id = $1
-	`, demoInstanceID, demoURL, teardownCmd, domain.DemoInstanceStatusRunning, processInfo)
+	// Run cloud deployment
+	s.runCloudDemoDeployment(ctx, projectID, variationID, demoInstanceID, workDir, hostingCfg, logMilestone, logInfo, logError, failDemo)
 }
 
 // handleRestartDemo stops any existing demo and starts fresh without code changes.
@@ -1313,8 +975,84 @@ func (s *Server) handleSelectHostingPlatform(w http.ResponseWriter, r *http.Requ
 		s.db.UpdateProjectConfig(ctx, projectID, configBytes)
 	}
 
+	// Trigger script generation in background - commits to main branch
+	go s.generateDemoScriptsForMain(projectID, platform)
+
 	// Redirect to inputs page to show the new credential requests
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs", projectID), http.StatusSeeOther)
+}
+
+// generateDemoScriptsForMain generates demo-hosting.yml and deployment scripts,
+// committing them to the main branch so all future variations inherit them.
+func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platform string) {
+	ctx := context.Background()
+
+	// Get repository info
+	repo, err := s.db.GetRepositoryByProject(ctx, projectID)
+	if err != nil || repo.URL == nil {
+		fmt.Printf("[demo-scripts] Repository not found for project %s\n", projectID)
+		return
+	}
+
+	var repoConfig struct {
+		AuthToken string `json:"auth_token"`
+	}
+	if repo.Config != nil {
+		json.Unmarshal(repo.Config, &repoConfig)
+	}
+
+	// Create a temporary work directory for main branch
+	workDir := fmt.Sprintf("/work/%s/demo-setup", projectID)
+	os.MkdirAll(workDir, 0755)
+	defer os.RemoveAll(workDir) // Cleanup after
+
+	// Clone main branch
+	gitClient := git.NewClient(workDir)
+	if err := gitClient.Clone(ctx, *repo.URL, "main", repoConfig.AuthToken); err != nil {
+		fmt.Printf("[demo-scripts] Failed to clone main branch: %v\n", err)
+		return
+	}
+
+	// Check if demo-hosting.yml already exists
+	hostingConfigPath := workDir + "/.mendel/demo-hosting.yml"
+	if _, err := os.Stat(hostingConfigPath); err == nil {
+		fmt.Printf("[demo-scripts] demo-hosting.yml already exists, skipping generation\n")
+		return
+	}
+
+	// Build the prompt for Claude Code
+	prompt := buildDemoScriptPrompt(platform)
+
+	fmt.Printf("[demo-scripts] Generating scripts for platform %s...\n", platform)
+
+	// Run Claude Code
+	cmd := exec.CommandContext(ctx, "claude", "--print", "--dangerously-skip-permissions", prompt)
+	cmd.Dir = workDir
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Printf("[demo-scripts] Claude Code failed: %v\n%s\n", err, string(output))
+		return
+	}
+
+	// Verify the files were created
+	if _, err := os.Stat(hostingConfigPath); os.IsNotExist(err) {
+		fmt.Printf("[demo-scripts] demo-hosting.yml was not created\n")
+		return
+	}
+
+	// Commit and push
+	if err := gitClient.CommitAll(ctx, fmt.Sprintf("Add demo hosting configuration for %s", platform)); err != nil {
+		fmt.Printf("[demo-scripts] Failed to commit: %v\n", err)
+		return
+	}
+
+	if err := gitClient.Push(ctx, repoConfig.AuthToken); err != nil {
+		fmt.Printf("[demo-scripts] Failed to push: %v\n", err)
+		return
+	}
+
+	fmt.Printf("[demo-scripts] Successfully committed demo scripts to main branch\n")
 }
 
 // handleConfigureDemoHosting creates an InputRequest for selecting a demo hosting platform.
@@ -1375,186 +1113,6 @@ func (s *Server) handleConfigureDemoHosting(w http.ResponseWriter, r *http.Reque
 
 	// Redirect to the InputRequest page
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, ir.ID), http.StatusSeeOther)
-}
-
-// handleGenerateDemoScripts uses AI to generate demo-hosting.yml and deployment scripts.
-func (s *Server) handleGenerateDemoScripts(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	projectID := chi.URLParam(r, "projectID")
-
-	variationID, err := uuid.Parse(chi.URLParam(r, "variationID"))
-	if err != nil {
-		http.Error(w, "invalid variation ID", http.StatusBadRequest)
-		return
-	}
-
-	projectUUID, err := uuid.Parse(projectID)
-	if err != nil {
-		http.Error(w, "invalid project ID", http.StatusBadRequest)
-		return
-	}
-
-	// Get selected platform from project config
-	project, err := s.db.GetProject(ctx, projectUUID)
-	if err != nil {
-		http.Error(w, "project not found", http.StatusNotFound)
-		return
-	}
-
-	var cfg map[string]interface{}
-	if project.Config != nil {
-		json.Unmarshal(project.Config, &cfg)
-	}
-	platform, _ := cfg["demo_hosting_platform"].(string)
-	if platform == "" {
-		http.Error(w, "no hosting platform selected", http.StatusBadRequest)
-		return
-	}
-
-	// Get work directory
-	workDir := git.WorkDirForVariation(projectID, variationID.String())
-
-	// Create a demo instance to track progress (reusing the demo log system)
-	demoInstanceID := uuid.New()
-	processInfo, _ := json.Marshal(map[string]interface{}{
-		"work_dir": workDir,
-		"phase":    "generating_scripts",
-	})
-
-	demoInstance := &domain.DemoInstance{
-		ID:          demoInstanceID,
-		VariationID: variationID,
-		Status:      domain.DemoInstanceStatusStarting,
-		ProcessInfo: processInfo,
-	}
-
-	if err := s.db.CreateDemoInstance(ctx, demoInstance); err != nil {
-		http.Error(w, "failed to create demo instance: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Run script generation in background
-	go s.runDemoScriptGeneration(ctx, projectID, variationID, demoInstanceID, workDir, platform)
-
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
-}
-
-// runDemoScriptGeneration generates demo-hosting.yml and deployment scripts using Claude Code.
-func (s *Server) runDemoScriptGeneration(ctx context.Context, projectID string, variationID uuid.UUID, demoInstanceID uuid.UUID, workDir string, platform string) {
-	// Helper to log progress
-	logMilestone := func(msg string) {
-		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelMilestone, msg, domain.SourceTypeDemo, &demoInstanceID)
-	}
-
-	logInfo := func(msg string) {
-		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelInfo, msg, domain.SourceTypeDemo, &demoInstanceID)
-	}
-
-	logError := func(msg string) {
-		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelError, msg, domain.SourceTypeDemo, &demoInstanceID)
-	}
-
-	logMilestone(fmt.Sprintf("Generating demo scripts for %s platform...", platform))
-
-	// Build the prompt for Claude Code
-	prompt := buildDemoScriptPrompt(platform)
-
-	logInfo("Running Claude Code to generate deployment scripts...")
-
-	// Run Claude Code
-	cmd := exec.CommandContext(ctx, "claude", "--print", "--dangerously-skip-permissions", prompt)
-	cmd.Dir = workDir
-
-	done := make(chan struct{})
-	go monitorClaudeProgress(workDir, logInfo, done)
-
-	output, err := cmd.CombinedOutput()
-	close(done)
-
-	if err != nil {
-		errMsg := fmt.Sprintf("Claude Code failed: %v", err)
-		if len(output) > 0 {
-			errMsg += "\n" + string(output)
-		}
-		logError(errMsg)
-		s.db.Pool.Exec(ctx, `
-			UPDATE demo_instances SET status = $2, error_message = $3 WHERE id = $1
-		`, demoInstanceID, domain.DemoInstanceStatusError, errMsg)
-		return
-	}
-
-	logMilestone("Demo scripts generated successfully")
-
-	// Verify the files were created
-	hostingConfigPath := workDir + "/.mendel/demo-hosting.yml"
-	if _, err := os.Stat(hostingConfigPath); os.IsNotExist(err) {
-		errMsg := "demo-hosting.yml was not created"
-		logError(errMsg)
-		s.db.Pool.Exec(ctx, `
-			UPDATE demo_instances SET status = $2, error_message = $3 WHERE id = $1
-		`, demoInstanceID, domain.DemoInstanceStatusError, errMsg)
-		return
-	}
-
-	// Get repo info for pushing
-	projectUUID, _ := uuid.Parse(projectID)
-	repo, err := s.db.GetRepositoryByProject(ctx, projectUUID)
-	if err != nil || repo.URL == nil {
-		logError("Repository not configured - cannot push scripts")
-		s.db.Pool.Exec(ctx, `
-			UPDATE demo_instances SET status = $2, error_message = $3 WHERE id = $1
-		`, demoInstanceID, domain.DemoInstanceStatusError, "Repository not configured")
-		return
-	}
-
-	var repoConfig struct {
-		AuthToken string `json:"auth_token"`
-	}
-	if repo.Config != nil {
-		json.Unmarshal(repo.Config, &repoConfig)
-	}
-
-	// Commit and push the scripts
-	logInfo("Committing demo scripts...")
-	gitClient := git.NewClient(workDir)
-	if err := gitClient.CommitAll(ctx, "Add demo deployment scripts for "+platform); err != nil {
-		logError("Failed to commit scripts: " + err.Error())
-		s.db.Pool.Exec(ctx, `
-			UPDATE demo_instances SET status = $2, error_message = $3 WHERE id = $1
-		`, demoInstanceID, domain.DemoInstanceStatusError, "Failed to commit: "+err.Error())
-		return
-	}
-
-	// Get current branch and push
-	variation, err := s.db.GetVariation(ctx, variationID)
-	if err != nil {
-		logError("Failed to get variation: " + err.Error())
-		return
-	}
-
-	hop, err := s.db.GetHop(ctx, variation.HopID)
-	if err != nil {
-		logError("Failed to get hop: " + err.Error())
-		return
-	}
-
-	branchName := fmt.Sprintf("mendel/%s/%s", sanitizeBranchName(hop.Name), sanitizeBranchName(variation.Name))
-	logInfo(fmt.Sprintf("Pushing to branch %s...", branchName))
-
-	if err := gitClient.Push(ctx, repoConfig.AuthToken); err != nil {
-		logError("Failed to push scripts: " + err.Error())
-		s.db.Pool.Exec(ctx, `
-			UPDATE demo_instances SET status = $2, error_message = $3 WHERE id = $1
-		`, demoInstanceID, domain.DemoInstanceStatusError, "Failed to push: "+err.Error())
-		return
-	}
-
-	logMilestone("Demo scripts committed and pushed")
-
-	// Mark as stopped (ready for user to start demo)
-	s.db.Pool.Exec(ctx, `
-		UPDATE demo_instances SET status = $2 WHERE id = $1
-	`, demoInstanceID, domain.DemoInstanceStatusStopped)
 }
 
 // buildDemoScriptPrompt creates a prompt for Claude Code to generate demo deployment scripts.
