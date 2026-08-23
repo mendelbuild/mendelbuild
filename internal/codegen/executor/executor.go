@@ -298,19 +298,24 @@ You have access to these tools:
 - Read: Read file contents
 - Write: Create or overwrite files
 - Edit: Replace specific strings in files (old_string must be unique)
-- Bash: Run shell commands
+- Bash: Run shell commands (for mkdir, ls, etc.)
 - Glob: Find files matching patterns
 - Grep: Search for patterns in files
 
 Guidelines:
 - Read existing source files before modifying them to understand context
 - Use Edit for surgical changes, Write for new files or complete rewrites
-- Run tests after making changes to verify correctness
 - Keep changes focused on the task at hand
 - Follow existing code style and patterns in the repository
 - Create necessary directories before writing files
 - NEVER read .git/ directory contents - focus only on source code files
 - Work efficiently - don't re-read the same files repeatedly
 
-When you're done, provide a brief summary of the changes made.`
+IMPORTANT - when to stop:
+- Stop when you've written the code and any simple unit tests
+- Do NOT try to run tests yourself or verify they pass
+- Do NOT try to verify external integrations (APIs, databases, etc.)
+- Mendel will run tests in Docker after you're done
+
+When you're done implementing, stop. Provide a brief summary of the changes made.`
 }
