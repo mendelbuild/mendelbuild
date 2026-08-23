@@ -685,6 +685,9 @@ func (s *Server) setupRoutes() {
 		r.Post("/variations/{variationID}/restart-demo", s.handleRestartDemo)
 		r.Post("/variations/{variationID}/prune", s.handlePruneVariation)
 
+		// Debug route (prototype only)
+		r.Get("/debug", s.handleDebug)
+
 		// Input request routes
 		r.Get("/inputs", s.handleInputRequests)
 		r.Get("/inputs/{inputRequestID}", s.handleInputRequestDetail)
