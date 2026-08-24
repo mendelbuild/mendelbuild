@@ -483,3 +483,14 @@ type TrafficAllocationEnvoyConfig struct {
 	AppliedAt    *time.Time `json:"applied_at,omitempty"`
 	SupersededAt *time.Time `json:"superseded_at,omitempty"`
 }
+
+// HostingPlatform defines a cloud platform available for demo deployments.
+type HostingPlatform struct {
+	ID            uuid.UUID `json:"id"`
+	Slug          string    `json:"slug"`           // "fly-io", "cloud-run"
+	Name          string    `json:"name"`           // "Fly.io", "Google Cloud Run"
+	DeployerImage string    `json:"deployer_image"` // Docker image with /bin/sh
+	Instructions  string    `json:"instructions"`   // AI prompt fragment
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}

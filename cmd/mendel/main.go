@@ -12,6 +12,7 @@ import (
 	"github.com/bhs/mendelbuild/internal/codegen"
 	"github.com/bhs/mendelbuild/internal/db"
 	"github.com/bhs/mendelbuild/internal/domain"
+	"github.com/bhs/mendelbuild/internal/hosting"
 	"github.com/bhs/mendelbuild/internal/web"
 	"github.com/google/uuid"
 )
@@ -44,6 +45,8 @@ func main() {
 		runGenerate(args)
 	case "assign-owner":
 		assignOwner(args)
+	case "platforms":
+		runPlatforms(args)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -61,6 +64,7 @@ Commands:
   propose-roadmap   Generate a roadmap proposal for a strategy
   generate          Run code generation for a hop's approved variations
   assign-owner      Assign a user as owner to all projects without an owner
+  platforms         Manage hosting platforms (list, refresh)
 
 Environment:
   MENDEL_DB_URL       Postgres connection string (default: postgres://localhost:5432/mendelbuild?sslmode=disable)
@@ -481,5 +485,69 @@ func assignOwner(args []string) {
 		fmt.Println("No unowned projects found.")
 	} else {
 		fmt.Printf("Assigned %s as owner to %d project(s).\n", *email, count)
+	}
+}
+
+func runPlatforms(args []string) {
+	if len(args) < 1 {
+		fmt.Println(`Usage: mendel platforms <subcommand>
+
+Subcommands:
+  list      List all available hosting platforms
+  refresh   Reset to default platforms (updates existing, adds new)
+  seed      Seed defaults only if table is empty`)
+		os.Exit(1)
+	}
+
+	subcmd := args[0]
+
+	ctx := context.Background()
+	database, err := db.Connect(ctx, getConnString())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error connecting to database: %v\n", err)
+		os.Exit(1)
+	}
+	defer database.Close()
+
+	switch subcmd {
+	case "list":
+		platforms, err := database.ListHostingPlatforms(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error listing platforms: %v\n", err)
+			os.Exit(1)
+		}
+		if len(platforms) == 0 {
+			fmt.Println("No hosting platforms configured. Run 'mendel platforms seed' to add defaults.")
+			return
+		}
+		fmt.Printf("%-15s %-25s %-25s\n", "SLUG", "NAME", "DEPLOYER IMAGE")
+		fmt.Printf("%-15s %-25s %-25s\n", "----", "----", "--------------")
+		for _, p := range platforms {
+			fmt.Printf("%-15s %-25s %-25s\n", p.Slug, p.Name, p.DeployerImage)
+		}
+
+	case "refresh":
+		count, err := hosting.RefreshAll(ctx, database)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error refreshing platforms: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Refreshed %d hosting platforms.\n", count)
+
+	case "seed":
+		count, err := hosting.SeedIfEmpty(ctx, database)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error seeding platforms: %v\n", err)
+			os.Exit(1)
+		}
+		if count == 0 {
+			fmt.Println("Platforms table already has data. Use 'mendel platforms refresh' to update.")
+		} else {
+			fmt.Printf("Seeded %d hosting platforms.\n", count)
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n", subcmd)
+		os.Exit(1)
 	}
 }

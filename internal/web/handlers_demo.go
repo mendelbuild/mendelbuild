@@ -350,11 +350,13 @@ func (s *Server) runCloudDemoDeployment(
 	// Build docker run command:
 	// - Mount the entire workDir so scripts can access repo files
 	// - Pass environment variables
+	// - Override entrypoint to use sh (some images like flyio/flyctl have flyctl as entrypoint)
 	// - Run the deploy script
 	dockerArgs := []string{
 		"run", "--rm",
 		"-v", workDir + ":/workspace",
 		"-w", "/workspace/.mendel",
+		"--entrypoint", "/bin/sh",
 	}
 
 	// Add environment variables
@@ -362,8 +364,8 @@ func (s *Server) runCloudDemoDeployment(
 		dockerArgs = append(dockerArgs, "-e", e)
 	}
 
-	// Add the image and command
-	dockerArgs = append(dockerArgs, hostingCfg.DeployerImage, "bash", "/workspace/.mendel/"+hostingCfg.DeployScript)
+	// Add the image and command (script path as argument to sh)
+	dockerArgs = append(dockerArgs, hostingCfg.DeployerImage, "/workspace/.mendel/"+hostingCfg.DeployScript)
 
 	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
 	output, err := cmd.CombinedOutput()
@@ -1016,8 +1018,16 @@ func (s *Server) updateDemoScriptStatus(projectID uuid.UUID, status string) {
 
 // generateDemoScriptsForMain generates demo-hosting.yml and deployment scripts,
 // committing them to the main branch so all future variations inherit them.
-func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platform string) {
+func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platformSlug string) {
 	ctx := context.Background()
+
+	// Look up platform from database
+	platformConfig, err := s.db.GetHostingPlatformBySlug(ctx, platformSlug)
+	if err != nil {
+		fmt.Printf("[demo-scripts] Unknown hosting platform %q: %v\n", platformSlug, err)
+		s.updateDemoScriptStatus(projectID, "failed")
+		return
+	}
 
 	// Get repository info
 	repo, err := s.db.GetRepositoryByProject(ctx, projectID)
@@ -1084,9 +1094,9 @@ func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platform string
 	}
 
 	// Build the prompt
-	prompt := buildDemoScriptPrompt(platform)
+	prompt := buildDemoScriptPrompt(platformConfig)
 
-	fmt.Printf("[demo-scripts] Generating scripts for platform %s...\n", platform)
+	fmt.Printf("[demo-scripts] Generating scripts for platform %s...\n", platformConfig.Name)
 
 	// Run executor (same mechanism as code generation)
 	exec := executor.New(apiKey, workDir).
@@ -1124,7 +1134,7 @@ func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platform string
 	}
 
 	// Commit and push
-	if err := gitClient.CommitAll(ctx, fmt.Sprintf("Add demo hosting configuration for %s", platform)); err != nil {
+	if err := gitClient.CommitAll(ctx, fmt.Sprintf("Add demo hosting configuration for %s", platformConfig.Name)); err != nil {
 		fmt.Printf("[demo-scripts] Failed to commit: %v\n", err)
 		s.updateDemoScriptStatus(projectID, "failed")
 		return
@@ -1238,69 +1248,9 @@ func (s *Server) handleConfigureDemoHosting(w http.ResponseWriter, r *http.Reque
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, ir.ID), http.StatusSeeOther)
 }
 
-// platformConfig holds configuration for each hosting platform
-type platformConfig struct {
-	deployerImage string
-	instructions  string
-}
-
 // buildDemoScriptPrompt creates a prompt for Claude Code to generate demo deployment scripts.
-func buildDemoScriptPrompt(platform string) string {
-	platforms := map[string]platformConfig{
-		"cloud-run": {
-			deployerImage: "google/cloud-sdk:slim",
-			instructions: `Google Cloud Run deployment:
-- Use 'gcloud run deploy' command
-- Required env vars: GCP_PROJECT_ID, GCP_SERVICE_ACCOUNT_KEY (JSON)
-- Deploy script should authenticate with service account key, build and push to gcr.io, deploy to Cloud Run
-- Teardown script should delete the Cloud Run service`,
-		},
-
-		"fly-io": {
-			deployerImage: "flyio/flyctl:latest",
-			instructions: `Fly.io deployment:
-- Use 'flyctl' CLI commands (available as 'flyctl' in the container)
-- Required env var: FLY_API_TOKEN
-- Deploy script should create app if needed, deploy using fly.toml or Dockerfile
-- Teardown script should destroy the app`,
-		},
-
-		"railway": {
-			deployerImage: "node:20-slim",
-			instructions: `Railway deployment:
-- Use Railway CLI (install with: npm install -g @railway/cli)
-- Required env var: RAILWAY_TOKEN
-- Deploy script should link project and deploy
-- Teardown script should remove the deployment`,
-		},
-
-		"vercel": {
-			deployerImage: "node:20-slim",
-			instructions: `Vercel deployment:
-- Use 'vercel' CLI (install with: npm install -g vercel)
-- Required env vars: VERCEL_TOKEN, optionally VERCEL_ORG_ID
-- Deploy script should deploy using vercel CLI
-- Teardown script should remove the deployment`,
-		},
-
-		"render": {
-			deployerImage: "curlimages/curl:latest",
-			instructions: `Render deployment:
-- Use Render API with curl (render.com/docs/api)
-- Required env var: RENDER_API_KEY
-- Deploy script should create service via API and trigger deploy
-- Teardown script should delete the service`,
-		},
-	}
-
-	cfg, ok := platforms[platform]
-	if !ok {
-		cfg = platformConfig{
-			deployerImage: "alpine:latest",
-			instructions:  fmt.Sprintf("Generic deployment for platform: %s", platform),
-		}
-	}
-
+// Takes a HostingPlatform from the database.
+func buildDemoScriptPrompt(p *domain.HostingPlatform) string {
 	return fmt.Sprintf(`Generate demo deployment scripts for this project.
 
 Look at the existing Dockerfile, docker-compose files, and project structure to understand how to build and run this application.
@@ -1316,17 +1266,21 @@ Create these files in the .mendel/ directory:
    teardown_script: teardown.sh
    url_from: stdout
 
-   NOTE: deployer_image specifies the Docker image used to run the scripts.
-   This image has the necessary CLI tools pre-installed.
+   IMPORTANT about deployer_image: This Docker image runs your scripts via /bin/sh.
+   The image MUST have a POSIX shell at /bin/sh (e.g., alpine, debian, ubuntu, or any
+   image with busybox/bash). Avoid single-binary images that lack a shell.
 
 2. deploy.sh - Deployment script that:
+   - Starts with #!/bin/sh (NOT #!/bin/bash - use POSIX shell for portability)
    - Uses secrets from environment variables
    - Builds and deploys the application
    - Prints the deployed URL to stdout (CRITICAL - this is how Mendel captures the URL)
    - Has MENDEL_VARIATION_ID env var available for naming resources
    - The script runs inside the deployer container with /workspace mounted
+   - May need to install CLI tools at runtime (curl is available in most images)
 
 3. teardown.sh - Teardown script that:
+   - Starts with #!/bin/sh
    - Cleans up all deployed resources
    - Uses same env vars as deploy.sh
    - Has MENDEL_VARIATION_ID env var available
@@ -1338,5 +1292,5 @@ Platform: %s
 Make the scripts executable (chmod +x).
 Print ONLY the URL on success (e.g., echo "https://my-app-xyz.run.app").
 Handle errors gracefully with clear error messages.
-Make scripts idempotent where possible.`, cfg.deployerImage, platform, cfg.instructions)
+Make scripts idempotent where possible.`, p.DeployerImage, p.Name, p.Instructions)
 }

@@ -110,6 +110,23 @@ This keeps platform-specific logic in AI-generated scripts, not hardcoded in Men
 
 Codegen prompts instruct Claude Code to follow these rules.
 
+### No Hardcoded Platform Options
+
+**NEVER hardcode lists of hosting platforms, cloud providers, or deployment options in Go code.** These change frequently and vary by Mendel installation.
+
+Instead:
+- **Store platform data in the database** (`hosting_platforms` table)
+- **Seed on startup** if the table is empty
+- **Refresh via CLI** (`mendel platforms refresh`) to update with current options
+- **Let AI suggest platforms** dynamically based on what's popular/available
+
+This applies to:
+- Hosting platforms (Fly.io, Render, Vercel, Cloud Run, etc.)
+- Any enumerated options that users choose from
+- Platform-specific configuration (deployer images, instructions)
+
+The goal: Mendel's platform knowledge stays current without code changes.
+
 ## Structured LLM API Conventions
 
 All LLM API calls in MendelBuild use Anthropic's **structured outputs** feature for guaranteed JSON compliance. Schemas are generated from Go struct tags.

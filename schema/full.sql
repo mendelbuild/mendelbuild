@@ -1,5 +1,5 @@
 -- MendelBuild Core Schema
--- This file represents the complete schema after all migrations (001-022).
+-- This file represents the complete schema after all migrations (001-024).
 -- It should be kept in sync with migrations for reference.
 --
 -- See DESIGN.md Section 2 for conceptual overview.
@@ -436,6 +436,24 @@ CREATE TABLE deployed_instances (
 
 CREATE INDEX idx_deployed_instances_variation ON deployed_instances(variation_id);
 CREATE INDEX idx_deployed_instances_status ON deployed_instances(status);
+
+--------------------------------------------------------------------------------
+-- HOSTING PLATFORMS
+--------------------------------------------------------------------------------
+-- Available cloud platforms for demo deployment [added in 024]
+-- Seeded on startup, refreshable via CLI
+
+CREATE TABLE hosting_platforms (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    slug TEXT UNIQUE NOT NULL,           -- "fly-io", "cloud-run", "vercel"
+    name TEXT NOT NULL,                  -- "Fly.io", "Google Cloud Run", "Vercel"
+    deployer_image TEXT NOT NULL,        -- Docker image with /bin/sh (e.g., "alpine:latest")
+    instructions TEXT NOT NULL,          -- AI prompt fragment for generating deploy scripts
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_hosting_platforms_slug ON hosting_platforms(slug);
 
 --------------------------------------------------------------------------------
 -- VARIATION MIGRATIONS

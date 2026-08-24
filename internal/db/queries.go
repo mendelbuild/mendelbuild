@@ -2658,3 +2658,69 @@ func (db *DB) AssignOwnerToUnownedProjects(ctx context.Context, userID uuid.UUID
 	return int(result.RowsAffected()), nil
 }
 
+// --- Hosting Platforms ---
+
+// ListHostingPlatforms returns all available hosting platforms.
+func (db *DB) ListHostingPlatforms(ctx context.Context) ([]domain.HostingPlatform, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, slug, name, deployer_image, instructions, created_at, updated_at
+		FROM hosting_platforms
+		ORDER BY name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var platforms []domain.HostingPlatform
+	for rows.Next() {
+		var p domain.HostingPlatform
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.DeployerImage, &p.Instructions, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		platforms = append(platforms, p)
+	}
+	return platforms, rows.Err()
+}
+
+// GetHostingPlatformBySlug retrieves a hosting platform by its slug.
+func (db *DB) GetHostingPlatformBySlug(ctx context.Context, slug string) (*domain.HostingPlatform, error) {
+	var p domain.HostingPlatform
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, slug, name, deployer_image, instructions, created_at, updated_at
+		FROM hosting_platforms
+		WHERE slug = $1
+	`, slug).Scan(&p.ID, &p.Slug, &p.Name, &p.DeployerImage, &p.Instructions, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// UpsertHostingPlatform creates or updates a hosting platform by slug.
+func (db *DB) UpsertHostingPlatform(ctx context.Context, p *domain.HostingPlatform) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO hosting_platforms (id, slug, name, deployer_image, instructions, created_at, updated_at)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, NOW(), NOW())
+		ON CONFLICT (slug) DO UPDATE SET
+			name = EXCLUDED.name,
+			deployer_image = EXCLUDED.deployer_image,
+			instructions = EXCLUDED.instructions,
+			updated_at = NOW()
+	`, p.Slug, p.Name, p.DeployerImage, p.Instructions)
+	return err
+}
+
+// DeleteHostingPlatform removes a hosting platform by slug.
+func (db *DB) DeleteHostingPlatform(ctx context.Context, slug string) error {
+	_, err := db.Pool.Exec(ctx, `DELETE FROM hosting_platforms WHERE slug = $1`, slug)
+	return err
+}
+
+// CountHostingPlatforms returns the number of hosting platforms.
+func (db *DB) CountHostingPlatforms(ctx context.Context) (int, error) {
+	var count int
+	err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM hosting_platforms`).Scan(&count)
+	return count, err
+}
+
