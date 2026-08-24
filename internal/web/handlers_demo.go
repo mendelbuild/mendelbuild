@@ -133,9 +133,6 @@ func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uu
 		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, "")
 	}
 
-	// Silence unused variable warning
-	_ = failDemo
-
 	logMilestone("Checking demo configuration...")
 
 	// Check if work directory exists - if not, try to recover from remote
@@ -228,7 +225,52 @@ func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uu
 		return
 	}
 
-	s.runCloudDemoDeployment(ctx, projectID, variationID, demoInstanceID, workDir, hostingCfg, logMilestone, logInfo, logError, failDemo)
+	s.runCloudDemoDeployment(ctx, projectID, variationID, demoInstanceID, workDir, hostingCfg, logMilestone, logInfo, logError)
+}
+
+// DeployErrorKind classifies deploy errors into one of four cases.
+type DeployErrorKind int
+
+const (
+	DeployErrorTransient   DeployErrorKind = iota // Network/rate-limit issues, should retry
+	DeployErrorNeedsParams                        // Missing or wrong credentials/permissions
+	DeployErrorGiveUp                             // Permanent failure, cannot recover
+)
+
+// classifyDeployError determines how to handle a deploy failure based on error output.
+// Uses simple pattern matching - no LLM involved.
+func classifyDeployError(output string) DeployErrorKind {
+	lower := strings.ToLower(output)
+
+	// Transient errors - worth retrying
+	transientPatterns := []string{
+		"timeout", "timed out", "connection refused", "connection reset",
+		"503", "502", "504", "service unavailable",
+		"429", "rate limit", "too many requests",
+		"temporary failure", "try again", "retry",
+		"network error", "dns resolution",
+	}
+	for _, pattern := range transientPatterns {
+		if strings.Contains(lower, pattern) {
+			return DeployErrorTransient
+		}
+	}
+
+	// Credential/permission errors - need user to fix configuration
+	needsParamsPatterns := []string{
+		"unauthorized", "403", "forbidden", "permission denied",
+		"authentication failed", "auth", "invalid token", "bad token",
+		"invalid credential", "invalid api key", "api key",
+		"access denied", "not authorized", "scope",
+	}
+	for _, pattern := range needsParamsPatterns {
+		if strings.Contains(lower, pattern) {
+			return DeployErrorNeedsParams
+		}
+	}
+
+	// Everything else is considered permanent failure
+	return DeployErrorGiveUp
 }
 
 // truncateOutput truncates output to maxLen characters, keeping both beginning and end.
@@ -263,7 +305,21 @@ func (s *Server) createErrorDemoInstance(ctx context.Context, variationID uuid.U
 	s.db.CreateDemoInstance(ctx, demoInstance)
 }
 
+// DeployResult represents the outcome of a deploy attempt.
+type DeployResult struct {
+	Success   bool
+	URL       string
+	Output    string
+	Error     string
+	ErrorKind DeployErrorKind
+}
+
 // runCloudDemoDeployment deploys a demo using the cloud hosting scripts (demo-hosting.yml).
+// Implements the 4-case error model:
+// 1. Success - demo deployed
+// 2. Transient - retry automatically (up to 3 times with exponential backoff)
+// 3. Needs params - create InputRequest and stop
+// 4. Give up - permanent failure
 func (s *Server) runCloudDemoDeployment(
 	ctx context.Context,
 	projectID string,
@@ -274,21 +330,33 @@ func (s *Server) runCloudDemoDeployment(
 	logMilestone func(string),
 	logInfo func(string),
 	logError func(string),
-	failDemo func(string),
 ) {
 	logMilestone("Deploying to cloud platform...")
+
+	const maxRetries = 3
+
+	// Helper to fail with classification
+	failWithKind := func(errMsg string, kind DeployErrorKind, output string) {
+		logError(errMsg)
+		switch kind {
+		case DeployErrorNeedsParams:
+			s.handleNeedsParamsError(ctx, projectID, variationID, demoInstanceID, errMsg, output)
+		default:
+			s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, "")
+		}
+	}
 
 	// Get project credentials
 	projID, err := uuid.Parse(projectID)
 	if err != nil {
-		failDemo("Invalid project ID")
+		failWithKind("Invalid project ID", DeployErrorGiveUp, "")
 		return
 	}
 
 	// Check that all required secrets are present
 	creds, err := s.db.ListProjectCredentials(ctx, projID)
 	if err != nil {
-		failDemo("Failed to load project credentials: " + err.Error())
+		failWithKind("Failed to load project credentials: "+err.Error(), DeployErrorGiveUp, "")
 		return
 	}
 
@@ -305,7 +373,8 @@ func (s *Server) runCloudDemoDeployment(
 	}
 
 	if len(missingSecrets) > 0 {
-		failDemo(fmt.Sprintf("Missing required credentials: %s. Add them in Project Settings.", strings.Join(missingSecrets, ", ")))
+		errMsg := fmt.Sprintf("Missing required credentials: %s. Add them in Project Settings.", strings.Join(missingSecrets, ", "))
+		failWithKind(errMsg, DeployErrorNeedsParams, "")
 		return
 	}
 
@@ -316,7 +385,7 @@ func (s *Server) runCloudDemoDeployment(
 	// Get encryption key once
 	key, err := crypto.GetKey()
 	if err != nil {
-		failDemo("Encryption not configured: " + err.Error())
+		failWithKind("Encryption not configured: "+err.Error(), DeployErrorGiveUp, "")
 		return
 	}
 
@@ -324,14 +393,14 @@ func (s *Server) runCloudDemoDeployment(
 		// Fetch the full credential (ListProjectCredentials doesn't include encrypted_value)
 		cred, err := s.db.GetProjectCredential(ctx, projID, secretName)
 		if err != nil {
-			failDemo(fmt.Sprintf("Failed to load credential %s: %v", secretName, err))
+			failWithKind(fmt.Sprintf("Failed to load credential %s: %v", secretName, err), DeployErrorGiveUp, "")
 			return
 		}
 
 		// Decrypt the credential
 		decrypted, err := crypto.Decrypt(cred.EncryptedValue, key)
 		if err != nil {
-			failDemo(fmt.Sprintf("Failed to decrypt %s: %v", secretName, err))
+			failWithKind(fmt.Sprintf("Failed to decrypt %s: %v", secretName, err), DeployErrorGiveUp, "")
 			return
 		}
 
@@ -341,84 +410,157 @@ func (s *Server) runCloudDemoDeployment(
 	// Run the deploy script inside a Docker container with the appropriate CLI tools
 	deployScriptPath := workDir + "/.mendel/" + hostingCfg.DeployScript
 	if _, err := os.Stat(deployScriptPath); os.IsNotExist(err) {
-		failDemo(fmt.Sprintf("Deploy script not found: %s", hostingCfg.DeployScript))
+		failWithKind(fmt.Sprintf("Deploy script not found: %s", hostingCfg.DeployScript), DeployErrorGiveUp, "")
 		return
 	}
 
-	logInfo(fmt.Sprintf("Running deploy script in %s container", hostingCfg.DeployerImage))
-
-	// Build docker run command:
-	// - Mount the entire workDir so scripts can access repo files
-	// - Pass environment variables
-	// - Override entrypoint to use sh (some images like flyio/flyctl have flyctl as entrypoint)
-	// - Run the deploy script
+	// Build docker run command
 	dockerArgs := []string{
 		"run", "--rm",
 		"-v", workDir + ":/workspace",
 		"-w", "/workspace/.mendel",
 		"--entrypoint", "/bin/sh",
 	}
-
-	// Add environment variables
 	for _, e := range env {
 		dockerArgs = append(dockerArgs, "-e", e)
 	}
-
-	// Add the image and command (script path as argument to sh)
 	dockerArgs = append(dockerArgs, hostingCfg.DeployerImage, "/workspace/.mendel/"+hostingCfg.DeployScript)
 
-	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
-	output, err := cmd.CombinedOutput()
-	outputStr := string(output)
+	// Retry loop for transient errors
+	var lastOutput string
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if attempt > 1 {
+			backoff := time.Duration(attempt*attempt) * 5 * time.Second
+			logInfo(fmt.Sprintf("Retrying deploy (attempt %d/%d) after %v...", attempt, maxRetries, backoff))
+			time.Sleep(backoff)
+		} else {
+			logInfo(fmt.Sprintf("Running deploy script in %s container", hostingCfg.DeployerImage))
+		}
 
-	if outputStr != "" {
-		logInfo(truncateOutput(outputStr, 4000))
-	}
+		cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
+		output, err := cmd.CombinedOutput()
+		lastOutput = string(output)
+		lastErr = err
 
-	if err != nil {
-		failDemo(fmt.Sprintf("Deploy script failed: %v", err))
-		return
-	}
+		if lastOutput != "" {
+			logInfo(truncateOutput(lastOutput, 4000))
+		}
 
-	// Extract URL from output
-	var demoURL string
-	if hostingCfg.URLFrom == "" || hostingCfg.URLFrom == "stdout" {
-		// Look for URL in stdout
-		demoURL = extractURLFromOutput(outputStr)
-	} else if strings.HasPrefix(hostingCfg.URLFrom, "file:") {
-		// Read URL from file
-		urlFile := strings.TrimPrefix(hostingCfg.URLFrom, "file:")
-		urlFilePath := workDir + "/.mendel/" + urlFile
-		urlBytes, err := os.ReadFile(urlFilePath)
-		if err != nil {
-			failDemo(fmt.Sprintf("Failed to read URL from %s: %v", urlFile, err))
+		if err == nil {
+			// Success - extract URL and finish
+			var demoURL string
+			if hostingCfg.URLFrom == "" || hostingCfg.URLFrom == "stdout" {
+				demoURL = extractURLFromOutput(lastOutput)
+			} else if strings.HasPrefix(hostingCfg.URLFrom, "file:") {
+				urlFile := strings.TrimPrefix(hostingCfg.URLFrom, "file:")
+				urlFilePath := workDir + "/.mendel/" + urlFile
+				urlBytes, err := os.ReadFile(urlFilePath)
+				if err != nil {
+					failWithKind(fmt.Sprintf("Failed to read URL from %s: %v", urlFile, err), DeployErrorGiveUp, lastOutput)
+					return
+				}
+				demoURL = strings.TrimSpace(string(urlBytes))
+			}
+
+			if demoURL == "" {
+				failWithKind("Deploy script did not output a URL. The script must print the deployed URL to stdout.", DeployErrorGiveUp, lastOutput)
+				return
+			}
+
+			logMilestone(fmt.Sprintf("Demo deployed at %s, verifying health...", demoURL))
+
+			// Verify health check passes before marking as running
+			healthPath := hostingCfg.HealthPath
+			if healthPath == "" {
+				healthPath = "/health"
+			}
+			healthTimeout := hostingCfg.HealthTimeout
+			if healthTimeout == 0 {
+				healthTimeout = 120
+			}
+			healthInterval := hostingCfg.HealthInterval
+			if healthInterval == 0 {
+				healthInterval = 5
+			}
+
+			if err := demo.CheckHealth(demoURL, healthPath, healthTimeout, healthInterval); err != nil {
+				// Health check failed - classify as transient or needs params based on error
+				logError(fmt.Sprintf("Health check failed: %v", err))
+				failWithKind(fmt.Sprintf("Demo deployed but health check at %s%s failed: %v", demoURL, healthPath, err), DeployErrorGiveUp, lastOutput)
+				return
+			}
+
+			logMilestone(fmt.Sprintf("Demo healthy and running at %s", demoURL))
+
+			teardownCmd := fmt.Sprintf("cd %s/.mendel && bash %s", workDir, hostingCfg.TeardownScript)
+			processInfo, _ := json.Marshal(map[string]interface{}{
+				"work_dir":     workDir,
+				"deploy_mode":  "cloud",
+				"hosting_file": "demo-hosting.yml",
+			})
+
+			s.db.Pool.Exec(ctx, `
+				UPDATE demo_instances
+				SET url = $2, teardown_instructions = $3, status = $4, process_info = $5
+				WHERE id = $1
+			`, demoInstanceID, demoURL, teardownCmd, domain.DemoInstanceStatusRunning, processInfo)
 			return
 		}
-		demoURL = strings.TrimSpace(string(urlBytes))
-	}
 
-	if demoURL == "" {
-		failDemo("Deploy script did not output a URL. The script must print the deployed URL to stdout.")
+		// Classify the error
+		errorKind := classifyDeployError(lastOutput)
+
+		if errorKind == DeployErrorTransient && attempt < maxRetries {
+			// Will retry
+			continue
+		}
+
+		// Not transient, or out of retries - handle the failure
+		errMsg := fmt.Sprintf("Deploy script failed: %v", lastErr)
+		if attempt > 1 {
+			errMsg = fmt.Sprintf("Deploy script failed after %d attempts: %v", attempt, lastErr)
+		}
+		failWithKind(errMsg, errorKind, lastOutput)
+		return
+	}
+}
+
+// handleNeedsParamsError creates an InputRequest when deploy fails due to credential/permission issues.
+func (s *Server) handleNeedsParamsError(ctx context.Context, projectID string, variationID, demoInstanceID uuid.UUID, errMsg, output string) {
+	projID, err := uuid.Parse(projectID)
+	if err != nil {
 		return
 	}
 
-	logMilestone(fmt.Sprintf("Demo deployed at %s", demoURL))
+	// Create an InputRequest to get user attention on credentials
+	details := fmt.Sprintf("Demo deployment failed with a credential or permission error:\n\n%s\n\nThis usually means:\n- The API token/key is missing or invalid\n- The token doesn't have the required permissions (e.g., wrong scope)\n- The credential format is incorrect\n\nPlease check your credentials in Project Settings.", errMsg)
+	if len(output) > 0 && len(output) < 1000 {
+		details += fmt.Sprintf("\n\nDeploy output:\n```\n%s\n```", output)
+	}
 
-	// Build teardown command
-	teardownCmd := fmt.Sprintf("cd %s/.mendel && bash %s", workDir, hostingCfg.TeardownScript)
+	instructions := "Update credentials in Project Settings, then restart the demo."
 
-	// Update demo instance
-	processInfo, _ := json.Marshal(map[string]interface{}{
-		"work_dir":     workDir,
-		"deploy_mode":  "cloud",
-		"hosting_file": "demo-hosting.yml",
-	})
+	ir := &domain.InputRequest{
+		ID:               uuid.New(),
+		ProjectID:        projID,
+		Kind:             domain.InputRequestKindCredentialRequest,
+		Title:            "Demo deployment failed - check credentials",
+		Details:          &details,
+		Instructions:     &instructions,
+		ObjectivityScore: 0.9,
+		ImportanceScore:  0.9,
+		Status:           domain.InputRequestStatusNeedsAssignment,
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+	}
 
-	s.db.Pool.Exec(ctx, `
-		UPDATE demo_instances
-		SET url = $2, teardown_instructions = $3, status = $4, process_info = $5
-		WHERE id = $1
-	`, demoInstanceID, demoURL, teardownCmd, domain.DemoInstanceStatusRunning, processInfo)
+	if err := s.db.CreateInputRequest(ctx, ir); err != nil {
+		fmt.Printf("[demo] Failed to create InputRequest for credential error: %v\n", err)
+	}
+
+	// Update demo instance status
+	s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, "Check credentials in Project Settings")
 }
 
 // extractURLFromOutput finds the first https:// URL in the output.
@@ -698,7 +840,7 @@ func (s *Server) runFixAndDemo(projectID string, variationID, demoInstanceID uui
 	}
 
 	// Run cloud deployment
-	s.runCloudDemoDeployment(ctx, projectID, variationID, demoInstanceID, workDir, hostingCfg, logMilestone, logInfo, logError, failDemo)
+	s.runCloudDemoDeployment(ctx, projectID, variationID, demoInstanceID, workDir, hostingCfg, logMilestone, logInfo, logError)
 }
 
 // handleRestartDemo stops any existing demo and starts fresh without code changes.
@@ -1016,11 +1158,13 @@ func (s *Server) updateDemoScriptStatus(projectID uuid.UUID, status string) {
 	s.db.UpdateProjectConfig(ctx, projectID, configBytes)
 }
 
-// generateDemoScriptsForMain generates demo-hosting.yml and deployment scripts,
-// committing them to the main branch so all future variations inherit them.
+// generateDemoScriptsForMain generates demo-hosting.yml and deployment scripts.
+// Scripts are pushed to a staging branch and only merged to main after validation
+// (deploy → health check → teardown) passes.
 // If force is true, regenerates even if valid scripts already exist.
 func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platformSlug string, force bool) {
 	ctx := context.Background()
+	stagingBranch := "mendel/demo-scripts"
 
 	// Look up platform from database
 	platformConfig, err := s.db.GetHostingPlatformBySlug(ctx, platformSlug)
@@ -1104,7 +1248,7 @@ func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platformSlug st
 	fmt.Printf("[demo-scripts] Generating scripts for platform %s...\n", platformConfig.Name)
 
 	// Run executor (same mechanism as code generation)
-	exec := executor.New(apiKey, workDir).
+	execInst := executor.New(apiKey, workDir).
 		WithEventHandler(func(event executor.Event) {
 			switch event.Type {
 			case executor.EventToolCall:
@@ -1118,7 +1262,7 @@ func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platformSlug st
 			}
 		})
 
-	result, err := exec.Run(ctx, executor.SystemPrompt(), prompt)
+	result, err := execInst.Run(ctx, executor.SystemPrompt(), prompt)
 	if err != nil {
 		fmt.Printf("[demo-scripts] Executor error: %v\n", err)
 		s.updateDemoScriptStatus(projectID, "failed")
@@ -1138,21 +1282,296 @@ func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platformSlug st
 		return
 	}
 
-	// Commit and push
+	// Load the generated config to get required secrets
+	hostingCfg, err := demo.LoadHostingConfig(workDir)
+	if err != nil {
+		fmt.Printf("[demo-scripts] Failed to load generated config: %v\n", err)
+		s.updateDemoScriptStatus(projectID, "failed")
+		return
+	}
+
+	// Create staging branch and push scripts there (not main yet)
+	if err := gitClient.CreateBranch(ctx, stagingBranch); err != nil {
+		fmt.Printf("[demo-scripts] Failed to create staging branch: %v\n", err)
+		s.updateDemoScriptStatus(projectID, "failed")
+		return
+	}
+
 	if err := gitClient.CommitAll(ctx, fmt.Sprintf("Add demo hosting configuration for %s", platformConfig.Name)); err != nil {
 		fmt.Printf("[demo-scripts] Failed to commit: %v\n", err)
 		s.updateDemoScriptStatus(projectID, "failed")
 		return
 	}
 
+	// Push uses current branch (staging)
 	if err := gitClient.Push(ctx, repoConfig.AuthToken); err != nil {
-		fmt.Printf("[demo-scripts] Failed to push: %v\n", err)
+		fmt.Printf("[demo-scripts] Failed to push staging branch: %v\n", err)
 		s.updateDemoScriptStatus(projectID, "failed")
 		return
 	}
 
-	fmt.Printf("[demo-scripts] Successfully committed demo scripts to main branch\n")
+	fmt.Printf("[demo-scripts] Scripts pushed to staging branch %s\n", stagingBranch)
+
+	// Check if all required credentials are available
+	creds, _ := s.db.ListProjectCredentials(ctx, projectID)
+	credMap := make(map[string]bool)
+	for _, c := range creds {
+		credMap[c.Name] = true
+	}
+
+	var missingSecrets []string
+	for _, secret := range hostingCfg.RequiredSecrets {
+		if !credMap[secret] {
+			missingSecrets = append(missingSecrets, secret)
+		}
+	}
+
+	if len(missingSecrets) > 0 {
+		fmt.Printf("[demo-scripts] Awaiting credentials: %v\n", missingSecrets)
+		s.updateDemoScriptStatus(projectID, "awaiting_credentials")
+		return
+	}
+
+	// All credentials available - run validation
+	fmt.Printf("[demo-scripts] All credentials available, running validation...\n")
+	s.validateAndMergeDemoScripts(projectID, workDir, hostingCfg, repoConfig.AuthToken)
+}
+
+// validateAndMergeDemoScripts runs deploy → health → teardown validation.
+// If validation passes, merges staging branch to main.
+func (s *Server) validateAndMergeDemoScripts(projectID uuid.UUID, workDir string, hostingCfg *demo.HostingConfig, authToken string) {
+	ctx := context.Background()
+	stagingBranch := "mendel/demo-scripts"
+
+	fmt.Printf("[demo-scripts] Starting validation: deploy → health → teardown\n")
+	s.updateDemoScriptStatus(projectID, "validating")
+
+	// Build environment with decrypted secrets
+	env := os.Environ()
+	env = append(env, "MENDEL_VARIATION_ID=validation-run")
+
+	key, err := crypto.GetKey()
+	if err != nil {
+		fmt.Printf("[demo-scripts] Encryption not configured: %v\n", err)
+		s.updateDemoScriptStatus(projectID, "failed")
+		return
+	}
+
+	for _, secretName := range hostingCfg.RequiredSecrets {
+		cred, err := s.db.GetProjectCredential(ctx, projectID, secretName)
+		if err != nil {
+			fmt.Printf("[demo-scripts] Failed to load credential %s: %v\n", secretName, err)
+			s.updateDemoScriptStatus(projectID, "failed")
+			return
+		}
+		decrypted, err := crypto.Decrypt(cred.EncryptedValue, key)
+		if err != nil {
+			fmt.Printf("[demo-scripts] Failed to decrypt %s: %v\n", secretName, err)
+			s.updateDemoScriptStatus(projectID, "failed")
+			return
+		}
+		env = append(env, fmt.Sprintf("%s=%s", secretName, string(decrypted)))
+	}
+
+	// Build docker run command for deploy
+	dockerArgs := []string{
+		"run", "--rm",
+		"-v", workDir + ":/workspace",
+		"-w", "/workspace/.mendel",
+		"--entrypoint", "/bin/sh",
+	}
+	for _, e := range env {
+		dockerArgs = append(dockerArgs, "-e", e)
+	}
+	dockerArgs = append(dockerArgs, hostingCfg.DeployerImage, "/workspace/.mendel/"+hostingCfg.DeployScript)
+
+	// Run deploy
+	fmt.Printf("[demo-scripts] Running deploy script...\n")
+	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
+	output, err := cmd.CombinedOutput()
+	outputStr := string(output)
+
+	if err != nil {
+		fmt.Printf("[demo-scripts] Deploy failed: %v\nOutput: %s\n", err, truncateOutput(outputStr, 2000))
+		s.updateDemoScriptStatus(projectID, "validation_failed")
+		return
+	}
+
+	// Extract URL
+	demoURL := extractURLFromOutput(outputStr)
+	if demoURL == "" {
+		fmt.Printf("[demo-scripts] Deploy succeeded but no URL found in output\n")
+		s.updateDemoScriptStatus(projectID, "validation_failed")
+		return
+	}
+
+	fmt.Printf("[demo-scripts] Deploy succeeded, URL: %s\n", demoURL)
+
+	// Run health check
+	healthPath := hostingCfg.HealthPath
+	if healthPath == "" {
+		healthPath = "/health"
+	}
+	healthTimeout := hostingCfg.HealthTimeout
+	if healthTimeout == 0 {
+		healthTimeout = 120
+	}
+	healthInterval := hostingCfg.HealthInterval
+	if healthInterval == 0 {
+		healthInterval = 5
+	}
+
+	fmt.Printf("[demo-scripts] Checking health at %s%s...\n", demoURL, healthPath)
+	if err := demo.CheckHealth(demoURL, healthPath, healthTimeout, healthInterval); err != nil {
+		fmt.Printf("[demo-scripts] Health check failed: %v\n", err)
+		// Try to teardown before failing
+		s.runTeardownScript(ctx, workDir, hostingCfg, env)
+		s.updateDemoScriptStatus(projectID, "validation_failed")
+		return
+	}
+
+	fmt.Printf("[demo-scripts] Health check passed!\n")
+
+	// Run teardown
+	fmt.Printf("[demo-scripts] Running teardown script...\n")
+	if err := s.runTeardownScript(ctx, workDir, hostingCfg, env); err != nil {
+		fmt.Printf("[demo-scripts] Teardown failed: %v\n", err)
+		s.updateDemoScriptStatus(projectID, "validation_failed")
+		return
+	}
+
+	fmt.Printf("[demo-scripts] Teardown succeeded, validation complete!\n")
+
+	// Validation passed - merge staging branch to main
+	gitClient := git.NewClient(workDir)
+
+	// Checkout main and merge staging
+	if err := gitClient.Checkout(ctx, "main"); err != nil {
+		fmt.Printf("[demo-scripts] Failed to checkout main: %v\n", err)
+		s.updateDemoScriptStatus(projectID, "failed")
+		return
+	}
+
+	if err := gitClient.MergeBranch(ctx, stagingBranch); err != nil {
+		fmt.Printf("[demo-scripts] Failed to merge staging to main: %v\n", err)
+		s.updateDemoScriptStatus(projectID, "failed")
+		return
+	}
+
+	if err := gitClient.Push(ctx, authToken); err != nil {
+		fmt.Printf("[demo-scripts] Failed to push main: %v\n", err)
+		s.updateDemoScriptStatus(projectID, "failed")
+		return
+	}
+
+	// Delete staging branch (best effort)
+	gitClient.DeleteRemoteBranch(ctx, stagingBranch, authToken)
+
+	fmt.Printf("[demo-scripts] Successfully validated and merged demo scripts to main!\n")
 	s.updateDemoScriptStatus(projectID, "ready")
+}
+
+// runTeardownScript runs the teardown script in a docker container.
+func (s *Server) runTeardownScript(ctx context.Context, workDir string, hostingCfg *demo.HostingConfig, env []string) error {
+	dockerArgs := []string{
+		"run", "--rm",
+		"-v", workDir + ":/workspace",
+		"-w", "/workspace/.mendel",
+		"--entrypoint", "/bin/sh",
+	}
+	for _, e := range env {
+		dockerArgs = append(dockerArgs, "-e", e)
+	}
+	dockerArgs = append(dockerArgs, hostingCfg.DeployerImage, "/workspace/.mendel/"+hostingCfg.TeardownScript)
+
+	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, string(output))
+	}
+	return nil
+}
+
+// TriggerDemoScriptValidation checks if credentials are now available and runs validation.
+// Called when a credential is added to a project.
+func (s *Server) TriggerDemoScriptValidation(projectID uuid.UUID) {
+	ctx := context.Background()
+
+	// Check current status
+	project, err := s.db.GetProject(ctx, projectID)
+	if err != nil {
+		return
+	}
+
+	var config map[string]interface{}
+	if project.Config != nil {
+		json.Unmarshal(project.Config, &config)
+	}
+
+	status, _ := config["demo_script_status"].(string)
+	if status != "awaiting_credentials" {
+		return // Not waiting for credentials
+	}
+
+	platform, _ := config["demo_hosting_platform"].(string)
+	if platform == "" {
+		return
+	}
+
+	// Get repository info
+	repo, err := s.db.GetRepositoryByProject(ctx, projectID)
+	if err != nil || repo.URL == nil {
+		return
+	}
+
+	var repoConfig struct {
+		AuthToken string `json:"auth_token"`
+	}
+	if repo.Config != nil {
+		json.Unmarshal(repo.Config, &repoConfig)
+	}
+
+	// Clone staging branch
+	workDir := fmt.Sprintf("/work/%s/demo-validate", projectID)
+	os.MkdirAll(workDir, 0755)
+
+	gitClient := git.NewClient(workDir)
+	stagingBranch := "mendel/demo-scripts"
+	if err := gitClient.Clone(ctx, *repo.URL, stagingBranch, repoConfig.AuthToken); err != nil {
+		fmt.Printf("[demo-scripts] Staging branch not found, skipping validation\n")
+		os.RemoveAll(workDir)
+		return
+	}
+
+	// Load hosting config from staging branch
+	hostingCfg, err := demo.LoadHostingConfig(workDir)
+	if err != nil || hostingCfg == nil {
+		fmt.Printf("[demo-scripts] Failed to load hosting config from staging: %v\n", err)
+		os.RemoveAll(workDir)
+		return
+	}
+
+	// Check if all credentials are now available
+	creds, _ := s.db.ListProjectCredentials(ctx, projectID)
+	credMap := make(map[string]bool)
+	for _, c := range creds {
+		credMap[c.Name] = true
+	}
+
+	for _, secret := range hostingCfg.RequiredSecrets {
+		if !credMap[secret] {
+			fmt.Printf("[demo-scripts] Still missing credential: %s\n", secret)
+			os.RemoveAll(workDir)
+			return
+		}
+	}
+
+	// All credentials available - run validation in background
+	fmt.Printf("[demo-scripts] All credentials now available, starting validation\n")
+	go func() {
+		defer os.RemoveAll(workDir)
+		s.validateAndMergeDemoScripts(projectID, workDir, hostingCfg, repoConfig.AuthToken)
+	}()
 }
 
 // handleRegenerateDemoScripts forces regeneration of demo scripts for the configured platform.
@@ -1270,10 +1689,18 @@ Create these files in the .mendel/ directory:
    deploy_script: deploy.sh
    teardown_script: teardown.sh
    url_from: stdout
+   health_path: /health   # REQUIRED: endpoint Mendel will check to verify demo is working
+   health_timeout: 120    # seconds to wait for health check
+   health_interval: 5     # seconds between attempts
 
    IMPORTANT about deployer_image: This Docker image runs your scripts via /bin/sh.
    The image MUST have a POSIX shell at /bin/sh (e.g., alpine, debian, ubuntu, or any
    image with busybox/bash). Avoid single-binary images that lack a shell.
+
+   IMPORTANT about health_path: Mendel will call this endpoint after deploy to verify
+   the demo is working. Look for an existing health check endpoint in the codebase
+   (common paths: /health, /api/health, /healthz, /ping). If none exists, use "/"
+   and check for a 200 response.
 
 2. deploy.sh - Deployment script that:
    - Starts with #!/bin/sh (NOT #!/bin/bash - use POSIX shell for portability)

@@ -467,6 +467,45 @@ func embedAuthToken(repoURL, token string) string {
 	return u.String()
 }
 
+// DeleteRemoteBranch deletes a branch from the remote.
+func (c *Client) DeleteRemoteBranch(ctx context.Context, branchName, authToken string) error {
+	// Get remote URL
+	remoteCmd := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
+	remoteCmd.Dir = c.workDir
+	remoteOutput, err := remoteCmd.Output()
+	if err != nil {
+		return fmt.Errorf("get remote url: %w", err)
+	}
+	remoteURL := strings.TrimSpace(string(remoteOutput))
+
+	// If auth token provided, update remote URL temporarily
+	if authToken != "" {
+		authURL := embedAuthToken(remoteURL, authToken)
+		setURLCmd := exec.CommandContext(ctx, "git", "remote", "set-url", "origin", authURL)
+		setURLCmd.Dir = c.workDir
+		if err := setURLCmd.Run(); err != nil {
+			return fmt.Errorf("set remote url: %w", err)
+		}
+		defer func() {
+			restoreCmd := exec.CommandContext(context.Background(), "git", "remote", "set-url", "origin", remoteURL)
+			restoreCmd.Dir = c.workDir
+			restoreCmd.Run()
+		}()
+	}
+
+	cmd := exec.CommandContext(ctx, "git", "push", "origin", "--delete", branchName)
+	cmd.Dir = c.workDir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("delete remote branch: %w: %s", err, stderr.String())
+	}
+	return nil
+}
+
 // Cleanup removes the work directory.
 func (c *Client) Cleanup() error {
 	return os.RemoveAll(c.workDir)

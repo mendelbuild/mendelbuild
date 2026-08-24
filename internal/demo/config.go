@@ -2,12 +2,14 @@ package demo
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -208,6 +210,17 @@ type HostingConfig struct {
 	// "stdout" (default) - first https:// URL from stdout
 	// "file:<path>" - read URL from file written by script
 	URLFrom string `yaml:"url_from"`
+
+	// Path to health check endpoint (e.g., "/health", "/api/health")
+	// Used to validate demo is working after deploy.
+	// Required for script validation before committing to main.
+	HealthPath string `yaml:"health_path"`
+
+	// Seconds to wait for health check (default: 60)
+	HealthTimeout int `yaml:"health_timeout"`
+
+	// Seconds between health check attempts (default: 2)
+	HealthInterval int `yaml:"health_interval"`
 }
 
 // LoadHostingConfig reads and parses .mendel/demo-hosting.yml from the given directory.
@@ -240,6 +253,15 @@ func (c *HostingConfig) applyHostingDefaults() {
 	if c.URLFrom == "" {
 		c.URLFrom = "stdout"
 	}
+	if c.HealthPath == "" {
+		c.HealthPath = "/health"
+	}
+	if c.HealthTimeout == 0 {
+		c.HealthTimeout = 120
+	}
+	if c.HealthInterval == 0 {
+		c.HealthInterval = 5
+	}
 }
 
 func (c *HostingConfig) validateHosting() error {
@@ -260,6 +282,37 @@ func HasHostingConfig(workDir string) bool {
 	configPath := filepath.Join(workDir, ".mendel", "demo-hosting.yml")
 	_, err := os.Stat(configPath)
 	return err == nil
+}
+
+// CheckHealth performs a health check on a deployed demo.
+// Returns nil if healthy, error otherwise.
+func CheckHealth(demoURL, healthPath string, timeout, interval int) error {
+	healthURL := strings.TrimRight(demoURL, "/") + healthPath
+
+	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	var lastErr error
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(healthURL)
+		if err != nil {
+			lastErr = err
+			time.Sleep(time.Duration(interval) * time.Second)
+			continue
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+			return nil // Healthy
+		}
+		lastErr = fmt.Errorf("health check returned status %d", resp.StatusCode)
+		time.Sleep(time.Duration(interval) * time.Second)
+	}
+
+	if lastErr != nil {
+		return fmt.Errorf("health check timed out after %ds: %w", timeout, lastErr)
+	}
+	return fmt.Errorf("health check timed out after %ds", timeout)
 }
 
 // IsComposeRunning checks if any containers are running for the docker-compose project

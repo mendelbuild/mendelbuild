@@ -405,6 +405,9 @@ func (s *Server) handleAddCloudCredential(w http.ResponseWriter, r *http.Request
 	// Auto-resolve any credential_request InputRequests that were waiting for this credential
 	_ = s.db.ResolveCredentialRequestsByName(ctx, projectID, name)
 
+	// Trigger demo script validation if waiting for credentials
+	go s.TriggerDemoScriptValidation(projectID)
+
 	http.Redirect(w, r, "/p/"+projectID.String()+"/settings?success=1", http.StatusSeeOther)
 }
 
