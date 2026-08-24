@@ -55,7 +55,12 @@
                         Regenerate
                     </button>
                 </form>
-                <span style="margin-left: 10px; color: #666; font-size: 0.9em;">Re-run code generation from latest main branch</span>
+                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/rebase" style="display: inline; margin-left: 10px;">
+                    <button type="submit" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Rebase onto main
+                    </button>
+                </form>
+                <span style="margin-left: 10px; color: #666; font-size: 0.9em;">Re-run code generation OR rebase to pick up main branch changes</span>
             </div>
             {{else if or (eq .Variation.Status "error") (eq .Variation.Status "terminated")}}
             <div style="margin-top: 15px;">
@@ -70,8 +75,12 @@
                         Retry with Fix
                     </button>
                 </form>
-                <span style="margin-left: 10px; color: #666; font-size: 0.9em;">Uses existing code + error to apply targeted fix</span>
                 {{end}}
+                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/rebase" style="display: inline; margin-left: 10px;">
+                    <button type="submit" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Rebase onto main
+                    </button>
+                </form>
             </div>
             {{end}}
 

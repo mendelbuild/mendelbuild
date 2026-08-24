@@ -511,6 +511,110 @@ func (s *Server) handleTerminateVariation(w http.ResponseWriter, r *http.Request
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
 }
 
+func (s *Server) handleRebaseVariation(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	variationID, err := uuid.Parse(chi.URLParam(r, "variationID"))
+	if err != nil {
+		http.Error(w, "invalid variation ID", http.StatusBadRequest)
+		return
+	}
+
+	variation, err := s.db.GetVariation(ctx, variationID)
+	if err != nil {
+		http.Error(w, "variation not found", http.StatusNotFound)
+		return
+	}
+
+	// Only allow rebase for pending or error status (not creating)
+	if variation.Status != domain.VariationStatusPending &&
+		variation.Status != domain.VariationStatusError &&
+		variation.Status != domain.VariationStatusTerminated {
+		http.Error(w, "can only rebase variations in pending, error, or terminated status", http.StatusBadRequest)
+		return
+	}
+
+	// Get hop to find branch name
+	hop, err := s.db.GetHop(ctx, variation.HopID)
+	if err != nil {
+		http.Error(w, "hop not found", http.StatusNotFound)
+		return
+	}
+
+	// Get repository info
+	repo, err := s.db.GetRepositoryByProject(ctx, projectID)
+	if err != nil || repo.URL == nil {
+		http.Error(w, "repository not configured", http.StatusBadRequest)
+		return
+	}
+
+	var repoConfig struct {
+		AuthToken  string `json:"auth_token"`
+		MainBranch string `json:"main_branch"`
+	}
+	if repo.Config != nil {
+		json.Unmarshal(repo.Config, &repoConfig)
+	}
+	if repoConfig.MainBranch == "" {
+		repoConfig.MainBranch = "main"
+	}
+
+	// Build branch name (must match what codegen creates)
+	branchName := fmt.Sprintf("mendel/%s/%s", hop.Name, variation.Name)
+
+	// Create temp work directory
+	workDir := fmt.Sprintf("/work/%s/rebase-%s", projectID, variationID)
+	os.MkdirAll(workDir, 0755)
+	defer os.RemoveAll(workDir)
+
+	// Clone and checkout the variation branch
+	gitClient := git.NewClient(workDir)
+	if err := gitClient.Clone(ctx, *repo.URL, branchName, repoConfig.AuthToken); err != nil {
+		// Log the rebase operation
+		s.db.CreateVariationLog(ctx, variationID, domain.LogLevelError, fmt.Sprintf("Rebase failed - could not clone branch: %v", err))
+		http.Error(w, "failed to clone variation branch: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Rebase onto main
+	if err := gitClient.RebaseOnto(ctx, repoConfig.MainBranch, repoConfig.AuthToken); err != nil {
+		s.db.CreateVariationLog(ctx, variationID, domain.LogLevelError, fmt.Sprintf("Rebase failed - conflicts or error: %v", err))
+		http.Error(w, "rebase failed (likely conflicts): "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Push the rebased branch
+	if err := gitClient.Push(ctx, repoConfig.AuthToken); err != nil {
+		s.db.CreateVariationLog(ctx, variationID, domain.LogLevelError, fmt.Sprintf("Rebase failed - could not push: %v", err))
+		http.Error(w, "failed to push rebased branch: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get new commit ref
+	newCommit, err := gitClient.GetCurrentCommit(ctx)
+	if err != nil {
+		newCommit = "" // Non-fatal
+	}
+
+	// Update variation with new commit ref
+	if newCommit != "" {
+		variation.CommitRef = &newCommit
+		variation.UpdatedAt = time.Now()
+		s.db.UpdateVariation(ctx, variation)
+	}
+
+	// Log success
+	s.db.CreateVariationLog(ctx, variationID, domain.LogLevelMilestone, fmt.Sprintf("Rebased onto %s", repoConfig.MainBranch))
+
+	// Redirect back to variation detail
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
+}
+
 func (s *Server) handleRetryWithFix(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	projectID := chi.URLParam(r, "projectID")

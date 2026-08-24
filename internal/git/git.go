@@ -251,6 +251,36 @@ func (c *Client) MergeBranch(ctx context.Context, branchName string) error {
 	return nil
 }
 
+// RebaseOnto rebases the current branch onto a target branch (typically main).
+// Fetches the target branch first, then rebases. Returns an error if there are conflicts.
+func (c *Client) RebaseOnto(ctx context.Context, targetBranch, authToken string) error {
+	// Fetch the target branch first
+	if err := c.FetchBranch(ctx, targetBranch, authToken); err != nil {
+		return fmt.Errorf("fetch target branch: %w", err)
+	}
+
+	// Rebase onto the remote tracking branch
+	remoteBranch := fmt.Sprintf("origin/%s", targetBranch)
+	cmd := exec.CommandContext(ctx, "git",
+		"-c", "user.email=mendel@mendel.build",
+		"-c", "user.name=MendelBuild",
+		"rebase", remoteBranch)
+	cmd.Dir = c.workDir
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		// Abort rebase on failure to leave repo in clean state
+		abortCmd := exec.CommandContext(ctx, "git", "rebase", "--abort")
+		abortCmd.Dir = c.workDir
+		abortCmd.Run() // Ignore abort errors
+
+		return fmt.Errorf("git rebase: %w: %s", err, stderr.String())
+	}
+	return nil
+}
+
 // MergeRemoteBranch fetches a specific remote branch and merges it into the current branch.
 func (c *Client) MergeRemoteBranch(ctx context.Context, branchName, authToken string) error {
 	// Fetch the specific branch (needed because we clone with --single-branch)
