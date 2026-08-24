@@ -446,9 +446,11 @@ func (s *Server) handleRetryVariation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only allow retry for error or terminated status
-	if variation.Status != domain.VariationStatusError && variation.Status != domain.VariationStatusTerminated {
-		http.Error(w, "can only retry variations in error or terminated status", http.StatusBadRequest)
+	// Allow retry for error, terminated, or pending status
+	if variation.Status != domain.VariationStatusError &&
+		variation.Status != domain.VariationStatusTerminated &&
+		variation.Status != domain.VariationStatusPending {
+		http.Error(w, "can only retry variations in error, terminated, or pending status", http.StatusBadRequest)
 		return
 	}
 
