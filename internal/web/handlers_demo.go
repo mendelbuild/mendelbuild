@@ -991,7 +991,7 @@ func (s *Server) handleSelectHostingPlatform(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Trigger script generation in background - commits to main branch
-	go s.generateDemoScriptsForMain(projectID, platform)
+	go s.generateDemoScriptsForMain(projectID, platform, false)
 
 	// Redirect to inputs page to show the new credential requests
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs", projectID), http.StatusSeeOther)
@@ -1018,7 +1018,8 @@ func (s *Server) updateDemoScriptStatus(projectID uuid.UUID, status string) {
 
 // generateDemoScriptsForMain generates demo-hosting.yml and deployment scripts,
 // committing them to the main branch so all future variations inherit them.
-func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platformSlug string) {
+// If force is true, regenerates even if valid scripts already exist.
+func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platformSlug string, force bool) {
 	ctx := context.Background()
 
 	// Look up platform from database
@@ -1080,17 +1081,21 @@ func (s *Server) generateDemoScriptsForMain(projectID uuid.UUID, platformSlug st
 		return
 	}
 
-	// Check if demo-hosting.yml exists AND has all required fields
+	// Check if demo-hosting.yml exists AND has all required fields (unless force=true)
 	hostingConfigPath := workDir + "/.mendel/demo-hosting.yml"
-	if _, err := os.Stat(hostingConfigPath); err == nil {
-		// File exists - check if it has all required fields
-		if cfg, err := demo.LoadHostingConfig(workDir); err == nil && cfg != nil && cfg.DeployerImage != "" {
-			fmt.Printf("[demo-scripts] demo-hosting.yml already exists and is valid, skipping generation\n")
-			s.updateDemoScriptStatus(projectID, "ready")
-			return
+	if !force {
+		if _, err := os.Stat(hostingConfigPath); err == nil {
+			// File exists - check if it has all required fields
+			if cfg, err := demo.LoadHostingConfig(workDir); err == nil && cfg != nil && cfg.DeployerImage != "" {
+				fmt.Printf("[demo-scripts] demo-hosting.yml already exists and is valid, skipping generation\n")
+				s.updateDemoScriptStatus(projectID, "ready")
+				return
+			}
+			// File exists but is missing required fields - will regenerate
+			fmt.Printf("[demo-scripts] demo-hosting.yml exists but is missing required fields, regenerating\n")
 		}
-		// File exists but is missing required fields - will regenerate
-		fmt.Printf("[demo-scripts] demo-hosting.yml exists but is missing required fields, regenerating\n")
+	} else {
+		fmt.Printf("[demo-scripts] Force regeneration requested, will overwrite existing scripts\n")
 	}
 
 	// Build the prompt
@@ -1181,9 +1186,9 @@ func (s *Server) handleRegenerateDemoScripts(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Set status to generating and trigger regeneration
+	// Set status to generating and trigger regeneration (force=true to overwrite existing)
 	s.updateDemoScriptStatus(projectID, "generating")
-	go s.generateDemoScriptsForMain(projectID, platform)
+	go s.generateDemoScriptsForMain(projectID, platform, true)
 
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/settings?regenerating=1", projectID), http.StatusSeeOther)
 }
