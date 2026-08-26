@@ -926,8 +926,8 @@ primary_region = "iad"
 	cmdEnv := os.Environ()
 	cmdEnv = append(cmdEnv, fmt.Sprintf("FLY_API_TOKEN=%s", env["FLY_API_TOKEN"]))
 
-	// Create the app
-	createCmd := exec.CommandContext(ctx, "flyctl", "apps", "create", appName, "--org", "personal")
+	// Create the app (no --org flag, uses default org)
+	createCmd := exec.CommandContext(ctx, "flyctl", "apps", "create", appName)
 	createCmd.Dir = tmpDir
 	createCmd.Env = cmdEnv
 	if output, err := createCmd.CombinedOutput(); err != nil {
