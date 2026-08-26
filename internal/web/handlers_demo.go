@@ -387,12 +387,14 @@ primary_region = "iad"
 		}
 	}
 
-	// Deploy
+	// Deploy (--remote-only builds on Fly's infrastructure, avoiding local Docker)
 	logMilestone("Deploying to Fly.io...")
-	deployCmd := exec.CommandContext(ctx, "flyctl", "deploy", "--now", "--wait-timeout", "300")
+	deployCmd := exec.CommandContext(ctx, "flyctl", "deploy", "--remote-only", "--wait-timeout", "300")
 	deployCmd.Dir = workDir
 	deployCmd.Env = cmdEnv
-	if output, err := deployCmd.CombinedOutput(); err != nil {
+	output, err := deployCmd.CombinedOutput()
+	logInfo(fmt.Sprintf("flyctl deploy output: %s", string(output)))
+	if err != nil {
 		return "", fmt.Errorf("deploy failed: %s: %w", string(output), err)
 	}
 
