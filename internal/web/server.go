@@ -683,6 +683,8 @@ func (s *Server) setupRoutes() {
 		// Deployment channel routes
 		r.Get("/deployment", s.handleDeploymentChannel)
 		r.Post("/deployment/channel", s.handleSetDeploymentChannel)
+		r.Post("/deployment/validate-demo", s.handleValidateDemoPath)
+		r.Post("/deployment/validate-prod", s.handleValidateProdPath)
 
 		// OKR Editor routes
 		r.Get("/okr", s.handleOKREditor)

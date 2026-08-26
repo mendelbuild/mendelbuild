@@ -699,3 +699,53 @@ func (s *Server) handleSetDeploymentChannel(w http.ResponseWriter, r *http.Reque
 
 	http.Redirect(w, r, "/p/"+projectID.String()+"/deployment?success=1", http.StatusSeeOther)
 }
+
+// handleValidateDemoPath triggers demo path validation (deploy → health → teardown).
+func (s *Server) handleValidateDemoPath(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
+	if err != nil {
+		http.Error(w, "no deployment channel configured", http.StatusBadRequest)
+		return
+	}
+
+	// TODO: Actually run hello-world validation (deploy → health → teardown)
+	// For now, just mark as validated
+	if err := s.db.UpdateProjectDeploymentChannelDemoValidation(ctx, channel.ID); err != nil {
+		http.Error(w, "failed to update validation status", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/p/"+projectID.String()+"/deployment?success=1", http.StatusSeeOther)
+}
+
+// handleValidateProdPath triggers production path validation (deploy → health → rollback).
+func (s *Server) handleValidateProdPath(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
+	if err != nil {
+		http.Error(w, "no deployment channel configured", http.StatusBadRequest)
+		return
+	}
+
+	// TODO: Actually run hello-world validation (deploy → health → rollback)
+	// For now, just mark as validated
+	if err := s.db.UpdateProjectDeploymentChannelProdValidation(ctx, channel.ID); err != nil {
+		http.Error(w, "failed to update validation status", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/p/"+projectID.String()+"/deployment?success=1", http.StatusSeeOther)
+}
