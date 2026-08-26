@@ -526,3 +526,66 @@ type HostingPlatform struct {
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
+
+// DeployArtifactKind describes what a project produces for deployment.
+type DeployArtifactKind string
+
+const (
+	DeployArtifactContainer    DeployArtifactKind = "container"     // Single Dockerfile
+	DeployArtifactKubernetes   DeployArtifactKind = "kubernetes"    // k8s manifests
+	DeployArtifactStatic       DeployArtifactKind = "static"        // Static files
+	DeployArtifactSourceDeploy DeployArtifactKind = "source_deploy" // Platform builds from source
+)
+
+// SupportedDeploymentCombo represents a validated (artifact_kind, hosting_platform) pair.
+type SupportedDeploymentCombo struct {
+	ID                uuid.UUID          `json:"id"`
+	ArtifactKind      DeployArtifactKind `json:"artifact_kind"`
+	HostingPlatformID uuid.UUID          `json:"hosting_platform_id"`
+	Notes             *string            `json:"notes,omitempty"`
+	Guidance          json.RawMessage    `json:"guidance,omitempty"`
+	CreatedAt         time.Time          `json:"created_at"`
+
+	// Joined fields
+	HostingPlatform *HostingPlatform `json:"hosting_platform,omitempty"`
+}
+
+// ProjectDeploymentChannel tracks a project's deployment configuration.
+type ProjectDeploymentChannel struct {
+	ID                uuid.UUID          `json:"id"`
+	ProjectID         uuid.UUID          `json:"project_id"`
+	ArtifactKind      DeployArtifactKind `json:"artifact_kind"`
+	HostingPlatformID uuid.UUID          `json:"hosting_platform_id"`
+
+	// Validation state
+	DemoValidatedAt *time.Time `json:"demo_validated_at,omitempty"`
+	ProdValidatedAt *time.Time `json:"prod_validated_at,omitempty"`
+
+	// Production state
+	ProdURL        *string    `json:"prod_url,omitempty"`
+	ProdDeployedAt *time.Time `json:"prod_deployed_at,omitempty"`
+
+	// History: nil = current active channel
+	DisabledAt *time.Time `json:"disabled_at,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+
+	// Joined fields
+	HostingPlatform *HostingPlatform `json:"hosting_platform,omitempty"`
+}
+
+// IsActive returns true if this channel is the current active one.
+func (c *ProjectDeploymentChannel) IsActive() bool {
+	return c.DisabledAt == nil
+}
+
+// IsDemoValidated returns true if demo deployment has been validated.
+func (c *ProjectDeploymentChannel) IsDemoValidated() bool {
+	return c.DemoValidatedAt != nil
+}
+
+// IsProdValidated returns true if production deployment has been validated.
+func (c *ProjectDeploymentChannel) IsProdValidated() bool {
+	return c.ProdValidatedAt != nil
+}

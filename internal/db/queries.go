@@ -2826,3 +2826,186 @@ func (db *DB) CountHostingPlatforms(ctx context.Context) (int, error) {
 	return count, err
 }
 
+// --- Deployment Channels ---
+
+// ListSupportedDeploymentCombos returns all supported (artifact_kind, hosting_platform) combinations.
+func (db *DB) ListSupportedDeploymentCombos(ctx context.Context) ([]domain.SupportedDeploymentCombo, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT sdc.id, sdc.artifact_kind, sdc.hosting_platform_id, sdc.notes, sdc.guidance, sdc.created_at,
+			   hp.id, hp.slug, hp.name, hp.deployer_image, hp.instructions, hp.created_at, hp.updated_at
+		FROM supported_deployment_combos sdc
+		JOIN hosting_platforms hp ON hp.id = sdc.hosting_platform_id
+		ORDER BY sdc.artifact_kind, hp.name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var combos []domain.SupportedDeploymentCombo
+	for rows.Next() {
+		var c domain.SupportedDeploymentCombo
+		var hp domain.HostingPlatform
+		if err := rows.Scan(
+			&c.ID, &c.ArtifactKind, &c.HostingPlatformID, &c.Notes, &c.Guidance, &c.CreatedAt,
+			&hp.ID, &hp.Slug, &hp.Name, &hp.DeployerImage, &hp.Instructions, &hp.CreatedAt, &hp.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		c.HostingPlatform = &hp
+		combos = append(combos, c)
+	}
+	return combos, rows.Err()
+}
+
+// GetSupportedDeploymentCombo returns a specific combo by artifact kind and platform.
+func (db *DB) GetSupportedDeploymentCombo(ctx context.Context, artifactKind domain.DeployArtifactKind, platformID uuid.UUID) (*domain.SupportedDeploymentCombo, error) {
+	var c domain.SupportedDeploymentCombo
+	var hp domain.HostingPlatform
+	err := db.Pool.QueryRow(ctx, `
+		SELECT sdc.id, sdc.artifact_kind, sdc.hosting_platform_id, sdc.notes, sdc.guidance, sdc.created_at,
+			   hp.id, hp.slug, hp.name, hp.deployer_image, hp.instructions, hp.created_at, hp.updated_at
+		FROM supported_deployment_combos sdc
+		JOIN hosting_platforms hp ON hp.id = sdc.hosting_platform_id
+		WHERE sdc.artifact_kind = $1 AND sdc.hosting_platform_id = $2
+	`, artifactKind, platformID).Scan(
+		&c.ID, &c.ArtifactKind, &c.HostingPlatformID, &c.Notes, &c.Guidance, &c.CreatedAt,
+		&hp.ID, &hp.Slug, &hp.Name, &hp.DeployerImage, &hp.Instructions, &hp.CreatedAt, &hp.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	c.HostingPlatform = &hp
+	return &c, nil
+}
+
+// CreateSupportedDeploymentCombo adds a new supported combo.
+func (db *DB) CreateSupportedDeploymentCombo(ctx context.Context, c *domain.SupportedDeploymentCombo) error {
+	return db.Pool.QueryRow(ctx, `
+		INSERT INTO supported_deployment_combos (artifact_kind, hosting_platform_id, notes, guidance)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, created_at
+	`, c.ArtifactKind, c.HostingPlatformID, c.Notes, c.Guidance).Scan(&c.ID, &c.CreatedAt)
+}
+
+// GetActiveProjectDeploymentChannel returns the current active channel for a project.
+func (db *DB) GetActiveProjectDeploymentChannel(ctx context.Context, projectID uuid.UUID) (*domain.ProjectDeploymentChannel, error) {
+	var c domain.ProjectDeploymentChannel
+	var hp domain.HostingPlatform
+	err := db.Pool.QueryRow(ctx, `
+		SELECT pdc.id, pdc.project_id, pdc.artifact_kind, pdc.hosting_platform_id,
+			   pdc.demo_validated_at, pdc.prod_validated_at, pdc.prod_url, pdc.prod_deployed_at,
+			   pdc.disabled_at, pdc.created_at, pdc.updated_at,
+			   hp.id, hp.slug, hp.name, hp.deployer_image, hp.instructions, hp.created_at, hp.updated_at
+		FROM project_deployment_channels pdc
+		JOIN hosting_platforms hp ON hp.id = pdc.hosting_platform_id
+		WHERE pdc.project_id = $1 AND pdc.disabled_at IS NULL
+	`, projectID).Scan(
+		&c.ID, &c.ProjectID, &c.ArtifactKind, &c.HostingPlatformID,
+		&c.DemoValidatedAt, &c.ProdValidatedAt, &c.ProdURL, &c.ProdDeployedAt,
+		&c.DisabledAt, &c.CreatedAt, &c.UpdatedAt,
+		&hp.ID, &hp.Slug, &hp.Name, &hp.DeployerImage, &hp.Instructions, &hp.CreatedAt, &hp.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	c.HostingPlatform = &hp
+	return &c, nil
+}
+
+// ListProjectDeploymentChannels returns all channels for a project (including disabled).
+func (db *DB) ListProjectDeploymentChannels(ctx context.Context, projectID uuid.UUID) ([]domain.ProjectDeploymentChannel, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT pdc.id, pdc.project_id, pdc.artifact_kind, pdc.hosting_platform_id,
+			   pdc.demo_validated_at, pdc.prod_validated_at, pdc.prod_url, pdc.prod_deployed_at,
+			   pdc.disabled_at, pdc.created_at, pdc.updated_at,
+			   hp.id, hp.slug, hp.name, hp.deployer_image, hp.instructions, hp.created_at, hp.updated_at
+		FROM project_deployment_channels pdc
+		JOIN hosting_platforms hp ON hp.id = pdc.hosting_platform_id
+		WHERE pdc.project_id = $1
+		ORDER BY pdc.disabled_at NULLS FIRST, pdc.created_at DESC
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var channels []domain.ProjectDeploymentChannel
+	for rows.Next() {
+		var c domain.ProjectDeploymentChannel
+		var hp domain.HostingPlatform
+		if err := rows.Scan(
+			&c.ID, &c.ProjectID, &c.ArtifactKind, &c.HostingPlatformID,
+			&c.DemoValidatedAt, &c.ProdValidatedAt, &c.ProdURL, &c.ProdDeployedAt,
+			&c.DisabledAt, &c.CreatedAt, &c.UpdatedAt,
+			&hp.ID, &hp.Slug, &hp.Name, &hp.DeployerImage, &hp.Instructions, &hp.CreatedAt, &hp.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		c.HostingPlatform = &hp
+		channels = append(channels, c)
+	}
+	return channels, rows.Err()
+}
+
+// CreateProjectDeploymentChannel creates a new channel (disabling any existing active one).
+func (db *DB) CreateProjectDeploymentChannel(ctx context.Context, c *domain.ProjectDeploymentChannel) error {
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Disable any existing active channel
+	_, err = tx.Exec(ctx, `
+		UPDATE project_deployment_channels
+		SET disabled_at = NOW(), updated_at = NOW()
+		WHERE project_id = $1 AND disabled_at IS NULL
+	`, c.ProjectID)
+	if err != nil {
+		return err
+	}
+
+	// Create the new channel
+	err = tx.QueryRow(ctx, `
+		INSERT INTO project_deployment_channels (project_id, artifact_kind, hosting_platform_id)
+		VALUES ($1, $2, $3)
+		RETURNING id, created_at, updated_at
+	`, c.ProjectID, c.ArtifactKind, c.HostingPlatformID).Scan(&c.ID, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+// UpdateProjectDeploymentChannelDemoValidation marks demo as validated.
+func (db *DB) UpdateProjectDeploymentChannelDemoValidation(ctx context.Context, channelID uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE project_deployment_channels
+		SET demo_validated_at = NOW(), updated_at = NOW()
+		WHERE id = $1
+	`, channelID)
+	return err
+}
+
+// UpdateProjectDeploymentChannelProdValidation marks prod as validated.
+func (db *DB) UpdateProjectDeploymentChannelProdValidation(ctx context.Context, channelID uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE project_deployment_channels
+		SET prod_validated_at = NOW(), updated_at = NOW()
+		WHERE id = $1
+	`, channelID)
+	return err
+}
+
+// UpdateProjectDeploymentChannelProdURL sets the production URL.
+func (db *DB) UpdateProjectDeploymentChannelProdURL(ctx context.Context, channelID uuid.UUID, url string) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE project_deployment_channels
+		SET prod_url = $2, prod_deployed_at = NOW(), updated_at = NOW()
+		WHERE id = $1
+	`, channelID, url)
+	return err
+}
+
