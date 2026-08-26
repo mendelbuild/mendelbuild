@@ -37,10 +37,10 @@ func TestGeneratePreview(t *testing.T) {
 	var body bytes.Buffer
 
 	section := func(title string) {
-		fmt.Fprintf(&body, `<h2 style="margin-top:36px;border-bottom:1px solid #ddd;padding-bottom:6px;">%s</h2>`, title)
+		fmt.Fprintf(&body, `<h2 class="preview-section">%s</h2>`, title)
 	}
 	label := func(s string) {
-		fmt.Fprintf(&body, `<div style="font:600 12px monospace;color:#999;margin:18px 0 6px;">%s</div>`, s)
+		fmt.Fprintf(&body, `<div class="preview-label">%s</div>`, s)
 	}
 	render := func(name string, data interface{}) {
 		if err := tmpl.ExecuteTemplate(&body, name, data); err != nil {
@@ -125,14 +125,34 @@ func TestGeneratePreview(t *testing.T) {
 			Status: st, Kind: domain.InputRequestKindVariationSelection}))
 	}
 
-	page := fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8">
-<title>Mendel lifecycle components</title><style>%s
-body{max-width:960px;}</style></head><body>
+	// No <html>/<head>/<body> wrapper: HTML5 infers them, so this renders as a
+	// standalone file in a browser and can also be published directly as an
+	// Artifact, which supplies its own document skeleton.
+	//
+	// The styling is Mendel's own, lifted verbatim from layout.html. The point
+	// of this page is fidelity to what the app actually renders, so it must not
+	// acquire a look of its own.
+	page := fmt.Sprintf(`<title>Mendel Lifecycle Components</title>
+<style>%s
+body { max-width: 960px; }
+.preview-intro { color: #666; max-width: 65ch; }
+.preview-section {
+    margin-top: 40px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #ddd;
+}
+.preview-label {
+    font: 600 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #999;
+    margin: 20px 0 6px;
+}
+</style>
 <h1>Lifecycle ribbon &amp; roadmap strip</h1>
-<p style="color:#666;">Every state rendered from the real templates and the real
-<code>domain</code> lifecycle mapping. Grey monospace lines are the underlying
-status values, shown here only to label the examples.</p>
-%s</body></html>`, css, body.String())
+<p class="preview-intro">Every state, rendered from the real templates and the
+real <code>domain</code> lifecycle mapping — not mockups. The grey monospace
+lines are the underlying database status values, shown only to label each
+example; they do not appear in the product.</p>
+%s`, css, body.String())
 
 	if err := os.WriteFile(out, []byte(page), 0o644); err != nil {
 		t.Fatal(err)
