@@ -2318,9 +2318,6 @@ func (s *Server) handleProvideCredential(w http.ResponseWriter, r *http.Request)
 	// Auto-resolve any other credential requests for this credential name
 	_ = s.db.ResolveCredentialRequestsByName(ctx, projectID, name)
 
-	// Trigger demo script validation if waiting for credentials
-	go s.TriggerDemoScriptValidation(projectID)
-
 	// Save system message
 	sysMsg := &domain.InputRequestMessage{
 		ID:             uuid.New(),

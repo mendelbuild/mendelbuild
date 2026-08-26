@@ -986,28 +986,8 @@ func (s *Server) handleStopDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract work_dir and deploy_mode from process info
-	var processInfo map[string]interface{}
-	if demoInst.ProcessInfo != nil {
-		json.Unmarshal(demoInst.ProcessInfo, &processInfo)
-	}
-	workDir, _ := processInfo["work_dir"].(string)
-	if workDir == "" {
-		workDir = git.WorkDirForVariation(projectID, variationID.String())
-	}
-	deployMode, _ := processInfo["deploy_mode"].(string)
-
-	var teardownErr error
-
-	if deployMode == "cloud" {
-		// Cloud deployment - run teardown in Docker with secrets
-		teardownErr = s.runCloudTeardown(ctx, projID, variationID, workDir)
-	} else {
-		// Docker-compose deployment - simple sh -c
-		cmd := exec.CommandContext(ctx, "sh", "-c", demoInst.TeardownInstructions)
-		cmd.Dir = workDir
-		teardownErr = cmd.Run()
-	}
+	// Run teardown with credentials
+	teardownErr := s.runCloudTeardown(ctx, projID, variationID, demoInst)
 
 	if teardownErr != nil {
 		// Mark as error but continue
@@ -1028,51 +1008,42 @@ func (s *Server) handleStopDemo(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
 }
 
-// runCloudTeardown runs the teardown script in a Docker container with secrets.
-func (s *Server) runCloudTeardown(ctx context.Context, projectID, variationID uuid.UUID, workDir string) error {
-	// Load hosting config
-	hostingCfg, err := demo.LoadHostingConfig(workDir)
-	if err != nil {
-		return fmt.Errorf("load hosting config: %w", err)
-	}
-	if hostingCfg == nil {
-		return fmt.Errorf("no hosting config found")
+// runCloudTeardown runs the teardown command stored in the demo instance.
+func (s *Server) runCloudTeardown(ctx context.Context, projectID, variationID uuid.UUID, demoInst *domain.DemoInstance) error {
+	if demoInst.TeardownInstructions == "" {
+		return nil // No teardown needed
 	}
 
-	// Build environment with decrypted secrets
-	env := os.Environ()
-	env = append(env, fmt.Sprintf("MENDEL_VARIATION_ID=%s", variationID.String()))
+	// Get deployment channel to know which credentials to use
+	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
+	if err != nil || channel == nil {
+		return fmt.Errorf("no deployment channel found")
+	}
 
+	// Get encryption key
 	key, err := crypto.GetKey()
 	if err != nil {
 		return fmt.Errorf("encryption not configured: %w", err)
 	}
 
-	for _, secretName := range hostingCfg.RequiredSecrets {
-		cred, err := s.db.GetProjectCredential(ctx, projectID, secretName)
+	// Get required credentials
+	required := hosting.RequiredCredentialsForCombo(channel.ArtifactKind, channel.HostingPlatform.Slug)
+	cmdEnv := os.Environ()
+	for _, name := range required {
+		cred, err := s.db.GetProjectCredential(ctx, projectID, name)
 		if err != nil {
-			return fmt.Errorf("load credential %s: %w", secretName, err)
+			continue // Credential might not exist, best effort
 		}
 		decrypted, err := crypto.Decrypt(cred.EncryptedValue, key)
 		if err != nil {
-			return fmt.Errorf("decrypt %s: %w", secretName, err)
+			continue
 		}
-		env = append(env, fmt.Sprintf("%s=%s", secretName, string(decrypted)))
+		cmdEnv = append(cmdEnv, fmt.Sprintf("%s=%s", name, string(decrypted)))
 	}
 
-	// Build docker run command
-	dockerArgs := []string{
-		"run", "--rm",
-		"-v", workDir + ":/workspace",
-		"-w", "/workspace/.mendel",
-		"--entrypoint", "/bin/sh",
-	}
-	for _, e := range env {
-		dockerArgs = append(dockerArgs, "-e", e)
-	}
-	dockerArgs = append(dockerArgs, hostingCfg.DeployerImage, "/workspace/.mendel/"+hostingCfg.TeardownScript)
-
-	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
+	// Run the teardown command
+	cmd := exec.CommandContext(ctx, "sh", "-c", demoInst.TeardownInstructions)
+	cmd.Env = cmdEnv
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%v: %s", err, string(output))
@@ -1284,19 +1255,20 @@ func (s *Server) runFixAndDemo(projectID string, variationID, demoInstanceID uui
 
 	logMilestone("Fix applied, starting demo...")
 
-	// Load cloud hosting config
-	hostingCfg, err := demo.LoadHostingConfig(workDir)
-	if err != nil {
-		failDemo(fmt.Sprintf("Failed to load demo hosting config: %v", err))
-		return
-	}
-	if hostingCfg == nil {
-		failDemo("Demo hosting not configured. Configure a hosting platform in project settings.")
+	// Get deployment channel
+	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projID)
+	if err != nil || channel == nil {
+		failDemo("No deployment channel configured. Go to Deployment settings.")
 		return
 	}
 
-	// Run cloud deployment
-	s.runCloudDemoDeployment(ctx, projectID, variationID, demoInstanceID, workDir, hostingCfg, logMilestone, logInfo, logError)
+	if !channel.IsDemoValidated() {
+		failDemo("Deployment channel not validated for demos. Go to Deployment settings.")
+		return
+	}
+
+	// Run channel-based deployment
+	s.runChannelDemoDeployment(ctx, projID, variationID, demoInstanceID, workDir, channel, logMilestone, logInfo, logError)
 }
 
 // handleRestartDemo stops any existing demo and starts fresh without code changes.

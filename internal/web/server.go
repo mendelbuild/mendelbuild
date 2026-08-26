@@ -673,9 +673,6 @@ func (s *Server) setupRoutes() {
 		r.Post("/okr/objectives/{objectiveID}/link-kr", s.handleLinkKeyResult)
 		r.Post("/okr/objectives/{objectiveID}/unlink-kr/{keyResultID}", s.handleUnlinkKeyResult)
 
-		// Demo hosting
-		r.Post("/configure-demo-hosting", s.handleConfigureDemoHosting)
-
 		// Hop routes
 		r.Get("/hops/{hopID}", s.handleHopDetail)
 		r.Post("/hops/{hopID}/propose-variations", s.handleProposeVariations)
@@ -696,9 +693,6 @@ func (s *Server) setupRoutes() {
 		// Debug route (prototype only)
 		r.Get("/debug", s.handleDebug)
 
-		// Demo script management
-		r.Post("/regenerate-demo-scripts", s.handleRegenerateDemoScripts)
-
 		// Input request routes
 		r.Get("/inputs", s.handleInputRequests)
 		r.Get("/inputs/{inputRequestID}", s.handleInputRequestDetail)
@@ -709,7 +703,6 @@ func (s *Server) setupRoutes() {
 		r.Post("/inputs/{inputRequestID}/reject", s.handleReject)
 		r.Post("/inputs/{inputRequestID}/select", s.handleSelectWinner)
 		r.Post("/inputs/{inputRequestID}/reject-all", s.handleRejectAllVariations)
-		r.Post("/inputs/{inputRequestID}/select-hosting", s.handleSelectHostingPlatform)
 		r.Post("/inputs/{inputRequestID}/request-more-variations", s.handleRequestMoreVariations)
 		r.Post("/inputs/{inputRequestID}/resolve-conflicts", s.handleResolveConflicts)
 			r.Post("/inputs/{inputRequestID}/provide-credential", s.handleProvideCredential)
