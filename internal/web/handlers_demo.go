@@ -60,6 +60,19 @@ func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if project has a deployment channel that requires validation
+	projectUUID, err := uuid.Parse(projectID)
+	if err == nil {
+		channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectUUID)
+		if err == nil && channel != nil {
+			// Channel exists - require demo validation
+			if !channel.IsDemoValidated() {
+				http.Error(w, "Demo deployment channel not validated. Go to Deployment settings to validate.", http.StatusBadRequest)
+				return
+			}
+		}
+	}
+
 	_, err = s.db.GetVariation(ctx, variationID)
 	if err != nil {
 		http.Error(w, "variation not found", http.StatusNotFound)
@@ -950,6 +963,19 @@ func (s *Server) handleRestartDemo(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "invalid variation ID", http.StatusBadRequest)
 		return
+	}
+
+	// Check if project has a deployment channel that requires validation
+	projectUUID, err := uuid.Parse(projectID)
+	if err == nil {
+		channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectUUID)
+		if err == nil && channel != nil {
+			// Channel exists - require demo validation
+			if !channel.IsDemoValidated() {
+				http.Error(w, "Demo deployment channel not validated. Go to Deployment settings to validate.", http.StatusBadRequest)
+				return
+			}
+		}
 	}
 
 	// Get the work directory
