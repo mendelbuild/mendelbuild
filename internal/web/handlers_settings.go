@@ -941,8 +941,8 @@ primary_region = "iad"
 		destroyCmd.Run() // Best effort cleanup
 	}()
 
-	// Deploy the app
-	deployCmd := exec.CommandContext(ctx, "flyctl", "deploy", "--now")
+	// Deploy the app (--remote-only builds on Fly's infrastructure)
+	deployCmd := exec.CommandContext(ctx, "flyctl", "deploy", "--remote-only")
 	deployCmd.Dir = tmpDir
 	deployCmd.Env = cmdEnv
 	if output, err := deployCmd.CombinedOutput(); err != nil {
