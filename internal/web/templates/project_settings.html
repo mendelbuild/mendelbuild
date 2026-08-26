@@ -2,6 +2,16 @@
 <h1>Project Settings</h1>
 <p><a href="/p/{{.ProjectID}}/strategy">&larr; Back to Strategy</a></p>
 
+<div class="card" style="margin-bottom: 20px; background: #e7f1ff; border: 1px solid #b8daff;">
+    <h2 style="margin-top: 0;">Deployment</h2>
+    <p style="color: #004085; margin-bottom: 10px;">
+        Configure how this project deploys demos and production.
+    </p>
+    <a href="/p/{{.ProjectID}}/settings/deployment" style="display: inline-block; padding: 8px 16px; background: #007bff; color: white; border-radius: 4px; text-decoration: none;">
+        Configure Deployment Channel
+    </a>
+</div>
+
 {{if .Success}}
 <div style="padding: 15px; background: #d4edda; border-radius: 4px; margin-bottom: 20px;">
     Settings saved successfully.
