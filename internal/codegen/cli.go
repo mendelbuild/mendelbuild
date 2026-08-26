@@ -33,8 +33,6 @@ func BuildImplementationPrompt(hopName, variationName, approach string) string {
 
 	prompt.WriteString("\n## IMPORTANT: `.mendel/` Directory Rules\n\n")
 	prompt.WriteString("The `.mendel/` directory is for Mendel configuration ONLY. Allowed files:\n")
-	prompt.WriteString("- `demo-hosting.yml` - Cloud demo settings\n")
-	prompt.WriteString("- `deploy-demo.sh` / `teardown-demo.sh` - Deploy scripts\n")
 	prompt.WriteString("- `test-config.yml` / `docker-compose.test.yml` - Test config\n")
 	prompt.WriteString("- `migration.json` - Migration instructions (if schema changes needed)\n\n")
 	prompt.WriteString("**DO NOT create any other files in `.mendel/`** - no documentation, no summaries.\n")

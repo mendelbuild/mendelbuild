@@ -13,7 +13,6 @@ import (
 
 	"github.com/bhs/mendelbuild/internal/codegen/executor"
 	"github.com/bhs/mendelbuild/internal/crypto"
-	"github.com/bhs/mendelbuild/internal/demo"
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/bhs/mendelbuild/internal/git"
 	"github.com/bhs/mendelbuild/internal/hosting"
@@ -102,7 +101,7 @@ func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 		ID:                   demoInstanceID,
 		VariationID:          variationID,
 		URL:                  "",
-		TeardownInstructions: fmt.Sprintf("cd %s/.mendel && docker-compose -f docker-compose.demo.yml down -v", workDir),
+		TeardownInstructions: "", // Set by deployment after we know the resource names
 		Status:               domain.DemoInstanceStatusStarting,
 		ProcessInfo:          processInfo,
 	}
@@ -906,24 +905,32 @@ func (s *Server) handleRestartDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if project has a deployment channel that requires validation
 	projectUUID, err := uuid.Parse(projectID)
-	if err == nil {
-		channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectUUID)
-		if err == nil && channel != nil {
-			// Channel exists - require demo validation
-			if !channel.IsDemoValidated() {
-				http.Error(w, "Demo deployment channel not validated. Go to Deployment settings to validate.", http.StatusBadRequest)
-				return
-			}
-		}
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	// Check if project has a deployment channel that requires validation
+	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectUUID)
+	if err != nil || channel == nil {
+		http.Error(w, "No deployment channel configured. Go to Deployment settings.", http.StatusBadRequest)
+		return
+	}
+	if !channel.IsDemoValidated() {
+		http.Error(w, "Demo deployment channel not validated. Go to Deployment settings to validate.", http.StatusBadRequest)
+		return
+	}
+
+	// Stop any existing running demo first
+	existingDemo, _ := s.db.GetRunningDemoByVariation(ctx, variationID)
+	if existingDemo != nil && existingDemo.TeardownInstructions != "" {
+		s.runCloudTeardown(ctx, projectUUID, variationID, existingDemo)
+		s.db.UpdateDemoInstanceStatus(ctx, existingDemo.ID, domain.DemoInstanceStatusStopped, nil)
 	}
 
 	// Get the work directory
 	workDir := git.WorkDirForVariation(projectID, variationID.String())
-
-	// Stop any existing containers first (ignore errors - may not be running)
-	demo.DockerComposeDown(workDir, true)
 
 	// Create new demo instance - validation happens in background
 	demoInstanceID := uuid.New()
@@ -935,7 +942,7 @@ func (s *Server) handleRestartDemo(w http.ResponseWriter, r *http.Request) {
 		ID:                   demoInstanceID,
 		VariationID:          variationID,
 		URL:                  "",
-		TeardownInstructions: fmt.Sprintf("cd %s/.mendel && docker-compose -f docker-compose.demo.yml down -v", workDir),
+		TeardownInstructions: "", // Set by deployment after we know the resource names
 		Status:               domain.DemoInstanceStatusStarting,
 		ProcessInfo:          processInfo,
 	}

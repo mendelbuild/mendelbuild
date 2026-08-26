@@ -4,14 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/codegen/executor"
 	"github.com/bhs/mendelbuild/internal/db"
-	"github.com/bhs/mendelbuild/internal/demo"
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/bhs/mendelbuild/internal/git"
 	"github.com/bhs/mendelbuild/internal/test"
@@ -282,22 +280,7 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 		return result, nil
 	}
 
-	// 10. Verify demo works (if demo config exists)
-	if demo.HasDockerCompose(workDir) {
-		demoPassed, demoErr := g.verifyDemo(ctx, workDir, exec, logger)
-		if !demoPassed {
-			reason := "demo verification failed"
-			if demoErr != "" {
-				reason = fmt.Sprintf("demo verification failed: %s", demoErr)
-			}
-			result.Error = reason
-			logger(domain.LogLevelError, reason)
-			g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusTerminated, reason)
-			return result, nil
-		}
-	}
-
-	// 11. Update variation status to pending (tests passed)
+	// 10. Update variation status to pending (tests passed)
 	variation.Status = domain.VariationStatusPending
 	variation.UpdatedAt = time.Now()
 	if err := g.db.UpdateVariation(ctx, variation); err != nil {
@@ -372,141 +355,6 @@ func (g *Generator) runTests(ctx context.Context, workDir string, logger func(do
 
 // verifyDemo starts the demo, checks health, and lets the executor fix issues if needed.
 // Returns (passed, errorMessage).
-func (g *Generator) verifyDemo(ctx context.Context, workDir string, exec *executor.Executor, logger func(domain.LogLevel, string)) (bool, string) {
-	const maxAttempts = 3
-
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		logger(domain.LogLevelMilestone, fmt.Sprintf("Verifying demo (attempt %d/%d)...", attempt, maxAttempts))
-
-		// Load demo config
-		cfg, err := demo.LoadConfig(workDir)
-		if err != nil {
-			logger(domain.LogLevelError, fmt.Sprintf("Failed to load demo config: %v", err))
-			return false, err.Error()
-		}
-
-		// Start demo containers
-		logger(domain.LogLevelInfo, "Starting demo containers...")
-		output, err := demo.DockerComposeUp(workDir)
-		if err != nil {
-			errMsg := fmt.Sprintf("docker-compose up failed: %v\n%s", err, truncateOutput(output, 2000))
-			logger(domain.LogLevelError, errMsg)
-
-			// Tear down before retry
-			demo.DockerComposeDown(workDir, true)
-
-			if attempt < maxAttempts {
-				// Let Claude Code fix the issue
-				if !g.fixDemoIssue(ctx, workDir, exec, errMsg, logger) {
-					return false, "Claude Code failed to fix demo issue"
-				}
-				continue
-			}
-			return false, errMsg
-		}
-
-		// Get the exposed port
-		port, err := demo.GetServicePort(workDir, cfg.Service, cfg.ContainerPort)
-		if err != nil {
-			errMsg := fmt.Sprintf("Failed to get service port: %v", err)
-			logger(domain.LogLevelError, errMsg)
-			demo.DockerComposeDown(workDir, true)
-
-			if attempt < maxAttempts {
-				if !g.fixDemoIssue(ctx, workDir, exec, errMsg, logger) {
-					return false, "Claude Code failed to fix demo issue"
-				}
-				continue
-			}
-			return false, errMsg
-		}
-
-		// Wait for health check
-		healthURL := fmt.Sprintf("http://localhost:%d%s", port, cfg.HealthPath)
-		logger(domain.LogLevelInfo, fmt.Sprintf("Waiting for health check: %s", healthURL))
-
-		healthy := false
-		deadline := time.Now().Add(time.Duration(cfg.HealthTimeout) * time.Second)
-		for time.Now().Before(deadline) {
-			resp, err := http.Get(healthURL)
-			if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 400 {
-				resp.Body.Close()
-				healthy = true
-				break
-			}
-			if resp != nil {
-				resp.Body.Close()
-			}
-			time.Sleep(time.Duration(cfg.HealthInterval) * time.Second)
-		}
-
-		// Tear down containers (we're just verifying, not running the demo)
-		demo.DockerComposeDown(workDir, true)
-
-		if healthy {
-			logger(domain.LogLevelMilestone, "Demo verification passed")
-			return true, ""
-		}
-
-		errMsg := fmt.Sprintf("Health check failed after %d seconds", cfg.HealthTimeout)
-		logger(domain.LogLevelError, errMsg)
-
-		if attempt < maxAttempts {
-			if !g.fixDemoIssue(ctx, workDir, exec, errMsg, logger) {
-				return false, "Claude Code failed to fix demo issue"
-			}
-			continue
-		}
-		return false, errMsg
-	}
-
-	return false, "demo verification failed after max attempts"
-}
-
-// fixDemoIssue runs the executor to fix a demo issue.
-func (g *Generator) fixDemoIssue(ctx context.Context, workDir string, exec *executor.Executor, errMsg string, logger func(domain.LogLevel, string)) bool {
-	logger(domain.LogLevelInfo, "Asking Claude to fix demo issue...")
-
-	prompt := fmt.Sprintf(`The demo failed to start. Fix the issue and try again.
-
-## Error
-%s
-
-## What to check
-1. Does .mendel/docker-compose.demo.yml exist and define all needed services?
-2. Are service health checks configured correctly?
-3. Does the Dockerfile build successfully?
-4. Are environment variables and connection strings correct for Docker networking?
-   - Services communicate via service names (e.g., db:5432, not localhost:5432)
-
-## What to do
-1. Diagnose the root cause from the error message
-2. Fix the Docker Compose, Dockerfile, or application configuration
-3. Make sure the fix addresses the actual error, not just symptoms`, errMsg)
-
-	result, err := exec.Run(ctx, executor.SystemPrompt(), prompt)
-	if err != nil {
-		logger(domain.LogLevelError, fmt.Sprintf("Executor error: %v", err))
-		return false
-	}
-
-	if !result.Success {
-		logger(domain.LogLevelError, fmt.Sprintf("Fix attempt failed: %v", result.Error))
-		return false
-	}
-
-	logger(domain.LogLevelMilestone, "Applied fix, retrying demo...")
-	return true
-}
-
-// truncateOutput truncates output keeping end (where errors usually are).
-func truncateOutput(output string, maxLen int) string {
-	if len(output) <= maxLen {
-		return output
-	}
-	return "..." + output[len(output)-maxLen:]
-}
-
 // MigrationInstructions is the structure written to .mendel/migration.json
 type MigrationInstructions struct {
 	UpInstructions   string `json:"up_instructions"`

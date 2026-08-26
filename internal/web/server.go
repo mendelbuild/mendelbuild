@@ -14,9 +14,7 @@ import (
 	"github.com/bhs/mendelbuild/internal/auth"
 	"github.com/bhs/mendelbuild/internal/codegen"
 	"github.com/bhs/mendelbuild/internal/db"
-	"github.com/bhs/mendelbuild/internal/demo"
 	"github.com/bhs/mendelbuild/internal/domain"
-	"github.com/bhs/mendelbuild/internal/git"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
@@ -95,25 +93,11 @@ func (s *Server) cleanupStaleDemos() {
 	fmt.Printf("[startup] Checking %d demos marked as running/starting...\n", len(demos))
 
 	for _, d := range demos {
-		// Extract work_dir from process info
-		var processInfo map[string]interface{}
-		if d.ProcessInfo != nil {
-			json.Unmarshal(d.ProcessInfo, &processInfo)
-		}
-		workDir, _ := processInfo["work_dir"].(string)
-		if workDir == "" {
-			workDir = git.WorkDirForVariation("unknown", d.VariationID.String())
-		}
-
-		// Check if Docker containers are actually running
-		if demo.IsComposeRunning(workDir) {
-			fmt.Printf("[startup] Demo %s is still running\n", d.ID)
-			continue
-		}
-
-		// Not running - mark as stopped
-		fmt.Printf("[startup] Marking stale demo %s as stopped\n", d.ID)
-		s.db.UpdateDemoInstanceStatus(ctx, d.ID, domain.DemoInstanceStatusStopped, nil)
+		// On restart, mark demos as stopped - cloud resources may still be running
+		// but we have no way to check. User can teardown manually via the stored command.
+		fmt.Printf("[startup] Marking stale demo %s as stopped (may need manual cleanup)\n", d.ID)
+		errMsg := "Mendel restarted - demo may need manual teardown"
+		s.db.UpdateDemoInstanceStatus(ctx, d.ID, domain.DemoInstanceStatusStopped, &errMsg)
 	}
 }
 

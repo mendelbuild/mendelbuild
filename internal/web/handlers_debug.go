@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/bhs/mendelbuild/internal/demo"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -19,9 +18,10 @@ type DebugInfo struct {
 	// Config from database
 	ProjectConfig map[string]interface{} `json:"project_config"`
 
-	// Demo hosting status
-	DemoHostingPlatform string `json:"demo_hosting_platform"`
-	DemoScriptStatus    string `json:"demo_script_status"`
+	// Deployment channel
+	DeploymentChannel     string `json:"deployment_channel,omitempty"`
+	DeploymentChannelDemo bool   `json:"deployment_channel_demo_validated"`
+	DeploymentChannelProd bool   `json:"deployment_channel_prod_validated"`
 
 	// Credentials
 	Credentials []string `json:"credentials"`
@@ -29,10 +29,6 @@ type DebugInfo struct {
 	// Repository info
 	RepoURL      string `json:"repo_url"`
 	MainBranchOK bool   `json:"main_branch_ok"`
-
-	// Main branch demo files
-	MainHasDemoHostingYml bool                   `json:"main_has_demo_hosting_yml"`
-	MainDemoHostingConfig map[string]interface{} `json:"main_demo_hosting_config,omitempty"`
 
 	// Work directory state
 	WorkDirExists bool   `json:"work_dir_exists"`
@@ -65,12 +61,16 @@ func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
 	// Parse project config
 	if project.Config != nil {
 		json.Unmarshal(project.Config, &info.ProjectConfig)
-		if platform, ok := info.ProjectConfig["demo_hosting_platform"].(string); ok {
-			info.DemoHostingPlatform = platform
+	}
+
+	// Get deployment channel
+	channel, _ := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
+	if channel != nil {
+		if channel.HostingPlatform != nil {
+			info.DeploymentChannel = string(channel.ArtifactKind) + " -> " + channel.HostingPlatform.Name
 		}
-		if status, ok := info.ProjectConfig["demo_script_status"].(string); ok {
-			info.DemoScriptStatus = status
-		}
+		info.DeploymentChannelDemo = channel.IsDemoValidated()
+		info.DeploymentChannelProd = channel.IsProdValidated()
 	}
 
 	// Get credentials
@@ -94,21 +94,6 @@ func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
 	if _, err := os.Stat(mainWorkDir); err == nil {
 		info.WorkDirExists = true
 		info.MainBranchOK = true
-
-		// Check for demo-hosting.yml on main
-		hostingPath := filepath.Join(mainWorkDir, ".mendel", "demo-hosting.yml")
-		if _, err := os.Stat(hostingPath); err == nil {
-			info.MainHasDemoHostingYml = true
-			if cfg, err := demo.LoadHostingConfig(mainWorkDir); err == nil && cfg != nil {
-				info.MainDemoHostingConfig = map[string]interface{}{
-					"deployer_image":   cfg.DeployerImage,
-					"deploy_script":    cfg.DeployScript,
-					"teardown_script":  cfg.TeardownScript,
-					"required_secrets": cfg.RequiredSecrets,
-					"url_from":         cfg.URLFrom,
-				}
-			}
-		}
 	}
 
 	// Get pending input requests

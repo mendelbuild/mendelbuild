@@ -215,7 +215,7 @@
             {{end}}
 
             {{else}}
-            {{/* No demo instance - show Start Demo button or hosting setup message */}}
+            {{/* No demo instance - show Start Demo button or setup message */}}
             {{if .DemoReady}}
             <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/start-demo">
                 <button type="submit" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
@@ -223,65 +223,47 @@
                 </button>
             </form>
             <p style="color: #666; font-size: 0.85em; margin-top: 10px;">
-                Deploy this variation to your configured hosting platform.
+                Deploy this variation to {{.DeploymentChannelName}}.
             </p>
-            {{else if .DemoScriptsExist}}
-            {{/* Scripts exist but missing credentials */}}
-            <div style="padding: 15px; background: #fff3cd; border-radius: 4px; border: 1px solid #ffc107;">
-                <strong style="color: #856404;">Missing Credentials</strong>
-                <p style="color: #856404; margin: 8px 0 0 0; font-size: 0.9em;">
-                    Demo hosting is configured but these secrets are missing from project settings:
-                </p>
-                <ul style="color: #856404; margin: 8px 0 0 0; font-size: 0.9em;">
-                    {{range .DemoMissingSecrets}}
-                    <li><code>{{.}}</code></li>
-                    {{end}}
-                </ul>
-            </div>
-            {{else if eq .DemoScriptStatus "generating"}}
-            {{/* Scripts are being generated */}}
-            <div style="padding: 15px; background: #fff3cd; border-radius: 4px; border: 1px solid #ffc107;">
-                <strong style="color: #856404;">Generating Demo Scripts...</strong>
-                <p style="color: #856404; margin: 8px 0 0 0; font-size: 0.9em;">
-                    Mendel is generating deployment scripts for {{.DemoPlatformSelected}}.
-                    This may take a minute. Refresh the page to check status.
-                </p>
-            </div>
-            {{else if eq .DemoScriptStatus "failed"}}
-            {{/* Script generation failed */}}
-            <div style="padding: 15px; background: #f8d7da; border-radius: 4px; border: 1px solid #f5c6cb;">
-                <strong style="color: #721c24;">Demo Script Generation Failed</strong>
-                <p style="color: #721c24; margin: 8px 0 0 0; font-size: 0.9em;">
-                    Failed to generate deployment scripts for {{.DemoPlatformSelected}}.
-                    Check server logs for details.
-                </p>
-                <form method="POST" action="/p/{{$.ProjectID}}/configure-demo-hosting" style="margin-top: 12px;">
-                    <button type="submit" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Retry
-                    </button>
-                </form>
-            </div>
-            {{else if .DemoPlatformSelected}}
-            {{/* Platform selected but scripts not in this branch */}}
-            <div style="padding: 15px; background: #fff3cd; border-radius: 4px; border: 1px solid #ffc107;">
-                <strong style="color: #856404;">Demo Scripts Not Available</strong>
-                <p style="color: #856404; margin: 8px 0 0 0; font-size: 0.9em;">
-                    Demo hosting ({{.DemoPlatformSelected}}) was configured after this variation was created.
-                    The variation needs to be regenerated to include the demo scripts.
-                </p>
-            </div>
+            {{else if .HasDeploymentChannel}}
+                {{if .MissingCredentials}}
+                {{/* Channel configured but missing credentials */}}
+                <div style="padding: 15px; background: #fff3cd; border-radius: 4px; border: 1px solid #ffc107;">
+                    <strong style="color: #856404;">Missing Credentials</strong>
+                    <p style="color: #856404; margin: 8px 0 0 0; font-size: 0.9em;">
+                        Deployment channel ({{.DeploymentChannelName}}) requires these credentials:
+                    </p>
+                    <ul style="color: #856404; margin: 8px 0 0 0; font-size: 0.9em;">
+                        {{range .MissingCredentials}}
+                        <li><code>{{.}}</code></li>
+                        {{end}}
+                    </ul>
+                    <a href="/p/{{$.ProjectID}}/settings/deployment" style="display: inline-block; margin-top: 12px; padding: 8px 16px; background: #ffc107; color: #212529; border-radius: 4px; text-decoration: none;">
+                        Add Credentials
+                    </a>
+                </div>
+                {{else if not .IsDemoValidated}}
+                {{/* Channel configured but not validated for demos */}}
+                <div style="padding: 15px; background: #fff3cd; border-radius: 4px; border: 1px solid #ffc107;">
+                    <strong style="color: #856404;">Demo Path Not Validated</strong>
+                    <p style="color: #856404; margin: 8px 0 0 0; font-size: 0.9em;">
+                        Deployment channel ({{.DeploymentChannelName}}) needs to be validated before demos can run.
+                        Validation deploys a hello-world app to confirm the credentials work.
+                    </p>
+                    <a href="/p/{{$.ProjectID}}/settings/deployment" style="display: inline-block; margin-top: 12px; padding: 8px 16px; background: #007bff; color: white; border-radius: 4px; text-decoration: none;">
+                        Validate Demo Deployment
+                    </a>
+                </div>
+                {{end}}
             {{else}}
             <div style="padding: 15px; background: #e7f1ff; border-radius: 4px; border: 1px solid #b8daff;">
-                <strong style="color: #004085;">Demo Hosting Not Configured</strong>
+                <strong style="color: #004085;">Deployment Channel Not Configured</strong>
                 <p style="color: #004085; margin: 8px 0 0 0; font-size: 0.9em;">
-                    To enable demos, select a hosting platform. Mendel will generate deployment scripts
-                    and prompt you for any required credentials.
+                    To enable demos, configure a deployment channel in project settings.
                 </p>
-                <form method="POST" action="/p/{{$.ProjectID}}/configure-demo-hosting" style="margin-top: 12px;">
-                    <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Configure Demo Hosting
-                    </button>
-                </form>
+                <a href="/p/{{$.ProjectID}}/settings/deployment" style="display: inline-block; margin-top: 12px; padding: 8px 16px; background: #007bff; color: white; border-radius: 4px; text-decoration: none;">
+                    Configure Deployment
+                </a>
             </div>
             {{end}}
             {{end}}
