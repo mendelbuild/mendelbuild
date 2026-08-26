@@ -306,5 +306,11 @@ func (o *Orchestrator) buildConfig(ctx context.Context, strategyID uuid.UUID) (G
 		config.APIKey = os.Getenv("ANTHROPIC_API_KEY")
 	}
 
+	// Get deployment channel artifact kind (if configured)
+	channel, err := o.db.GetActiveProjectDeploymentChannel(ctx, strategy.ProjectID)
+	if err == nil && channel != nil {
+		config.ArtifactKind = string(channel.ArtifactKind)
+	}
+
 	return config, nil
 }

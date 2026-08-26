@@ -23,6 +23,7 @@ type GeneratorConfig struct {
 	MainBranch    string
 	AuthToken     string
 	APIKey        string
+	ArtifactKind  string // e.g., "container", "kubernetes", "static", "source_deploy"
 }
 
 // Generator handles code generation for a single variation.
@@ -177,7 +178,7 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 	if pendingRevision != nil {
 		prompt = BuildRevisionPrompt(hopName, variation.Name, variation.Approach, pendingRevision.Feedback)
 	} else {
-		prompt = BuildImplementationPrompt(hopName, variation.Name, variation.Approach)
+		prompt = BuildImplementationPrompt(hopName, variation.Name, variation.Approach, g.config.ArtifactKind)
 	}
 	execResult, err := exec.Run(ctx, executor.SystemPrompt(), prompt)
 	if err != nil {

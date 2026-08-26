@@ -18,7 +18,8 @@ func shortenPath(path string) string {
 }
 
 // BuildImplementationPrompt constructs the prompt for implementing a variation.
-func BuildImplementationPrompt(hopName, variationName, approach string) string {
+// artifactKind specifies the deployment artifact type: "container", "kubernetes", "static", "source_deploy", or empty.
+func BuildImplementationPrompt(hopName, variationName, approach, artifactKind string) string {
 	var prompt strings.Builder
 
 	prompt.WriteString(fmt.Sprintf("# Task: Implement the '%s' variation for hop '%s'\n\n", variationName, hopName))
@@ -30,6 +31,37 @@ func BuildImplementationPrompt(hopName, variationName, approach string) string {
 	prompt.WriteString("3. Create or modify files as needed\n")
 	prompt.WriteString("4. Add simple unit tests if appropriate (Mendel will run them later)\n")
 	prompt.WriteString("5. Stop when implementation is complete - do NOT run tests yourself\n")
+
+	// Add deployment artifact instructions based on artifact kind
+	if artifactKind != "" {
+		prompt.WriteString("\n## Deployment Artifact\n\n")
+		switch artifactKind {
+		case "container":
+			prompt.WriteString("This project deploys as a **Docker container**. Ensure a `Dockerfile` exists in the repo root.\n\n")
+			prompt.WriteString("If no Dockerfile exists, create one appropriate for the project's stack.\n")
+			prompt.WriteString("If one exists, update it if your changes require new dependencies or build steps.\n\n")
+			prompt.WriteString("The Dockerfile should:\n")
+			prompt.WriteString("- Build and run the application\n")
+			prompt.WriteString("- Expose a port (typically 8080 or 3000)\n")
+			prompt.WriteString("- Support a health check endpoint (/ or /health returning 200)\n")
+		case "kubernetes":
+			prompt.WriteString("This project deploys to **Kubernetes**. Ensure k8s manifests exist.\n\n")
+			prompt.WriteString("Required files (in `k8s/` or repo root):\n")
+			prompt.WriteString("- `deployment.yaml` - Kubernetes Deployment\n")
+			prompt.WriteString("- `service.yaml` - Kubernetes Service (LoadBalancer or ClusterIP)\n\n")
+			prompt.WriteString("The deployment should include readiness/liveness probes.\n")
+		case "static":
+			prompt.WriteString("This project deploys as **static files**.\n\n")
+			prompt.WriteString("Ensure there's a build step that produces static assets (HTML/CSS/JS) in a `dist/` or `build/` directory.\n")
+		case "source_deploy":
+			prompt.WriteString("This project uses **source-based deployment** (platform builds from source).\n\n")
+			prompt.WriteString("Ensure the project has appropriate config for the hosting platform:\n")
+			prompt.WriteString("- Fly.io: `fly.toml`\n")
+			prompt.WriteString("- Vercel: `vercel.json`\n")
+			prompt.WriteString("- Render: `render.yaml`\n")
+		}
+		prompt.WriteString("\n")
+	}
 
 	prompt.WriteString("\n## IMPORTANT: `.mendel/` Directory Rules\n\n")
 	prompt.WriteString("The `.mendel/` directory is for Mendel configuration ONLY. Allowed files:\n")
