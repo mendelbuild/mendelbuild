@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/bhs/mendelbuild/internal/demo"
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/bhs/mendelbuild/internal/git"
+	"github.com/bhs/mendelbuild/internal/hosting"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -140,12 +142,6 @@ func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uu
 		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, suggestedFix)
 	}
 
-	// Helper to handle failures
-	failDemo := func(errMsg string) {
-		logError(errMsg)
-		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, "")
-	}
-
 	logMilestone("Checking demo configuration...")
 
 	// Check if work directory exists - if not, try to recover from remote
@@ -209,36 +205,385 @@ func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uu
 		logMilestone("Branch cloned successfully")
 	}
 
-	// Check if cloud hosting is configured (demo-hosting.yml)
-	hostingCfg, err := demo.LoadHostingConfig(workDir)
-	if err != nil {
-		failDemo(fmt.Sprintf("Failed to load demo hosting config: %v", err))
-		return
-	}
-
-	if hostingCfg == nil {
-		// No demo-hosting.yml - check if hosting is configured at project level
-		projID, _ := uuid.Parse(projectID)
-		if project, err := s.db.GetProject(ctx, projID); err == nil && project != nil && project.Config != nil {
-			var cfg map[string]interface{}
-			if err := json.Unmarshal(project.Config, &cfg); err == nil {
-				if platform, ok := cfg["demo_hosting_platform"].(string); ok && platform != "" {
-					failDemoWithFix(
-						"Demo hosting scripts not found in this variation.",
-						fmt.Sprintf("Hosting platform (%s) was configured after this variation was created. The variation needs to be regenerated or rebased on main to include the demo scripts.", platform),
-					)
-					return
-				}
-			}
-		}
+	// Get deployment channel
+	projID, _ := uuid.Parse(projectID)
+	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projID)
+	if err != nil || channel == nil {
 		failDemoWithFix(
-			"Demo hosting not configured.",
-			"Configure a hosting platform in project settings to enable demos.",
+			"No deployment channel configured.",
+			"Go to Deployment settings to configure how this project deploys.",
 		)
 		return
 	}
 
-	s.runCloudDemoDeployment(ctx, projectID, variationID, demoInstanceID, workDir, hostingCfg, logMilestone, logInfo, logError)
+	if !channel.IsDemoValidated() {
+		failDemoWithFix(
+			"Deployment channel not validated for demos.",
+			"Go to Deployment settings and validate the demo deployment path.",
+		)
+		return
+	}
+
+	// Deploy using the channel
+	s.runChannelDemoDeployment(ctx, projID, variationID, demoInstanceID, workDir, channel, logMilestone, logInfo, logError)
+}
+
+// runChannelDemoDeployment deploys a variation using the deployment channel.
+// This replaces the old demo-hosting.yml script-based approach.
+func (s *Server) runChannelDemoDeployment(
+	ctx context.Context,
+	projectID uuid.UUID,
+	variationID uuid.UUID,
+	demoInstanceID uuid.UUID,
+	workDir string,
+	channel *domain.ProjectDeploymentChannel,
+	logMilestone func(string),
+	logInfo func(string),
+	logError func(string),
+) {
+	logMilestone("Deploying via " + channel.HostingPlatform.Name + "...")
+
+	// Helper to fail the demo
+	failDemo := func(errMsg string) {
+		logError(errMsg)
+		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, "")
+	}
+
+	// Get encryption key
+	key, err := crypto.GetKey()
+	if err != nil {
+		failDemo("Encryption not configured: " + err.Error())
+		return
+	}
+
+	// Get required credentials
+	required := hosting.RequiredCredentialsForCombo(channel.ArtifactKind, channel.HostingPlatform.Slug)
+	env := make(map[string]string)
+	for _, name := range required {
+		cred, err := s.db.GetProjectCredential(ctx, projectID, name)
+		if err != nil {
+			failDemo(fmt.Sprintf("Missing credential %s: %v", name, err))
+			return
+		}
+		decrypted, err := crypto.Decrypt(cred.EncryptedValue, key)
+		if err != nil {
+			failDemo(fmt.Sprintf("Failed to decrypt %s: %v", name, err))
+			return
+		}
+		env[name] = string(decrypted)
+	}
+
+	// Dispatch to platform-specific deployment
+	var url string
+	var deployErr error
+
+	switch channel.HostingPlatform.Slug {
+	case "fly-io":
+		url, deployErr = s.deployToFlyIO(ctx, variationID, workDir, env, logMilestone, logInfo)
+	case "cloud-run":
+		url, deployErr = s.deployToCloudRun(ctx, variationID, workDir, env, logMilestone, logInfo)
+	case "gke":
+		url, deployErr = s.deployToGKE(ctx, variationID, workDir, env, logMilestone, logInfo)
+	default:
+		failDemo("Unsupported platform: " + channel.HostingPlatform.Slug)
+		return
+	}
+
+	if deployErr != nil {
+		failDemo(fmt.Sprintf("Deployment failed: %v", deployErr))
+		return
+	}
+
+	// Update demo instance with URL
+	logMilestone("Demo deployed: " + url)
+
+	// Build teardown command based on platform
+	var teardownCmd string
+	switch channel.HostingPlatform.Slug {
+	case "fly-io":
+		teardownCmd = fmt.Sprintf("flyctl apps destroy mendel-%s --yes", variationID.String()[:8])
+	case "cloud-run":
+		teardownCmd = fmt.Sprintf("gcloud run services delete mendel-%s --region us-central1 --quiet", variationID.String()[:8])
+	case "gke":
+		teardownCmd = fmt.Sprintf("kubectl delete deployment,service mendel-%s", variationID.String()[:8])
+	}
+
+	_, err = s.db.Pool.Exec(ctx, `
+		UPDATE demo_instances
+		SET url = $2, teardown_instructions = $3, status = $4
+		WHERE id = $1
+	`, demoInstanceID, url, teardownCmd, domain.DemoInstanceStatusRunning)
+	if err != nil {
+		logError("Failed to update demo status: " + err.Error())
+	}
+}
+
+// deployToFlyIO deploys a variation to Fly.io.
+func (s *Server) deployToFlyIO(
+	ctx context.Context,
+	variationID uuid.UUID,
+	workDir string,
+	env map[string]string,
+	logMilestone func(string),
+	logInfo func(string),
+) (string, error) {
+	// Check for Dockerfile
+	dockerfilePath := filepath.Join(workDir, "Dockerfile")
+	if _, err := os.Stat(dockerfilePath); os.IsNotExist(err) {
+		return "", fmt.Errorf("no Dockerfile found in variation")
+	}
+
+	// App name based on variation ID (must be DNS-safe)
+	appName := fmt.Sprintf("mendel-%s", variationID.String()[:8])
+
+	// Check if fly.toml exists, if not create one
+	flyTomlPath := filepath.Join(workDir, "fly.toml")
+	if _, err := os.Stat(flyTomlPath); os.IsNotExist(err) {
+		flyToml := fmt.Sprintf(`app = "%s"
+primary_region = "iad"
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+`, appName)
+		if err := os.WriteFile(flyTomlPath, []byte(flyToml), 0644); err != nil {
+			return "", fmt.Errorf("failed to write fly.toml: %w", err)
+		}
+	} else {
+		// Update app name in existing fly.toml
+		content, _ := os.ReadFile(flyTomlPath)
+		lines := strings.Split(string(content), "\n")
+		for i, line := range lines {
+			if strings.HasPrefix(line, "app = ") {
+				lines[i] = fmt.Sprintf(`app = "%s"`, appName)
+				break
+			}
+		}
+		os.WriteFile(flyTomlPath, []byte(strings.Join(lines, "\n")), 0644)
+	}
+
+	// Build environment
+	cmdEnv := os.Environ()
+	cmdEnv = append(cmdEnv, fmt.Sprintf("FLY_API_TOKEN=%s", env["FLY_API_TOKEN"]))
+
+	// Check if app exists, create if not
+	logInfo("Checking Fly.io app...")
+	checkCmd := exec.CommandContext(ctx, "flyctl", "apps", "list", "--json")
+	checkCmd.Env = cmdEnv
+	checkOutput, _ := checkCmd.Output()
+
+	appExists := strings.Contains(string(checkOutput), appName)
+
+	if !appExists {
+		logMilestone("Creating Fly.io app...")
+		createCmd := exec.CommandContext(ctx, "flyctl", "apps", "create", appName, "--org", "personal")
+		createCmd.Dir = workDir
+		createCmd.Env = cmdEnv
+		if output, err := createCmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("failed to create app: %s: %w", string(output), err)
+		}
+	}
+
+	// Deploy
+	logMilestone("Deploying to Fly.io...")
+	deployCmd := exec.CommandContext(ctx, "flyctl", "deploy", "--now", "--wait-timeout", "300")
+	deployCmd.Dir = workDir
+	deployCmd.Env = cmdEnv
+	if output, err := deployCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("deploy failed: %s: %w", string(output), err)
+	}
+
+	url := fmt.Sprintf("https://%s.fly.dev", appName)
+	return url, nil
+}
+
+// deployToCloudRun deploys a variation to Google Cloud Run.
+func (s *Server) deployToCloudRun(
+	ctx context.Context,
+	variationID uuid.UUID,
+	workDir string,
+	env map[string]string,
+	logMilestone func(string),
+	logInfo func(string),
+) (string, error) {
+	serviceName := fmt.Sprintf("mendel-%s", variationID.String()[:8])
+	projectID := env["GCP_PROJECT_ID"]
+	region := "us-central1"
+
+	// Write service account key to temp file
+	keyFile, err := os.CreateTemp("", "gcp-key-*.json")
+	if err != nil {
+		return "", fmt.Errorf("failed to create key file: %w", err)
+	}
+	defer os.Remove(keyFile.Name())
+	if _, err := keyFile.WriteString(env["GCP_SERVICE_ACCOUNT_KEY"]); err != nil {
+		keyFile.Close()
+		return "", fmt.Errorf("failed to write key file: %w", err)
+	}
+	keyFile.Close()
+
+	// Build environment
+	cmdEnv := os.Environ()
+	cmdEnv = append(cmdEnv, fmt.Sprintf("GOOGLE_APPLICATION_CREDENTIALS=%s", keyFile.Name()))
+
+	// Authenticate
+	logInfo("Authenticating with GCP...")
+	authCmd := exec.CommandContext(ctx, "gcloud", "auth", "activate-service-account", "--key-file", keyFile.Name())
+	authCmd.Env = cmdEnv
+	if output, err := authCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("auth failed: %s: %w", string(output), err)
+	}
+
+	// Set project
+	setProjectCmd := exec.CommandContext(ctx, "gcloud", "config", "set", "project", projectID)
+	setProjectCmd.Env = cmdEnv
+	setProjectCmd.CombinedOutput()
+
+	// Build and deploy with Cloud Build
+	logMilestone("Building and deploying to Cloud Run...")
+	deployCmd := exec.CommandContext(ctx, "gcloud", "run", "deploy", serviceName,
+		"--source", ".",
+		"--region", region,
+		"--allow-unauthenticated",
+		"--quiet")
+	deployCmd.Dir = workDir
+	deployCmd.Env = cmdEnv
+	output, err := deployCmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("deploy failed: %s: %w", string(output), err)
+	}
+
+	// Get service URL
+	urlCmd := exec.CommandContext(ctx, "gcloud", "run", "services", "describe", serviceName,
+		"--region", region, "--format", "value(status.url)")
+	urlCmd.Env = cmdEnv
+	urlOutput, err := urlCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get URL: %w", err)
+	}
+
+	return strings.TrimSpace(string(urlOutput)), nil
+}
+
+// deployToGKE deploys a variation to Google Kubernetes Engine.
+func (s *Server) deployToGKE(
+	ctx context.Context,
+	variationID uuid.UUID,
+	workDir string,
+	env map[string]string,
+	logMilestone func(string),
+	logInfo func(string),
+) (string, error) {
+	deploymentName := fmt.Sprintf("mendel-%s", variationID.String()[:8])
+	projectID := env["GCP_PROJECT_ID"]
+	clusterName := env["GKE_CLUSTER_NAME"]
+	zone := env["GKE_ZONE"]
+
+	// Write service account key
+	keyFile, err := os.CreateTemp("", "gcp-key-*.json")
+	if err != nil {
+		return "", fmt.Errorf("failed to create key file: %w", err)
+	}
+	defer os.Remove(keyFile.Name())
+	keyFile.WriteString(env["GCP_SERVICE_ACCOUNT_KEY"])
+	keyFile.Close()
+
+	cmdEnv := os.Environ()
+	cmdEnv = append(cmdEnv, fmt.Sprintf("GOOGLE_APPLICATION_CREDENTIALS=%s", keyFile.Name()))
+
+	// Authenticate and get cluster credentials
+	logInfo("Getting GKE credentials...")
+	authCmd := exec.CommandContext(ctx, "gcloud", "auth", "activate-service-account", "--key-file", keyFile.Name())
+	authCmd.Env = cmdEnv
+	authCmd.CombinedOutput()
+
+	setProjectCmd := exec.CommandContext(ctx, "gcloud", "config", "set", "project", projectID)
+	setProjectCmd.Env = cmdEnv
+	setProjectCmd.CombinedOutput()
+
+	getCredsCmd := exec.CommandContext(ctx, "gcloud", "container", "clusters", "get-credentials", clusterName, "--zone", zone)
+	getCredsCmd.Env = cmdEnv
+	if output, err := getCredsCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("failed to get cluster credentials: %s: %w", string(output), err)
+	}
+
+	// Build image using Cloud Build
+	imageName := fmt.Sprintf("gcr.io/%s/%s:latest", projectID, deploymentName)
+	logMilestone("Building container image...")
+	buildCmd := exec.CommandContext(ctx, "gcloud", "builds", "submit", "--tag", imageName, ".")
+	buildCmd.Dir = workDir
+	buildCmd.Env = cmdEnv
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("build failed: %s: %w", string(output), err)
+	}
+
+	// Create k8s deployment manifest
+	manifest := fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: %s
+  template:
+    metadata:
+      labels:
+        app: %s
+    spec:
+      containers:
+      - name: app
+        image: %s
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: %s
+spec:
+  type: LoadBalancer
+  selector:
+    app: %s
+  ports:
+  - port: 80
+    targetPort: 8080
+`, deploymentName, deploymentName, deploymentName, imageName, deploymentName, deploymentName)
+
+	manifestPath := filepath.Join(workDir, "k8s-deploy.yaml")
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0644); err != nil {
+		return "", fmt.Errorf("failed to write manifest: %w", err)
+	}
+
+	// Apply deployment
+	logMilestone("Deploying to GKE...")
+	applyCmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", manifestPath)
+	applyCmd.Env = cmdEnv
+	if output, err := applyCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("apply failed: %s: %w", string(output), err)
+	}
+
+	// Wait for external IP
+	logInfo("Waiting for external IP...")
+	for i := 0; i < 30; i++ {
+		ipCmd := exec.CommandContext(ctx, "kubectl", "get", "service", deploymentName,
+			"-o", "jsonpath={.status.loadBalancer.ingress[0].ip}")
+		ipCmd.Env = cmdEnv
+		ipOutput, _ := ipCmd.Output()
+		ip := strings.TrimSpace(string(ipOutput))
+		if ip != "" {
+			return fmt.Sprintf("http://%s", ip), nil
+		}
+		time.Sleep(5 * time.Second)
+	}
+
+	return "", fmt.Errorf("timed out waiting for LoadBalancer IP")
 }
 
 // DeployErrorKind classifies deploy errors into one of four cases.
