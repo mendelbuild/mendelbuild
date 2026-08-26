@@ -848,7 +848,7 @@ func (s *Server) handleRetryDemo(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
 }
 
-// runFixAndDemo runs Claude Code to apply a fix, then starts the demo.
+// runFixAndDemo runs the executor to apply a fix, then starts the demo.
 func (s *Server) runFixAndDemo(projectID string, variationID, demoInstanceID uuid.UUID, workDir, fixPrompt string) {
 	ctx := context.Background()
 
@@ -867,30 +867,60 @@ func (s *Server) runFixAndDemo(projectID string, variationID, demoInstanceID uui
 		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, fixPrompt)
 	}
 
+	// Get API key from project config
+	projID, err := uuid.Parse(projectID)
+	if err != nil {
+		failDemo("Invalid project ID")
+		return
+	}
+
+	project, err := s.db.GetProject(ctx, projID)
+	if err != nil {
+		failDemo(fmt.Sprintf("Failed to get project: %v", err))
+		return
+	}
+
+	var projectConfig struct {
+		AnthropicAPIKey string `json:"anthropic_api_key"`
+	}
+	if project.Config != nil {
+		json.Unmarshal(project.Config, &projectConfig)
+	}
+	apiKey := projectConfig.AnthropicAPIKey
+	if apiKey == "" {
+		apiKey = os.Getenv("ANTHROPIC_API_KEY")
+	}
+	if apiKey == "" {
+		failDemo("No Anthropic API key configured")
+		return
+	}
+
 	logMilestone("Applying fix via Claude Code...")
 	logInfo(fmt.Sprintf("Prompt: %s", fixPrompt))
 
-	// Run Claude Code with the fix prompt
-	cmd := exec.CommandContext(ctx, "claude", "--print", "--dangerously-skip-permissions", fixPrompt)
-	cmd.Dir = workDir
+	// Run executor with the fix prompt
+	exec := executor.New(apiKey, workDir).
+		WithEventHandler(func(event executor.Event) {
+			switch event.Type {
+			case executor.EventToolCall:
+				if event.ToolName == "Write" || event.ToolName == "Edit" {
+					if path, ok := event.ToolInput["file_path"].(string); ok {
+						logInfo(fmt.Sprintf("%s: %s", event.ToolName, path))
+					}
+				}
+			case executor.EventComplete:
+				logMilestone("Fix applied")
+			}
+		})
 
-	// Start progress monitor in background
-	done := make(chan struct{})
-	go monitorClaudeProgress(workDir, logInfo, done)
-
-	output, err := cmd.CombinedOutput()
-	close(done)
-
-	if len(output) > 0 {
-		outStr := string(output)
-		if len(outStr) > 4000 {
-			outStr = outStr[:4000] + "\n... (truncated)"
-		}
-		logInfo(outStr)
+	result, err := exec.Run(ctx, executor.SystemPrompt(), fixPrompt)
+	if err != nil {
+		failDemo(fmt.Sprintf("Executor error: %v", err))
+		return
 	}
 
-	if err != nil {
-		failDemo(fmt.Sprintf("Claude Code failed: %v", err))
+	if !result.Success {
+		failDemo(fmt.Sprintf("Fix failed: %v", result.Error))
 		return
 	}
 
