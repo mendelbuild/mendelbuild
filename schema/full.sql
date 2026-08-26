@@ -493,7 +493,11 @@ CREATE TABLE project_deployment_channels (
 
     -- Validation state
     demo_validated_at TIMESTAMPTZ,
+    demo_validating_at TIMESTAMPTZ,
+    demo_validation_error TEXT,
     prod_validated_at TIMESTAMPTZ,
+    prod_validating_at TIMESTAMPTZ,
+    prod_validation_error TEXT,
 
     -- Production state
     prod_url TEXT,

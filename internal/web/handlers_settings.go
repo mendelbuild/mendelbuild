@@ -716,6 +716,12 @@ func (s *Server) handleValidateDemoPath(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Don't start if already validating
+	if channel.IsDemoValidating() {
+		http.Redirect(w, r, "/p/"+projectID.String()+"/deployment", http.StatusSeeOther)
+		return
+	}
+
 	// Check required credentials
 	missing, err := s.checkRequiredCredentials(ctx, projectID, channel)
 	if err != nil {
@@ -727,18 +733,22 @@ func (s *Server) handleValidateDemoPath(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Run hello-world validation
-	if err := s.runChannelValidation(ctx, projectID, channel, "demo"); err != nil {
-		http.Error(w, fmt.Sprintf("validation failed: %v", err), http.StatusInternalServerError)
+	// Mark as validating and run in background
+	if err := s.db.StartDemoValidation(ctx, channel.ID); err != nil {
+		http.Error(w, "failed to start validation", http.StatusInternalServerError)
 		return
 	}
 
-	if err := s.db.UpdateProjectDeploymentChannelDemoValidation(ctx, channel.ID); err != nil {
-		http.Error(w, "failed to update validation status", http.StatusInternalServerError)
-		return
-	}
+	go func() {
+		bgCtx := context.Background()
+		if err := s.runChannelValidation(bgCtx, projectID, channel, "demo"); err != nil {
+			s.db.FailDemoValidation(bgCtx, channel.ID, err.Error())
+			return
+		}
+		s.db.CompleteDemoValidation(bgCtx, channel.ID)
+	}()
 
-	http.Redirect(w, r, "/p/"+projectID.String()+"/deployment?success=1", http.StatusSeeOther)
+	http.Redirect(w, r, "/p/"+projectID.String()+"/deployment", http.StatusSeeOther)
 }
 
 // handleValidateProdPath triggers production path validation (deploy → health → rollback).
@@ -756,6 +766,12 @@ func (s *Server) handleValidateProdPath(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Don't start if already validating
+	if channel.IsProdValidating() {
+		http.Redirect(w, r, "/p/"+projectID.String()+"/deployment", http.StatusSeeOther)
+		return
+	}
+
 	// Check required credentials
 	missing, err := s.checkRequiredCredentials(ctx, projectID, channel)
 	if err != nil {
@@ -767,18 +783,22 @@ func (s *Server) handleValidateProdPath(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Run hello-world validation
-	if err := s.runChannelValidation(ctx, projectID, channel, "prod"); err != nil {
-		http.Error(w, fmt.Sprintf("validation failed: %v", err), http.StatusInternalServerError)
+	// Mark as validating and run in background
+	if err := s.db.StartProdValidation(ctx, channel.ID); err != nil {
+		http.Error(w, "failed to start validation", http.StatusInternalServerError)
 		return
 	}
 
-	if err := s.db.UpdateProjectDeploymentChannelProdValidation(ctx, channel.ID); err != nil {
-		http.Error(w, "failed to update validation status", http.StatusInternalServerError)
-		return
-	}
+	go func() {
+		bgCtx := context.Background()
+		if err := s.runChannelValidation(bgCtx, projectID, channel, "prod"); err != nil {
+			s.db.FailProdValidation(bgCtx, channel.ID, err.Error())
+			return
+		}
+		s.db.CompleteProdValidation(bgCtx, channel.ID)
+	}()
 
-	http.Redirect(w, r, "/p/"+projectID.String()+"/deployment?success=1", http.StatusSeeOther)
+	http.Redirect(w, r, "/p/"+projectID.String()+"/deployment", http.StatusSeeOther)
 }
 
 // checkRequiredCredentials verifies that all required credentials exist for the channel.

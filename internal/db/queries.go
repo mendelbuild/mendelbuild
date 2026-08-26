@@ -2901,7 +2901,9 @@ func (db *DB) GetActiveProjectDeploymentChannel(ctx context.Context, projectID u
 	var hp domain.HostingPlatform
 	err := db.Pool.QueryRow(ctx, `
 		SELECT pdc.id, pdc.project_id, pdc.artifact_kind, pdc.hosting_platform_id,
-			   pdc.demo_validated_at, pdc.prod_validated_at, pdc.prod_url, pdc.prod_deployed_at,
+			   pdc.demo_validated_at, pdc.demo_validating_at, pdc.demo_validation_error,
+			   pdc.prod_validated_at, pdc.prod_validating_at, pdc.prod_validation_error,
+			   pdc.prod_url, pdc.prod_deployed_at,
 			   pdc.disabled_at, pdc.created_at, pdc.updated_at,
 			   hp.id, hp.slug, hp.name, hp.deployer_image, hp.instructions, hp.created_at, hp.updated_at
 		FROM project_deployment_channels pdc
@@ -2909,7 +2911,9 @@ func (db *DB) GetActiveProjectDeploymentChannel(ctx context.Context, projectID u
 		WHERE pdc.project_id = $1 AND pdc.disabled_at IS NULL
 	`, projectID).Scan(
 		&c.ID, &c.ProjectID, &c.ArtifactKind, &c.HostingPlatformID,
-		&c.DemoValidatedAt, &c.ProdValidatedAt, &c.ProdURL, &c.ProdDeployedAt,
+		&c.DemoValidatedAt, &c.DemoValidatingAt, &c.DemoValidationError,
+		&c.ProdValidatedAt, &c.ProdValidatingAt, &c.ProdValidationError,
+		&c.ProdURL, &c.ProdDeployedAt,
 		&c.DisabledAt, &c.CreatedAt, &c.UpdatedAt,
 		&hp.ID, &hp.Slug, &hp.Name, &hp.DeployerImage, &hp.Instructions, &hp.CreatedAt, &hp.UpdatedAt,
 	)
@@ -2924,7 +2928,9 @@ func (db *DB) GetActiveProjectDeploymentChannel(ctx context.Context, projectID u
 func (db *DB) ListProjectDeploymentChannels(ctx context.Context, projectID uuid.UUID) ([]domain.ProjectDeploymentChannel, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT pdc.id, pdc.project_id, pdc.artifact_kind, pdc.hosting_platform_id,
-			   pdc.demo_validated_at, pdc.prod_validated_at, pdc.prod_url, pdc.prod_deployed_at,
+			   pdc.demo_validated_at, pdc.demo_validating_at, pdc.demo_validation_error,
+			   pdc.prod_validated_at, pdc.prod_validating_at, pdc.prod_validation_error,
+			   pdc.prod_url, pdc.prod_deployed_at,
 			   pdc.disabled_at, pdc.created_at, pdc.updated_at,
 			   hp.id, hp.slug, hp.name, hp.deployer_image, hp.instructions, hp.created_at, hp.updated_at
 		FROM project_deployment_channels pdc
@@ -2943,7 +2949,9 @@ func (db *DB) ListProjectDeploymentChannels(ctx context.Context, projectID uuid.
 		var hp domain.HostingPlatform
 		if err := rows.Scan(
 			&c.ID, &c.ProjectID, &c.ArtifactKind, &c.HostingPlatformID,
-			&c.DemoValidatedAt, &c.ProdValidatedAt, &c.ProdURL, &c.ProdDeployedAt,
+			&c.DemoValidatedAt, &c.DemoValidatingAt, &c.DemoValidationError,
+			&c.ProdValidatedAt, &c.ProdValidatingAt, &c.ProdValidationError,
+			&c.ProdURL, &c.ProdDeployedAt,
 			&c.DisabledAt, &c.CreatedAt, &c.UpdatedAt,
 			&hp.ID, &hp.Slug, &hp.Name, &hp.DeployerImage, &hp.Instructions, &hp.CreatedAt, &hp.UpdatedAt,
 		); err != nil {
@@ -2986,24 +2994,74 @@ func (db *DB) CreateProjectDeploymentChannel(ctx context.Context, c *domain.Proj
 	return tx.Commit(ctx)
 }
 
-// UpdateProjectDeploymentChannelDemoValidation marks demo as validated.
-func (db *DB) UpdateProjectDeploymentChannelDemoValidation(ctx context.Context, channelID uuid.UUID) error {
+// StartDemoValidation marks demo validation as in progress.
+func (db *DB) StartDemoValidation(ctx context.Context, channelID uuid.UUID) error {
 	_, err := db.Pool.Exec(ctx, `
 		UPDATE project_deployment_channels
-		SET demo_validated_at = NOW(), updated_at = NOW()
+		SET demo_validating_at = NOW(), demo_validation_error = NULL, updated_at = NOW()
 		WHERE id = $1
 	`, channelID)
 	return err
 }
 
-// UpdateProjectDeploymentChannelProdValidation marks prod as validated.
-func (db *DB) UpdateProjectDeploymentChannelProdValidation(ctx context.Context, channelID uuid.UUID) error {
+// CompleteDemoValidation marks demo as validated (success).
+func (db *DB) CompleteDemoValidation(ctx context.Context, channelID uuid.UUID) error {
 	_, err := db.Pool.Exec(ctx, `
 		UPDATE project_deployment_channels
-		SET prod_validated_at = NOW(), updated_at = NOW()
+		SET demo_validated_at = NOW(), demo_validating_at = NULL, demo_validation_error = NULL, updated_at = NOW()
 		WHERE id = $1
 	`, channelID)
 	return err
+}
+
+// FailDemoValidation marks demo validation as failed.
+func (db *DB) FailDemoValidation(ctx context.Context, channelID uuid.UUID, errMsg string) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE project_deployment_channels
+		SET demo_validating_at = NULL, demo_validation_error = $2, updated_at = NOW()
+		WHERE id = $1
+	`, channelID, errMsg)
+	return err
+}
+
+// UpdateProjectDeploymentChannelDemoValidation marks demo as validated (legacy, use CompleteDemoValidation).
+func (db *DB) UpdateProjectDeploymentChannelDemoValidation(ctx context.Context, channelID uuid.UUID) error {
+	return db.CompleteDemoValidation(ctx, channelID)
+}
+
+// StartProdValidation marks prod validation as in progress.
+func (db *DB) StartProdValidation(ctx context.Context, channelID uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE project_deployment_channels
+		SET prod_validating_at = NOW(), prod_validation_error = NULL, updated_at = NOW()
+		WHERE id = $1
+	`, channelID)
+	return err
+}
+
+// CompleteProdValidation marks prod as validated (success).
+func (db *DB) CompleteProdValidation(ctx context.Context, channelID uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE project_deployment_channels
+		SET prod_validated_at = NOW(), prod_validating_at = NULL, prod_validation_error = NULL, updated_at = NOW()
+		WHERE id = $1
+	`, channelID)
+	return err
+}
+
+// FailProdValidation marks prod validation as failed.
+func (db *DB) FailProdValidation(ctx context.Context, channelID uuid.UUID, errMsg string) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE project_deployment_channels
+		SET prod_validating_at = NULL, prod_validation_error = $2, updated_at = NOW()
+		WHERE id = $1
+	`, channelID, errMsg)
+	return err
+}
+
+// UpdateProjectDeploymentChannelProdValidation marks prod as validated (legacy, use CompleteProdValidation).
+func (db *DB) UpdateProjectDeploymentChannelProdValidation(ctx context.Context, channelID uuid.UUID) error {
+	return db.CompleteProdValidation(ctx, channelID)
 }
 
 // UpdateProjectDeploymentChannelProdURL sets the production URL.

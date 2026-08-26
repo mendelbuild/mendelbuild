@@ -1,4 +1,8 @@
 {{define "page-content"}}
+{{if .Channel}}{{if or .Channel.IsDemoValidating .Channel.IsProdValidating}}
+<meta http-equiv="refresh" content="3">
+{{end}}{{end}}
+
 <h1>{{.Project.Name}}</h1>
 <h2>Deployment Configuration</h2>
 
@@ -28,13 +32,17 @@
                         </div>
                     </div>
                     <div style="text-align: right;">
-                        {{if .Channel.IsDemoValidated}}
+                        {{if .Channel.IsDemoValidating}}
+                        <span style="display: inline-block; padding: 4px 8px; background: #ffc107; color: #212529; border-radius: 4px; font-size: 0.85em; margin-bottom: 4px;">Demo Validating...</span>
+                        {{else if .Channel.IsDemoValidated}}
                         <span style="display: inline-block; padding: 4px 8px; background: #28a745; color: white; border-radius: 4px; font-size: 0.85em; margin-bottom: 4px;">Demo Validated</span>
                         {{else}}
                         <span style="display: inline-block; padding: 4px 8px; background: #6c757d; color: white; border-radius: 4px; font-size: 0.85em; margin-bottom: 4px;">Demo Not Validated</span>
                         {{end}}
                         <br>
-                        {{if .Channel.IsProdValidated}}
+                        {{if .Channel.IsProdValidating}}
+                        <span style="display: inline-block; padding: 4px 8px; background: #ffc107; color: #212529; border-radius: 4px; font-size: 0.85em;">Prod Validating...</span>
+                        {{else if .Channel.IsProdValidated}}
                         <span style="display: inline-block; padding: 4px 8px; background: #28a745; color: white; border-radius: 4px; font-size: 0.85em;">Prod Validated</span>
                         {{else}}
                         <span style="display: inline-block; padding: 4px 8px; background: #6c757d; color: white; border-radius: 4px; font-size: 0.85em;">Prod Not Validated</span>
@@ -52,19 +60,35 @@
             <h3>Validation</h3>
             <p style="color: #666; margin-bottom: 12px;">
                 Before demos or production deployments can proceed, the deployment path must be validated.
+                Validation deploys a hello-world container, health checks it, and tears it down.
             </p>
+
+            {{if .Channel.DemoValidationError}}
+            <div style="padding: 12px 16px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; margin-bottom: 12px; color: #721c24;">
+                <strong>Demo validation failed:</strong> {{.Channel.DemoValidationError}}
+            </div>
+            {{end}}
+
+            {{if .Channel.ProdValidationError}}
+            <div style="padding: 12px 16px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; margin-bottom: 12px; color: #721c24;">
+                <strong>Prod validation failed:</strong> {{.Channel.ProdValidationError}}
+            </div>
+            {{end}}
+
             <div style="display: flex; gap: 10px;">
                 {{if not .Channel.IsDemoValidated}}
                 <form method="POST" action="/p/{{.ProjectID}}/deployment/validate-demo" style="margin: 0;">
-                    <button type="submit" style="padding: 8px 16px; background: #ffc107; color: #212529; border: none; border-radius: 4px; cursor: pointer;">
-                        Validate Demo Path
+                    <button type="submit" style="padding: 8px 16px; background: #ffc107; color: #212529; border: none; border-radius: 4px; cursor: pointer;"
+                        {{if .Channel.IsDemoValidating}}disabled{{end}}>
+                        {{if .Channel.IsDemoValidating}}Validating...{{else}}Validate Demo Path{{end}}
                     </button>
                 </form>
                 {{end}}
                 {{if not .Channel.IsProdValidated}}
                 <form method="POST" action="/p/{{.ProjectID}}/deployment/validate-prod" style="margin: 0;">
-                    <button type="submit" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Validate Production Path
+                    <button type="submit" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;"
+                        {{if .Channel.IsProdValidating}}disabled{{end}}>
+                        {{if .Channel.IsProdValidating}}Validating...{{else}}Validate Production Path{{end}}
                     </button>
                 </form>
                 {{end}}

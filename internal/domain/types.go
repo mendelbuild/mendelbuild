@@ -558,8 +558,12 @@ type ProjectDeploymentChannel struct {
 	HostingPlatformID uuid.UUID          `json:"hosting_platform_id"`
 
 	// Validation state
-	DemoValidatedAt *time.Time `json:"demo_validated_at,omitempty"`
-	ProdValidatedAt *time.Time `json:"prod_validated_at,omitempty"`
+	DemoValidatedAt      *time.Time `json:"demo_validated_at,omitempty"`
+	DemoValidatingAt     *time.Time `json:"demo_validating_at,omitempty"`
+	DemoValidationError  *string    `json:"demo_validation_error,omitempty"`
+	ProdValidatedAt      *time.Time `json:"prod_validated_at,omitempty"`
+	ProdValidatingAt     *time.Time `json:"prod_validating_at,omitempty"`
+	ProdValidationError  *string    `json:"prod_validation_error,omitempty"`
 
 	// Production state
 	ProdURL        *string    `json:"prod_url,omitempty"`
@@ -588,4 +592,14 @@ func (c *ProjectDeploymentChannel) IsDemoValidated() bool {
 // IsProdValidated returns true if production deployment has been validated.
 func (c *ProjectDeploymentChannel) IsProdValidated() bool {
 	return c.ProdValidatedAt != nil
+}
+
+// IsDemoValidating returns true if demo validation is in progress.
+func (c *ProjectDeploymentChannel) IsDemoValidating() bool {
+	return c.DemoValidatingAt != nil
+}
+
+// IsProdValidating returns true if prod validation is in progress.
+func (c *ProjectDeploymentChannel) IsProdValidating() bool {
+	return c.ProdValidatingAt != nil
 }
