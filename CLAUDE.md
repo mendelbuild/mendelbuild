@@ -29,7 +29,7 @@ User repositories should have **minimal to no awareness** of Mendel. This applie
 - **Documentation**: User repos should not need to document Mendel integration
 - **Docker images**: Use standard images (postgres, redis, node) not mendel/* images
 
-When Mendel-specific configuration is unavoidable (like `.mendel/demo-config.yml`), keep it:
+When Mendel-specific configuration is unavoidable, keep it:
 - Self-contained (no references to external Mendel docs)
 - Using standard tooling under the hood (Docker, npm, etc.)
 - Optional when possible (sensible defaults)
@@ -42,31 +42,12 @@ User repositories have a `.mendel/` directory for Mendel configuration. **Only t
 
 ```
 .mendel/
-  docker-compose.demo.yml   # Demo infrastructure
   docker-compose.test.yml   # Test infrastructure (optional)
-  demo-config.yml           # Demo settings
   test-config.yml           # Test settings (optional)
   migration.json            # Migration instructions (optional)
 ```
 
 **DO NOT create any other files in `.mendel/`** - no documentation. Docs belong in repo root or `docs/`.
-
-### `demo-config.yml` Spec
-
-Defined in `internal/demo/config.go`:
-
-```yaml
-version: 1
-service: app              # Which docker-compose service to expose (required)
-container_port: 3000      # Port inside the container (required)
-health_path: /health      # Endpoint to check for readiness
-health_timeout: 60        # Seconds to wait for health check
-health_interval: 2        # Seconds between health check attempts
-after_up:                 # Commands to run after containers start
-  - "docker-compose exec app npm run migrate"
-before_down:              # Commands to run before teardown
-  - "..."
-```
 
 ### `test-config.yml` Spec
 
@@ -81,34 +62,15 @@ startup_timeout: 60       # Seconds to wait for test services
 
 Flow: `docker-compose.test.yml up` → `exec <service> <test_command>` → check exit code → `down`
 
-### `demo-hosting.yml` Spec
+### Deployment Channels
 
-Defined in `internal/demo/config.go`. This is a **platform-agnostic** config for deploying demos to cloud hosting. Mendel doesn't understand specific platforms - it just runs scripts with secrets injected as environment variables.
+Demos and production deployments use **deployment channels** - validated (artifact_kind, hosting_platform) pairs. See `internal/hosting/platforms.go` for the supported combinations:
+- `container` → `fly-io`, `cloud-run`
+- `kubernetes` → `gke`
 
-```yaml
-version: 1
-required_secrets:           # Secrets that must exist in Mendel project settings
-  - GCP_PROJECT_ID          # Injected as env vars when running scripts
-  - GCP_SERVICE_ACCOUNT_KEY
-deploy_script: deploy-demo.sh    # Script to deploy (relative to .mendel/)
-teardown_script: teardown-demo.sh # Script to tear down
-url_from: stdout            # How to get URL: "stdout" or "file:<path>"
-```
+Deployment is deterministic (no AI-generated scripts). Platform-specific deployment code lives in `handlers_demo.go` (`deployToFlyIO`, `deployToCloudRun`, `deployToGKE`).
 
-**Flow:**
-1. AI asks user to select hosting platform via InputRequest
-2. AI asks for platform-specific credentials via InputRequests
-3. AI generates platform-specific deploy/teardown scripts
-4. AI generates `demo-hosting.yml` listing required secrets
-5. Mendel validates secrets exist, injects as env vars, runs scripts
-
-**Script requirements:**
-- `deploy_script`: Receives `MENDEL_VARIATION_ID` env var, prints demo URL to stdout
-- `teardown_script`: Receives `MENDEL_VARIATION_ID` env var, cleans up resources
-
-This keeps platform-specific logic in AI-generated scripts, not hardcoded in Mendel.
-
-Codegen prompts instruct Claude Code to follow these rules.
+Before demos can run, the deployment channel must be **validated** via a hello-world deploy → health check → teardown test. This ensures credentials are correct.
 
 ### No Hardcoded Platform Options
 
