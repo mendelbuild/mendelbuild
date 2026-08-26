@@ -119,19 +119,21 @@ func RefreshAll(ctx context.Context, db DB) (int, error) {
 
 // ComboSpec defines a supported (artifact_kind, platform_slug) combination.
 type ComboSpec struct {
-	ArtifactKind domain.DeployArtifactKind
-	PlatformSlug string
-	Notes        string
-	Guidance     map[string]any
+	ArtifactKind        domain.DeployArtifactKind
+	PlatformSlug        string
+	Notes               string
+	RequiredCredentials []string // Credential names that must exist for this combo
+	Guidance            map[string]any
 }
 
 // DefaultCombos returns the initial sparse matrix of supported deployment combinations.
 func DefaultCombos() []ComboSpec {
 	return []ComboSpec{
 		{
-			ArtifactKind: domain.DeployArtifactContainer,
-			PlatformSlug: "fly-io",
-			Notes:        "Single container deployment to Fly.io",
+			ArtifactKind:        domain.DeployArtifactContainer,
+			PlatformSlug:        "fly-io",
+			Notes:               "Single container deployment to Fly.io",
+			RequiredCredentials: []string{"FLY_API_TOKEN"},
 			Guidance: map[string]any{
 				"requires":    []string{"Dockerfile"},
 				"healthCheck": "Use fly.toml [http_service.checks] for health checks",
@@ -139,9 +141,10 @@ func DefaultCombos() []ComboSpec {
 			},
 		},
 		{
-			ArtifactKind: domain.DeployArtifactContainer,
-			PlatformSlug: "cloud-run",
-			Notes:        "Single container deployment to Google Cloud Run",
+			ArtifactKind:        domain.DeployArtifactContainer,
+			PlatformSlug:        "cloud-run",
+			Notes:               "Single container deployment to Google Cloud Run",
+			RequiredCredentials: []string{"GCP_PROJECT_ID", "GCP_SERVICE_ACCOUNT_KEY"},
 			Guidance: map[string]any{
 				"requires":    []string{"Dockerfile", "GCP project with Cloud Run API enabled"},
 				"healthCheck": "Cloud Run uses container PORT health by default",
@@ -149,9 +152,10 @@ func DefaultCombos() []ComboSpec {
 			},
 		},
 		{
-			ArtifactKind: domain.DeployArtifactKubernetes,
-			PlatformSlug: "gke",
-			Notes:        "Kubernetes deployment to Google Kubernetes Engine",
+			ArtifactKind:        domain.DeployArtifactKubernetes,
+			PlatformSlug:        "gke",
+			Notes:               "Kubernetes deployment to Google Kubernetes Engine",
+			RequiredCredentials: []string{"GCP_PROJECT_ID", "GCP_SERVICE_ACCOUNT_KEY", "GKE_CLUSTER_NAME", "GKE_ZONE"},
 			Guidance: map[string]any{
 				"requires":    []string{"k8s manifests or Helm chart", "GKE cluster"},
 				"healthCheck": "Use readiness/liveness probes in deployment spec",
@@ -159,6 +163,16 @@ func DefaultCombos() []ComboSpec {
 			},
 		},
 	}
+}
+
+// RequiredCredentialsForCombo returns the required credentials for a given combo.
+func RequiredCredentialsForCombo(artifactKind domain.DeployArtifactKind, platformSlug string) []string {
+	for _, spec := range DefaultCombos() {
+		if spec.ArtifactKind == artifactKind && spec.PlatformSlug == platformSlug {
+			return spec.RequiredCredentials
+		}
+	}
+	return nil
 }
 
 // ComboDB interface for deployment combo operations.

@@ -32,5 +32,8 @@ kubectl rollout status deployment/mendel -n mendel --timeout=300s
 echo "=== Running migrations ==="
 kubectl exec -n mendel deployment/mendel -- mendel migrate
 
+echo "=== Running setup ==="
+kubectl exec -n mendel deployment/mendel -- mendel setup
+
 echo "=== Done ==="
 echo "Deployed: $IMAGE"

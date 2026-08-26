@@ -1,17 +1,21 @@
 package web
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/crypto"
 	"github.com/bhs/mendelbuild/internal/domain"
+	"github.com/bhs/mendelbuild/internal/hosting"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
@@ -715,8 +719,23 @@ func (s *Server) handleValidateDemoPath(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// TODO: Actually run hello-world validation (deploy → health → teardown)
-	// For now, just mark as validated
+	// Check required credentials
+	missing, err := s.checkRequiredCredentials(ctx, projectID, channel)
+	if err != nil {
+		http.Error(w, "failed to check credentials", http.StatusInternalServerError)
+		return
+	}
+	if len(missing) > 0 {
+		http.Error(w, fmt.Sprintf("missing required credentials: %s", strings.Join(missing, ", ")), http.StatusBadRequest)
+		return
+	}
+
+	// Run hello-world validation
+	if err := s.runChannelValidation(ctx, projectID, channel, "demo"); err != nil {
+		http.Error(w, fmt.Sprintf("validation failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	if err := s.db.UpdateProjectDeploymentChannelDemoValidation(ctx, channel.ID); err != nil {
 		http.Error(w, "failed to update validation status", http.StatusInternalServerError)
 		return
@@ -740,12 +759,421 @@ func (s *Server) handleValidateProdPath(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// TODO: Actually run hello-world validation (deploy → health → rollback)
-	// For now, just mark as validated
+	// Check required credentials
+	missing, err := s.checkRequiredCredentials(ctx, projectID, channel)
+	if err != nil {
+		http.Error(w, "failed to check credentials", http.StatusInternalServerError)
+		return
+	}
+	if len(missing) > 0 {
+		http.Error(w, fmt.Sprintf("missing required credentials: %s", strings.Join(missing, ", ")), http.StatusBadRequest)
+		return
+	}
+
+	// Run hello-world validation
+	if err := s.runChannelValidation(ctx, projectID, channel, "prod"); err != nil {
+		http.Error(w, fmt.Sprintf("validation failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	if err := s.db.UpdateProjectDeploymentChannelProdValidation(ctx, channel.ID); err != nil {
 		http.Error(w, "failed to update validation status", http.StatusInternalServerError)
 		return
 	}
 
 	http.Redirect(w, r, "/p/"+projectID.String()+"/deployment?success=1", http.StatusSeeOther)
+}
+
+// checkRequiredCredentials verifies that all required credentials exist for the channel.
+func (s *Server) checkRequiredCredentials(ctx context.Context, projectID uuid.UUID, channel *domain.ProjectDeploymentChannel) ([]string, error) {
+	if channel.HostingPlatform == nil {
+		return nil, fmt.Errorf("channel has no hosting platform")
+	}
+
+	required := hosting.RequiredCredentialsForCombo(channel.ArtifactKind, channel.HostingPlatform.Slug)
+	if len(required) == 0 {
+		return nil, nil
+	}
+
+	// Get existing credentials
+	creds, err := s.db.ListProjectCredentials(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	existing := make(map[string]bool)
+	for _, c := range creds {
+		existing[c.Name] = true
+	}
+
+	var missing []string
+	for _, name := range required {
+		if !existing[name] {
+			missing = append(missing, name)
+		}
+	}
+
+	return missing, nil
+}
+
+// runChannelValidation deploys a hello-world container, health checks it, and tears it down.
+func (s *Server) runChannelValidation(ctx context.Context, projectID uuid.UUID, channel *domain.ProjectDeploymentChannel, mode string) error {
+	if channel.HostingPlatform == nil {
+		return fmt.Errorf("channel has no hosting platform")
+	}
+
+	// Get encryption key
+	key, err := crypto.GetKey()
+	if err != nil {
+		return fmt.Errorf("failed to get encryption key: %w", err)
+	}
+
+	// Get required credentials
+	required := hosting.RequiredCredentialsForCombo(channel.ArtifactKind, channel.HostingPlatform.Slug)
+
+	env := make(map[string]string)
+	for _, name := range required {
+		cred, err := s.db.GetProjectCredential(ctx, projectID, name)
+		if err != nil {
+			return fmt.Errorf("failed to get credential %s: %w", name, err)
+		}
+		decrypted, err := crypto.Decrypt(cred.EncryptedValue, key)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt %s: %w", name, err)
+		}
+		env[name] = string(decrypted)
+	}
+
+	// Dispatch to platform-specific validation
+	switch channel.HostingPlatform.Slug {
+	case "fly-io":
+		return s.validateFlyIO(ctx, env, mode)
+	case "cloud-run":
+		return s.validateCloudRun(ctx, env, mode)
+	case "gke":
+		return s.validateGKE(ctx, env, mode)
+	default:
+		return fmt.Errorf("unsupported platform: %s", channel.HostingPlatform.Slug)
+	}
+}
+
+// validateFlyIO deploys a hello-world app to Fly.io, health checks it, and destroys it.
+func (s *Server) validateFlyIO(ctx context.Context, env map[string]string, mode string) error {
+	appName := fmt.Sprintf("mendel-validate-%d", time.Now().Unix())
+
+	// Create temp directory with Dockerfile
+	tmpDir, err := os.MkdirTemp("", "mendel-validate-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Write Dockerfile
+	dockerfile := `FROM nginx:alpine
+COPY index.html /usr/share/nginx/html/index.html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]`
+	if err := os.WriteFile(tmpDir+"/Dockerfile", []byte(dockerfile), 0644); err != nil {
+		return fmt.Errorf("failed to write Dockerfile: %w", err)
+	}
+
+	// Write health check page
+	indexHTML := `<!DOCTYPE html><html><body><h1>Mendel Validation</h1><p>OK</p></body></html>`
+	if err := os.WriteFile(tmpDir+"/index.html", []byte(indexHTML), 0644); err != nil {
+		return fmt.Errorf("failed to write index.html: %w", err)
+	}
+
+	// Write fly.toml
+	flyToml := fmt.Sprintf(`app = "%s"
+primary_region = "iad"
+
+[http_service]
+  internal_port = 80
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/"
+`, appName)
+	if err := os.WriteFile(tmpDir+"/fly.toml", []byte(flyToml), 0644); err != nil {
+		return fmt.Errorf("failed to write fly.toml: %w", err)
+	}
+
+	// Build environment for flyctl
+	cmdEnv := os.Environ()
+	cmdEnv = append(cmdEnv, fmt.Sprintf("FLY_API_TOKEN=%s", env["FLY_API_TOKEN"]))
+
+	// Create the app
+	createCmd := exec.CommandContext(ctx, "flyctl", "apps", "create", appName, "--org", "personal")
+	createCmd.Dir = tmpDir
+	createCmd.Env = cmdEnv
+	if output, err := createCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to create fly app: %s: %w", string(output), err)
+	}
+
+	// Ensure cleanup on exit
+	defer func() {
+		destroyCmd := exec.CommandContext(context.Background(), "flyctl", "apps", "destroy", appName, "--yes")
+		destroyCmd.Env = cmdEnv
+		destroyCmd.Run() // Best effort cleanup
+	}()
+
+	// Deploy the app
+	deployCmd := exec.CommandContext(ctx, "flyctl", "deploy", "--now")
+	deployCmd.Dir = tmpDir
+	deployCmd.Env = cmdEnv
+	if output, err := deployCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to deploy: %s: %w", string(output), err)
+	}
+
+	// Wait for app to be running and get URL
+	url := fmt.Sprintf("https://%s.fly.dev/", appName)
+
+	// Health check with retries
+	client := &http.Client{Timeout: 10 * time.Second}
+	var lastErr error
+	for i := 0; i < 10; i++ {
+		resp, err := client.Get(url)
+		if err != nil {
+			lastErr = err
+			time.Sleep(3 * time.Second)
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			// Health check passed
+			return nil
+		}
+		lastErr = fmt.Errorf("health check returned %d", resp.StatusCode)
+		time.Sleep(3 * time.Second)
+	}
+
+	return fmt.Errorf("health check failed after retries: %w", lastErr)
+}
+
+// validateCloudRun deploys a hello-world container to Cloud Run, health checks it, and deletes it.
+func (s *Server) validateCloudRun(ctx context.Context, env map[string]string, mode string) error {
+	serviceName := fmt.Sprintf("mendel-validate-%d", time.Now().Unix())
+	projectID := env["GCP_PROJECT_ID"]
+	region := "us-central1"
+
+	// Write service account key to temp file
+	keyFile, err := os.CreateTemp("", "gcp-key-*.json")
+	if err != nil {
+		return fmt.Errorf("failed to create key file: %w", err)
+	}
+	defer os.Remove(keyFile.Name())
+	if _, err := keyFile.WriteString(env["GCP_SERVICE_ACCOUNT_KEY"]); err != nil {
+		keyFile.Close()
+		return fmt.Errorf("failed to write key file: %w", err)
+	}
+	keyFile.Close()
+
+	// Build environment
+	cmdEnv := os.Environ()
+	cmdEnv = append(cmdEnv, fmt.Sprintf("GOOGLE_APPLICATION_CREDENTIALS=%s", keyFile.Name()))
+
+	// Authenticate with service account
+	authCmd := exec.CommandContext(ctx, "gcloud", "auth", "activate-service-account", "--key-file", keyFile.Name())
+	authCmd.Env = cmdEnv
+	if output, err := authCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to authenticate: %s: %w", string(output), err)
+	}
+
+	// Set project
+	setProjectCmd := exec.CommandContext(ctx, "gcloud", "config", "set", "project", projectID)
+	setProjectCmd.Env = cmdEnv
+	if output, err := setProjectCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to set project: %s: %w", string(output), err)
+	}
+
+	// Deploy the hello container (Google's sample)
+	deployCmd := exec.CommandContext(ctx, "gcloud", "run", "deploy", serviceName,
+		"--image", "gcr.io/cloudrun/hello",
+		"--region", region,
+		"--allow-unauthenticated",
+		"--quiet")
+	deployCmd.Env = cmdEnv
+
+	// Ensure cleanup on exit
+	defer func() {
+		deleteCmd := exec.CommandContext(context.Background(), "gcloud", "run", "services", "delete", serviceName,
+			"--region", region, "--quiet")
+		deleteCmd.Env = cmdEnv
+		deleteCmd.Run() // Best effort cleanup
+	}()
+
+	output, err := deployCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to deploy: %s: %w", string(output), err)
+	}
+
+	// Extract URL from deploy output
+	urlLine := ""
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.Contains(line, "https://") {
+			urlLine = strings.TrimSpace(line)
+			break
+		}
+	}
+	if urlLine == "" {
+		// Try to get URL via describe
+		describeCmd := exec.CommandContext(ctx, "gcloud", "run", "services", "describe", serviceName,
+			"--region", region, "--format", "value(status.url)")
+		describeCmd.Env = cmdEnv
+		urlOutput, err := describeCmd.Output()
+		if err != nil {
+			return fmt.Errorf("failed to get service URL: %w", err)
+		}
+		urlLine = strings.TrimSpace(string(urlOutput))
+	}
+
+	if urlLine == "" {
+		return fmt.Errorf("could not determine service URL")
+	}
+
+	// Health check with retries
+	client := &http.Client{Timeout: 10 * time.Second}
+	var lastErr error
+	for i := 0; i < 10; i++ {
+		resp, err := client.Get(urlLine)
+		if err != nil {
+			lastErr = err
+			time.Sleep(3 * time.Second)
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			return nil
+		}
+		lastErr = fmt.Errorf("health check returned %d", resp.StatusCode)
+		time.Sleep(3 * time.Second)
+	}
+
+	return fmt.Errorf("health check failed after retries: %w", lastErr)
+}
+
+// validateGKE deploys a hello-world pod to GKE, health checks it, and deletes it.
+func (s *Server) validateGKE(ctx context.Context, env map[string]string, mode string) error {
+	deploymentName := fmt.Sprintf("mendel-validate-%d", time.Now().Unix())
+	projectID := env["GCP_PROJECT_ID"]
+	clusterName := env["GKE_CLUSTER_NAME"]
+	zone := env["GKE_ZONE"]
+
+	// Write service account key to temp file
+	keyFile, err := os.CreateTemp("", "gcp-key-*.json")
+	if err != nil {
+		return fmt.Errorf("failed to create key file: %w", err)
+	}
+	defer os.Remove(keyFile.Name())
+	if _, err := keyFile.WriteString(env["GCP_SERVICE_ACCOUNT_KEY"]); err != nil {
+		keyFile.Close()
+		return fmt.Errorf("failed to write key file: %w", err)
+	}
+	keyFile.Close()
+
+	// Build environment
+	cmdEnv := os.Environ()
+	cmdEnv = append(cmdEnv, fmt.Sprintf("GOOGLE_APPLICATION_CREDENTIALS=%s", keyFile.Name()))
+
+	// Authenticate with service account
+	authCmd := exec.CommandContext(ctx, "gcloud", "auth", "activate-service-account", "--key-file", keyFile.Name())
+	authCmd.Env = cmdEnv
+	if output, err := authCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to authenticate: %s: %w", string(output), err)
+	}
+
+	// Set project
+	setProjectCmd := exec.CommandContext(ctx, "gcloud", "config", "set", "project", projectID)
+	setProjectCmd.Env = cmdEnv
+	if output, err := setProjectCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to set project: %s: %w", string(output), err)
+	}
+
+	// Get cluster credentials
+	getCredsCmd := exec.CommandContext(ctx, "gcloud", "container", "clusters", "get-credentials",
+		clusterName, "--zone", zone)
+	getCredsCmd.Env = cmdEnv
+	if output, err := getCredsCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to get cluster credentials: %s: %w", string(output), err)
+	}
+
+	// Create temp directory for manifests
+	tmpDir, err := os.MkdirTemp("", "mendel-gke-validate-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Write deployment manifest
+	manifest := fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: %s
+  template:
+    metadata:
+      labels:
+        app: %s
+    spec:
+      containers:
+      - name: hello
+        image: gcr.io/cloudrun/hello
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+`, deploymentName, deploymentName, deploymentName)
+	if err := os.WriteFile(tmpDir+"/deployment.yaml", []byte(manifest), 0644); err != nil {
+		return fmt.Errorf("failed to write manifest: %w", err)
+	}
+
+	// Ensure cleanup on exit
+	defer func() {
+		deleteCmd := exec.CommandContext(context.Background(), "kubectl", "delete", "deployment", deploymentName)
+		deleteCmd.Env = cmdEnv
+		deleteCmd.Run() // Best effort cleanup
+	}()
+
+	// Apply the deployment
+	applyCmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", tmpDir+"/deployment.yaml")
+	applyCmd.Env = cmdEnv
+	if output, err := applyCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to apply deployment: %s: %w", string(output), err)
+	}
+
+	// Wait for rollout
+	rolloutCmd := exec.CommandContext(ctx, "kubectl", "rollout", "status", "deployment/"+deploymentName, "--timeout=120s")
+	rolloutCmd.Env = cmdEnv
+	if output, err := rolloutCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("rollout failed: %s: %w", string(output), err)
+	}
+
+	// For GKE, just verify the pod is running (no external URL without a LoadBalancer)
+	getPodCmd := exec.CommandContext(ctx, "kubectl", "get", "pods", "-l", "app="+deploymentName,
+		"-o", "jsonpath={.items[0].status.phase}")
+	getPodCmd.Env = cmdEnv
+	output, err := getPodCmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to get pod status: %w", err)
+	}
+	if strings.TrimSpace(string(output)) != "Running" {
+		return fmt.Errorf("pod not running: %s", string(output))
+	}
+
+	return nil
 }
