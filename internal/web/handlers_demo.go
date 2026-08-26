@@ -379,7 +379,7 @@ primary_region = "iad"
 
 	if !appExists {
 		logMilestone("Creating Fly.io app...")
-		createCmd := exec.CommandContext(ctx, "flyctl", "apps", "create", appName, "--org", "personal")
+		createCmd := exec.CommandContext(ctx, "flyctl", "apps", "create", appName)
 		createCmd.Dir = workDir
 		createCmd.Env = cmdEnv
 		if output, err := createCmd.CombinedOutput(); err != nil {
