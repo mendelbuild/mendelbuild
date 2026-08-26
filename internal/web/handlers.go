@@ -60,10 +60,17 @@ var templateFuncs = template.FuncMap{
 	},
 }
 
-// parsePageTemplate creates a template from layout + a specific page template.
-// This avoids conflicts when multiple pages define the same block name.
+// parsePageTemplate creates a template from layout + shared partials + a
+// specific page template. This avoids conflicts when multiple pages define the
+// same block name, while making the partials in partials.html (the lifecycle
+// ribbon, the roadmap strip) available to every page.
 func parsePageTemplate(pageName string) *template.Template {
-	return template.Must(template.New("").Funcs(templateFuncs).ParseFS(templatesFS, "templates/layout.html", "templates/"+pageName))
+	return template.Must(template.New("").Funcs(templateFuncs).ParseFS(
+		templatesFS,
+		"templates/layout.html",
+		"templates/partials.html",
+		"templates/"+pageName,
+	))
 }
 
 // renderPage renders a page template with the layout.

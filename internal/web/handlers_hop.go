@@ -83,6 +83,9 @@ type HopDetailView struct {
 	NeedsProductionCredentials bool // requires_production but no credentials configured
 	TotalInputTokens         int
 	TotalOutputTokens        int
+
+	Ribbon domain.Ribbon // Plain-English lifecycle position and next action
+	Strip  *RoadmapStrip // Immediate neighbours in the roadmap DAG
 }
 
 func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
@@ -212,6 +215,8 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 		NeedsProductionCredentials: needsProductionCredentials,
 		TotalInputTokens:           tokenTotals.InputTokens,
 		TotalOutputTokens:          tokenTotals.OutputTokens,
+		Ribbon:                     domain.HopLifecycle(hop, rawVariations),
+		Strip:                      s.buildRoadmapStrip(ctx, projectID, hop),
 	}
 
 	data := map[string]interface{}{
@@ -282,6 +287,10 @@ type VariationDetailView struct {
 	IsDemoValidated         bool     // True if channel is validated for demos
 	MissingCredentials      []string // Credentials required but not configured
 	DemoReady               bool     // True if channel is validated AND all credentials present
+
+	Revisions []domain.VariationRevision // User-requested changes; drives the Refine track
+	Ribbon    domain.Ribbon              // Plain-English lifecycle position and next action
+	Strip     *RoadmapStrip              // Parent Hop's neighbours in the roadmap DAG
 }
 
 func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
@@ -399,10 +408,18 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		demoReady = isDemoValidated && len(missingCredentials) == 0
 	}
 
+	// Revisions are required for an accurate Refine track: handleRequestChange
+	// sets the Variation back to "creating", so status alone cannot distinguish
+	// a first build from a revision in flight.
+	revisions, _ := s.db.GetVariationRevisions(ctx, variationID)
+
 	view := &VariationDetailView{
 		Variation:             variation,
 		Hop:                   hop,
 		Logs:                  logs,
+		Revisions:             revisions,
+		Ribbon:                domain.VariationLifecycle(variation, revisions, hop),
+		Strip:                 s.buildRoadmapStrip(ctx, projectID, hop),
 		DemoInstance:          demoInstance,
 		DemoLogs:              demoLogs,
 		GitHubURL:             githubURL,

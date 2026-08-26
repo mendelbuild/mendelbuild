@@ -157,6 +157,156 @@
             min-width: 18px;
             text-align: center;
         }
+        /* ---- Lifecycle ribbon ----------------------------------------------
+           Tone drives every colour here. Templates read domain.Ribbon and never
+           branch on a raw status string. */
+        .tone-neutral  { --tone: #6c757d; --tone-bg: #e2e3e5; --tone-ink: #383d41; }
+        .tone-progress { --tone: #007bff; --tone-bg: #cce5ff; --tone-ink: #004085; }
+        .tone-waiting  { --tone: #ffc107; --tone-bg: #fff3cd; --tone-ink: #856404; }
+        .tone-success  { --tone: #28a745; --tone-bg: #d4edda; --tone-ink: #155724; }
+        .tone-warning  { --tone: #fd7e14; --tone-bg: #ffe5d0; --tone-ink: #7a3e02; }
+        .tone-failure  { --tone: #dc3545; --tone-bg: #f8d7da; --tone-ink: #721c24; }
+
+        .ribbon {
+            border: 1px solid #e0e0e0;
+            border-left: 4px solid var(--tone, #6c757d);
+            border-radius: 6px;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            background: white;
+        }
+        .ribbon-neutral  { --tone: #6c757d; }
+        .ribbon-progress { --tone: #007bff; }
+        .ribbon-waiting  { --tone: #ffc107; }
+        .ribbon-success  { --tone: #28a745; }
+        .ribbon-warning  { --tone: #fd7e14; }
+        .ribbon-failure  { --tone: #dc3545; }
+
+        .ribbon-head {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+        .ribbon-headline { font-size: 1.15em; font-weight: 600; color: #222; }
+        .ribbon-actor {
+            font-size: 0.75em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            padding: 3px 8px;
+            border-radius: 10px;
+            background: #e2e3e5;
+            color: #383d41;
+        }
+        .ribbon-actor-you { background: #fff3cd; color: #856404; }
+        .ribbon-actor-mendel { background: #cce5ff; color: #004085; }
+        .ribbon-actor-nobody { background: #e9ecef; color: #6c757d; }
+        .ribbon-next { margin: 12px 0 0 0; color: #555; font-size: 0.92em; }
+
+        .track { margin-bottom: 10px; }
+        .track:last-of-type { margin-bottom: 0; }
+        .track-na { opacity: 0.45; }
+        .track-label {
+            font-size: 0.72em;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: #888;
+            margin-bottom: 4px;
+        }
+        .track-note { text-transform: none; letter-spacing: 0; color: #aaa; }
+
+        .stages {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px 0;
+        }
+        .stage {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding-right: 14px;
+            font-size: 0.85em;
+            color: #999;
+            position: relative;
+        }
+        /* Connector between stages. */
+        .stage:not(:last-child)::after {
+            content: "";
+            width: 10px;
+            height: 1px;
+            background: #ddd;
+            margin-left: 4px;
+        }
+        .stage-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            border: 1.5px solid #ccc;
+            background: white;
+            flex-shrink: 0;
+        }
+        .stage-done .stage-dot { background: var(--tone, #28a745); border-color: var(--tone, #28a745); }
+        .stage-done { color: #666; }
+        .stage-current .stage-dot {
+            background: var(--tone, #007bff);
+            border-color: var(--tone, #007bff);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--tone, #007bff) 25%, transparent);
+        }
+        .stage-current { color: #222; font-weight: 600; }
+        .stage-failed .stage-dot { background: var(--tone, #dc3545); border-color: var(--tone, #dc3545); }
+        .stage-failed { color: var(--tone-ink, #721c24); font-weight: 600; }
+        .stage-note {
+            font-size: 0.85em;
+            font-weight: 400;
+            color: #888;
+            background: #f1f3f5;
+            padding: 1px 6px;
+            border-radius: 8px;
+        }
+
+        /* ---- Roadmap strip -------------------------------------------------- */
+        .strip {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+            padding: 8px 12px;
+            margin-bottom: 15px;
+            background: #fff;
+            border: 1px solid #e8e8e8;
+            border-radius: 6px;
+            font-size: 0.88em;
+        }
+        .strip-caption {
+            font-size: 0.78em;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: #aaa;
+            margin-right: 4px;
+        }
+        .strip-hop {
+            padding: 3px 10px;
+            border-radius: 12px;
+            text-decoration: none;
+            background: var(--tone-bg, #e2e3e5);
+            color: var(--tone-ink, #383d41);
+            white-space: nowrap;
+        }
+        a.strip-hop:hover { text-decoration: underline; }
+        .strip-current {
+            font-weight: 700;
+            box-shadow: 0 0 0 2px var(--tone, #6c757d);
+        }
+        .strip-arrow { color: #ccc; }
+        .strip-more { color: #999; font-size: 0.9em; }
+        .strip-all { margin-left: auto; color: #007bff; text-decoration: none; white-space: nowrap; }
+        .strip-all:hover { text-decoration: underline; }
+
         .settings-warning {
             background: #fff3cd;
             border: 1px solid #ffc107;

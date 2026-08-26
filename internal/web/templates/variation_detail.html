@@ -3,13 +3,18 @@
 <h1>Variation: {{.Variation.Name}}</h1>
 <p><a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">&larr; Back to Hop: {{.Hop.Name}}</a></p>
 
+{{template "roadmap-strip" .Strip}}
+{{template "lifecycle-ribbon" .Ribbon}}
+
 <div style="display: flex; gap: 20px; align-items: flex-start;">
     <div style="flex: 2;">
         <div class="card">
             <h2>Details</h2>
             <table>
                 <tr>
-                    <th style="width: 120px;">Status</th>
+                    {{/* The ribbon above states this in plain English; this row
+                         keeps the raw value available for debugging. */}}
+                    <th style="width: 120px;">Internal status</th>
                     <td>
                         <span class="status {{if eq .Variation.Status "pending"}}status-pending{{else if eq .Variation.Status "creating"}}status-active{{else if eq .Variation.Status "error"}}status-error{{else if eq .Variation.Status "terminated"}}status-error{{else}}status-{{.Variation.Status}}{{end}}">
                             {{.Variation.Status}}
@@ -109,6 +114,43 @@
             </div>
             {{end}}
         </div>
+
+        {{/* Backing detail for the Refine track in the ribbon above. */}}
+        {{if .Revisions}}
+        <div class="card">
+            <h2>Requested changes</h2>
+            <p style="margin-top: 0; color: #666; font-size: 0.9em;">
+                Feedback you sent back for this variation, newest first.
+            </p>
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 110px;">Status</th>
+                        <th>Feedback</th>
+                        <th style="width: 140px;">Requested</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Revisions}}
+                    <tr>
+                        <td>
+                            <span class="status {{if eq .Status "completed"}}status-resolved{{else if eq .Status "failed"}}status-error{{else if eq .Status "in_progress"}}status-active{{else}}status-pending{{end}}">
+                                {{.Status}}
+                            </span>
+                        </td>
+                        <td>
+                            {{.Feedback}}
+                            {{if .ErrorMessage}}
+                            <div style="color: #721c24; font-size: 0.85em; margin-top: 4px;">{{derefString .ErrorMessage}}</div>
+                            {{end}}
+                        </td>
+                        <td style="font-size: 0.9em; color: #666;">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{end}}
 
         {{/* Demo Panel - shown when variation is ready for demo */}}
         {{if or .DemoInstance (eq .Variation.Status "pending")}}

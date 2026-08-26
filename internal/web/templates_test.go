@@ -1,10 +1,17 @@
 package web
 
 import (
+	"bytes"
 	"html/template"
 	"io/fs"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/bhs/mendelbuild/internal/domain"
 )
 
 // TestTemplatesParse parses every embedded template the same way the handlers
@@ -26,8 +33,8 @@ func TestTemplatesParse(t *testing.T) {
 		found++
 
 		switch name {
-		case "layout.html":
-			// Parsed as part of every page below.
+		case "layout.html", "partials.html":
+			// Not pages; parsed as part of every page below.
 			continue
 		case "login.html":
 			// Rendered standalone, without the layout.
@@ -38,8 +45,14 @@ func TestTemplatesParse(t *testing.T) {
 			})
 		default:
 			t.Run(name, func(t *testing.T) {
-				_, err := template.New("").Funcs(templateFuncs).
-					ParseFS(templatesFS, "templates/layout.html", "templates/"+name)
+				// Parsed exactly as parsePageTemplate does it, so the shared
+				// partials are covered too.
+				_, err := template.New("").Funcs(templateFuncs).ParseFS(
+					templatesFS,
+					"templates/layout.html",
+					"templates/partials.html",
+					"templates/"+name,
+				)
 				if err != nil {
 					t.Errorf("parse: %v", err)
 				}
@@ -76,4 +89,211 @@ func TestNoStatusRendersFailureAsSuccess(t *testing.T) {
 			t.Errorf("%s: found %q — %s", b.file, b.snippet, b.why)
 		}
 	}
+}
+
+// partialsTemplate parses just the shared partials, for executing them in
+// isolation.
+func partialsTemplate(t *testing.T) *template.Template {
+	t.Helper()
+	tmpl, err := template.New("").Funcs(templateFuncs).ParseFS(
+		templatesFS, "templates/layout.html", "templates/partials.html")
+	if err != nil {
+		t.Fatalf("parsing partials: %v", err)
+	}
+	return tmpl
+}
+
+// TestRibbonExecutes renders the lifecycle ribbon for every Hop and Variation
+// status. Parsing proves only that the syntax is valid; a bad field reference
+// fails at execution time, on a real request.
+func TestRibbonExecutes(t *testing.T) {
+	tmpl := partialsTemplate(t)
+
+	hopStatuses := []domain.HopStatus{
+		domain.HopStatusPending, domain.HopStatusActive, domain.HopStatusSelecting,
+		domain.HopStatusCompleted, domain.HopStatusRejected, domain.HopStatusAbandoned,
+	}
+	for _, st := range hopStatuses {
+		ribbon := domain.HopLifecycle(&domain.Hop{Status: st}, nil)
+		var buf bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&buf, "lifecycle-ribbon", ribbon); err != nil {
+			t.Fatalf("hop %q: %v", st, err)
+		}
+		if !strings.Contains(buf.String(), ribbon.Headline) {
+			t.Errorf("hop %q: headline %q missing from output", st, ribbon.Headline)
+		}
+	}
+
+	variationStatuses := []domain.VariationStatus{
+		domain.VariationStatusCreating, domain.VariationStatusPending, domain.VariationStatusBlocked,
+		domain.VariationStatusMigrating, domain.VariationStatusActive, domain.VariationStatusDraining,
+		domain.VariationStatusError, domain.VariationStatusTerminated, domain.VariationStatusPruned,
+		domain.VariationStatusSelected, domain.VariationStatusMerged, domain.VariationStatusRejected,
+	}
+	for _, st := range variationStatuses {
+		ribbon := domain.VariationLifecycle(
+			&domain.Variation{Status: st},
+			[]domain.VariationRevision{{ID: uuid.New(), Status: domain.VariationRevisionStatusCompleted}},
+			&domain.Hop{RequiresDemo: true},
+		)
+		var buf bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&buf, "lifecycle-ribbon", ribbon); err != nil {
+			t.Fatalf("variation %q: %v", st, err)
+		}
+		if !strings.Contains(buf.String(), ribbon.Headline) {
+			t.Errorf("variation %q: headline %q missing from output", st, ribbon.Headline)
+		}
+	}
+}
+
+// TestRibbonShowsWhoseMoveItIs checks the single most useful fact on the page.
+func TestRibbonShowsWhoseMoveItIs(t *testing.T) {
+	tmpl := partialsTemplate(t)
+
+	waiting := domain.HopLifecycle(&domain.Hop{Status: domain.HopStatusSelecting}, nil)
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "lifecycle-ribbon", waiting); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "Your move") {
+		t.Error(`a Hop awaiting selection should render "Your move"`)
+	}
+
+	working := domain.HopLifecycle(&domain.Hop{Status: domain.HopStatusPending}, nil)
+	buf.Reset()
+	if err := tmpl.ExecuteTemplate(&buf, "lifecycle-ribbon", working); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "Your move") {
+		t.Error("a Hop waiting on dependencies must not claim it is your move")
+	}
+}
+
+// TestRoadmapStripExecutes covers the nil case explicitly. buildRoadmapStrip
+// returns nil when the surrounding Hops cannot be loaded, and the strip is
+// contextual, so that must render as nothing rather than panicking the page.
+func TestRoadmapStripExecutes(t *testing.T) {
+	tmpl := partialsTemplate(t)
+
+	var nilStrip *RoadmapStrip
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "roadmap-strip", nilStrip); err != nil {
+		t.Fatalf("nil strip must render harmlessly, got: %v", err)
+	}
+	if strings.TrimSpace(buf.String()) != "" {
+		t.Errorf("nil strip should render nothing, got %q", buf.String())
+	}
+
+	// An isolated Hop has no neighbours and should also render nothing, rather
+	// than a strip containing only itself.
+	lonely := &RoadmapStrip{
+		ProjectID: uuid.New().String(),
+		Current:   StripHop{ID: uuid.New(), Name: "only-hop", Current: true},
+	}
+	buf.Reset()
+	if err := tmpl.ExecuteTemplate(&buf, "roadmap-strip", lonely); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(buf.String()) != "" {
+		t.Errorf("a Hop with no neighbours should render no strip, got %q", buf.String())
+	}
+
+	// A populated strip should name every neighbour and link to the roadmap.
+	projectID := uuid.New()
+	populated := &RoadmapStrip{
+		ProjectID: projectID.String(),
+		Before:    []StripHop{{ID: uuid.New(), Name: "auth-refactor", Tone: domain.ToneSuccess}},
+		Current:   StripHop{ID: uuid.New(), Name: "rate-limiting", Tone: domain.ToneProgress, Current: true},
+		After:     []StripHop{{ID: uuid.New(), Name: "billing", Tone: domain.ToneNeutral}},
+		MoreAfter: 2,
+	}
+	buf.Reset()
+	if err := tmpl.ExecuteTemplate(&buf, "roadmap-strip", populated); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"auth-refactor", "rate-limiting", "billing", "+2 more", "Full roadmap"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("strip output missing %q", want)
+		}
+	}
+	if !strings.Contains(out, "/p/"+projectID.String()+"/roadmap") {
+		t.Error("strip should link to the full roadmap")
+	}
+}
+
+// TestDetailPagesRender renders the two pages the ribbon and strip were added
+// to, end to end through renderPage. This is what catches a nil dereference or
+// a bad field path in the page itself, which parsing cannot.
+func TestDetailPagesRender(t *testing.T) {
+	projectID := uuid.New()
+	now := time.Now()
+
+	hop := &domain.Hop{
+		ID: uuid.New(), StrategyID: uuid.New(),
+		Name: "rate-limiting", Commentary: "Protect the API from bursts.",
+		Status: domain.HopStatusActive, CreatedAt: now, UpdatedAt: now,
+	}
+	variation := domain.Variation{
+		ID: uuid.New(), HopID: hop.ID,
+		Name: "token-bucket", Approach: "Per-key token bucket in Redis.",
+		Status: domain.VariationStatusPending, CreatedAt: now, UpdatedAt: now,
+	}
+	strip := &RoadmapStrip{
+		ProjectID: projectID.String(),
+		Before:    []StripHop{{ID: uuid.New(), Name: "auth-refactor", Tone: domain.ToneSuccess}},
+		Current:   StripHop{ID: hop.ID, Name: hop.Name, Tone: domain.ToneProgress, Current: true},
+	}
+
+	t.Run("hop_detail.html", func(t *testing.T) {
+		view := &HopDetailView{
+			Hop:        hop,
+			Strategy:   &domain.Strategy{ID: hop.StrategyID, Name: "Q3 reliability"},
+			Project:    &domain.Project{ID: projectID, Name: "Demo"},
+			Variations: []VariationWithLogs{{Variation: variation}},
+			Ribbon:     domain.HopLifecycle(hop, []domain.Variation{variation}),
+			Strip:      strip,
+		}
+		body := renderForTest(t, "hop_detail.html", projectID, view)
+		for _, want := range []string{view.Ribbon.Headline, "auth-refactor", "rate-limiting", "token-bucket"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("hop detail missing %q", want)
+			}
+		}
+	})
+
+	t.Run("variation_detail.html", func(t *testing.T) {
+		revisions := []domain.VariationRevision{
+			{ID: uuid.New(), VariationID: variation.ID, Feedback: "Use a sliding window instead.",
+				Status: domain.VariationRevisionStatusCompleted, CreatedAt: now},
+		}
+		v := variation
+		view := &VariationDetailView{
+			Variation: &v,
+			Hop:       hop,
+			Revisions: revisions,
+			Ribbon:    domain.VariationLifecycle(&v, revisions, hop),
+			Strip:     strip,
+		}
+		body := renderForTest(t, "variation_detail.html", projectID, view)
+		for _, want := range []string{view.Ribbon.Headline, "auth-refactor", "Use a sliding window instead."} {
+			if !strings.Contains(body, want) {
+				t.Errorf("variation detail missing %q", want)
+			}
+		}
+	})
+}
+
+func renderForTest(t *testing.T, page string, projectID uuid.UUID, view interface{}) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	data := map[string]interface{}{
+		"Title":     "test",
+		"ProjectID": projectID.String(),
+		"View":      view,
+	}
+	if err := renderPage(rec, page, data); err != nil {
+		t.Fatalf("rendering %s: %v", page, err)
+	}
+	return rec.Body.String()
 }

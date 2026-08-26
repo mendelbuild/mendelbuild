@@ -3,6 +3,9 @@
 <h1>Hop: {{.Hop.Name}}</h1>
 <p><a href="/p/{{$.ProjectID}}/strategy">&larr; Back to Strategy</a></p>
 
+{{template "roadmap-strip" .Strip}}
+{{template "lifecycle-ribbon" .Ribbon}}
+
 {{if .NeedsProductionCredentials}}
 <div style="padding: 15px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; margin-bottom: 20px;">
     <strong style="color: #856404;">Production deployment requires credentials</strong>
@@ -19,7 +22,9 @@
             <h2>Details</h2>
             <table>
                 <tr>
-                    <th style="width: 150px;">Status</th>
+                    {{/* The ribbon above states this in plain English; this row
+                         keeps the raw value available for debugging. */}}
+                    <th style="width: 150px;">Internal status</th>
                     <td><span class="status status-{{.Hop.Status}}">{{.Hop.Status}}</span></td>
                 </tr>
                 <tr>
@@ -115,82 +120,36 @@
         <div class="card">
             <h2>Actions</h2>
 
+            {{/* Narration of the Hop's state lives in the lifecycle ribbon at
+                 the top of the page. This card carries only things you can act
+                 on, so it stays empty when there is nothing to do. */}}
             {{if .PendingReview}}
             <div style="padding: 15px; background: #cce5ff; border-radius: 4px; margin-bottom: 15px;">
-                <strong>Pending Review</strong><br>
+                <strong>Review the proposed approaches</strong><br>
                 <a href="/p/{{$.ProjectID}}/inputs/{{.PendingReview.ID}}">{{.PendingReview.Title}}</a>
                 <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
-                    Review proposed variations before generating code.
+                    Approve them before any code is written.
                 </div>
             </div>
             {{else if .PendingSelection}}
             <div style="padding: 15px; background: #fff3cd; border-radius: 4px; margin-bottom: 15px;">
-                <strong>Selection Ready</strong><br>
+                <strong>Pick a winner</strong><br>
                 <a href="/p/{{$.ProjectID}}/inputs/{{.PendingSelection.ID}}">{{.PendingSelection.Title}}</a>
                 <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
-                    Select a winner or request more variations.
+                    Compare the variations, or ask for more.
                 </div>
             </div>
             {{else if .IsStuck}}
             <div style="padding: 15px; background: #f8d7da; border-radius: 4px; margin-bottom: 15px;">
-                <strong>No Active Variations</strong><br>
-                <span style="color: #666;">All variations have been rejected or terminated. Request new variations to continue.</span>
+                <strong>Out of candidates</strong>
                 <form method="POST" action="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}/propose-variations" style="margin-top: 10px;">
                     <button type="submit" style="width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
                         Request New Variations
                     </button>
                 </form>
             </div>
-            {{else if eq .Hop.Status "pending"}}
-            <div style="padding: 15px; background: #f8f9fa; border-radius: 4px;">
-                <strong>Waiting for Dependencies</strong><br>
-                <span style="color: #666;">This hop will activate when its dependencies are completed.</span>
-            </div>
-            {{else if eq .Hop.Status "active"}}
-                {{if .Variations}}
-                    {{if .HasCreatingVariations}}
-                    <div style="padding: 15px; background: #cce5ff; border-radius: 4px;">
-                        <strong>Code Generation In Progress</strong><br>
-                        <span style="color: #666;">Claude is implementing the approved variations. Refresh to see status updates.</span>
-                    </div>
-                    {{else if .HasPendingVariations}}
-                    <div style="padding: 15px; background: #fff3cd; border-radius: 4px;">
-                        <strong>Awaiting Selection</strong><br>
-                        <span style="color: #666;">Variations are ready. A selection input request will appear shortly.</span>
-                    </div>
-                    {{else}}
-                    {{/* This case should be caught by IsStuck above, but just in case */}}
-                    <div style="padding: 15px; background: #e2e3e5; border-radius: 4px;">
-                        <strong>Processing...</strong><br>
-                        <span style="color: #666;">Waiting for variations to complete.</span>
-                    </div>
-                    {{end}}
-                {{else}}
-                <div style="padding: 15px; background: #e2e3e5; border-radius: 4px;">
-                    <strong>Proposing Variations...</strong><br>
-                    <span style="color: #666;">AI is generating variation proposals. A review request will appear in the queue.</span>
-                </div>
-                {{end}}
-            {{else if eq .Hop.Status "selecting"}}
-            <div style="padding: 15px; background: #fff3cd; border-radius: 4px;">
-                <strong>Selecting Winner</strong><br>
-                <span style="color: #666;">All variations complete. Select a winner in the Input Needed queue.</span>
-            </div>
-            {{else if eq .Hop.Status "completed"}}
-            <div style="padding: 15px; background: #d4edda; border-radius: 4px;">
-                <strong>Completed</strong><br>
-                <span style="color: #666;">A variation was selected and merged.</span>
-            </div>
-            {{else if eq .Hop.Status "rejected"}}
-            <div style="padding: 15px; background: #f8d7da; border-radius: 4px;">
-                <strong>Rejected</strong><br>
-                <span style="color: #666;">All variations were rejected.</span>
-            </div>
-            {{else if eq .Hop.Status "abandoned"}}
-            <div style="padding: 15px; background: #f8d7da; border-radius: 4px;">
-                <strong>Abandoned</strong><br>
-                <span style="color: #666;">This hop was cancelled.</span>
-            </div>
+            {{else}}
+            <p class="empty">Nothing needs your attention on this Hop right now.</p>
             {{end}}
         </div>
 

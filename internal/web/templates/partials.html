@@ -1,0 +1,70 @@
+{{/*
+Shared components. This file is parsed alongside layout.html for every page, so
+any template defined here is available everywhere.
+
+lifecycle-ribbon expects a domain.Ribbon.
+roadmap-strip expects a *web.RoadmapStrip.
+*/}}
+
+{{define "lifecycle-ribbon"}}
+<div class="ribbon ribbon-{{.Tone}}">
+    <div class="ribbon-head">
+        <span class="ribbon-headline">{{.Headline}}</span>
+        <span class="ribbon-actor ribbon-actor-{{.WaitingOn}}">
+            {{if .WaitingOnYou}}Your move{{else if .Terminal}}Complete{{else}}Mendel is working{{end}}
+        </span>
+    </div>
+
+    {{range .Tracks}}
+    <div class="track{{if not .Applicable}} track-na{{end}}">
+        <div class="track-label">
+            {{.Label}}
+            {{if .Note}}<span class="track-note">{{.Note}}</span>{{end}}
+        </div>
+        <ol class="stages">
+            {{range .Stages}}
+            <li class="stage stage-{{.State}} tone-{{.Tone}}">
+                <span class="stage-dot"></span>
+                <span class="stage-label">{{.Label}}</span>
+                {{if .Note}}<span class="stage-note">{{.Note}}</span>{{end}}
+            </li>
+            {{end}}
+        </ol>
+    </div>
+    {{end}}
+
+    <p class="ribbon-next">{{.NextAction}}</p>
+</div>
+{{end}}
+
+{{define "roadmap-strip"}}
+{{if .HasNeighbors}}
+<nav class="strip" aria-label="Position in roadmap">
+    <span class="strip-caption">Roadmap</span>
+
+    {{if .MoreBefore}}
+    <span class="strip-more">+{{.MoreBefore}} more</span>
+    <span class="strip-arrow" aria-hidden="true">&rarr;</span>
+    {{end}}
+
+    {{range .Before}}
+    <a class="strip-hop tone-{{.Tone}}" href="/p/{{$.ProjectID}}/hops/{{.ID}}">{{.Name}}</a>
+    <span class="strip-arrow" aria-hidden="true">&rarr;</span>
+    {{end}}
+
+    <span class="strip-hop strip-current tone-{{.Current.Tone}}" aria-current="true">{{.Current.Name}}</span>
+
+    {{range .After}}
+    <span class="strip-arrow" aria-hidden="true">&rarr;</span>
+    <a class="strip-hop tone-{{.Tone}}" href="/p/{{$.ProjectID}}/hops/{{.ID}}">{{.Name}}</a>
+    {{end}}
+
+    {{if .MoreAfter}}
+    <span class="strip-arrow" aria-hidden="true">&rarr;</span>
+    <span class="strip-more">+{{.MoreAfter}} more</span>
+    {{end}}
+
+    <a class="strip-all" href="/p/{{.ProjectID}}/roadmap">Full roadmap &rarr;</a>
+</nav>
+{{end}}
+{{end}}
