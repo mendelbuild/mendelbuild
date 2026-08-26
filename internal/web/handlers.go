@@ -52,6 +52,12 @@ var templateFuncs = template.FuncMap{
 		}
 		return *f
 	},
+	"div": func(a, b int) int {
+		if b == 0 {
+			return 0
+		}
+		return a / b
+	},
 }
 
 // parsePageTemplate creates a template from layout + a specific page template.

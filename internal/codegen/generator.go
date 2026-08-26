@@ -196,6 +196,9 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 	logger(domain.LogLevelInfo, fmt.Sprintf("API stats: %d rounds, %d tool calls, %d input tokens, %d output tokens",
 		execResult.Stats.APIRounds, execResult.Stats.ToolCalls, execResult.Stats.InputTokens, execResult.Stats.OutputTokens))
 
+	// Save token usage to database (accumulates across runs)
+	g.db.AddVariationTokens(ctx, variation.ID, execResult.Stats.InputTokens, execResult.Stats.OutputTokens)
+
 	if !execResult.Success {
 		result.Error = fmt.Sprintf("code generation failed: %v", execResult.Error)
 		logger(domain.LogLevelError, result.Error)

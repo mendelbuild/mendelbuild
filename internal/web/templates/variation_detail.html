@@ -46,6 +46,15 @@
                     <th>Updated</th>
                     <td>{{.Variation.UpdatedAt.Format "2006-01-02 15:04:05"}}</td>
                 </tr>
+                {{if or .Variation.InputTokens .Variation.OutputTokens}}
+                <tr>
+                    <th>Tokens</th>
+                    <td>
+                        {{printf "%dk" (div .Variation.InputTokens 1000)}} in / {{printf "%dk" (div .Variation.OutputTokens 1000)}} out
+                        <span style="color: #666; margin-left: 8px;">(~${{printf "%.2f" .Variation.TokenCost}})</span>
+                    </td>
+                </tr>
+                {{end}}
             </table>
 
             {{if eq .Variation.Status "pending"}}

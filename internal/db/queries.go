@@ -645,10 +645,12 @@ func (db *DB) GetVariation(ctx context.Context, id uuid.UUID) (*domain.Variation
 	var v domain.Variation
 	err := db.Pool.QueryRow(ctx, `
 		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref,
-		       diff_files_changed, diff_additions, diff_deletions, evaluation_scores, status, created_at, updated_at
+		       diff_files_changed, diff_additions, diff_deletions, evaluation_scores,
+		       input_tokens, output_tokens, status, created_at, updated_at
 		FROM variations WHERE id = $1
 	`, id).Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef,
-		&v.DiffFilesChanged, &v.DiffAdditions, &v.DiffDeletions, &v.EvaluationScores, &v.Status, &v.CreatedAt, &v.UpdatedAt)
+		&v.DiffFilesChanged, &v.DiffAdditions, &v.DiffDeletions, &v.EvaluationScores,
+		&v.InputTokens, &v.OutputTokens, &v.Status, &v.CreatedAt, &v.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -697,11 +699,24 @@ func (db *DB) UpdateVariationEvaluationScores(ctx context.Context, variationID u
 	return err
 }
 
+// AddVariationTokens increments the token counts for a variation.
+func (db *DB) AddVariationTokens(ctx context.Context, variationID uuid.UUID, inputTokens, outputTokens int) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE variations SET
+			input_tokens = input_tokens + $2,
+			output_tokens = output_tokens + $3,
+			updated_at = NOW()
+		WHERE id = $1
+	`, variationID, inputTokens, outputTokens)
+	return err
+}
+
 // GetVariationsByHop retrieves all variations for a hop.
 func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain.Variation, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref,
-		       diff_files_changed, diff_additions, diff_deletions, evaluation_scores, status, created_at, updated_at
+		       diff_files_changed, diff_additions, diff_deletions, evaluation_scores,
+		       input_tokens, output_tokens, status, created_at, updated_at
 		FROM variations
 		WHERE hop_id = $1
 		ORDER BY created_at ASC
@@ -715,7 +730,8 @@ func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain
 	for rows.Next() {
 		var v domain.Variation
 		if err := rows.Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef,
-			&v.DiffFilesChanged, &v.DiffAdditions, &v.DiffDeletions, &v.EvaluationScores, &v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
+			&v.DiffFilesChanged, &v.DiffAdditions, &v.DiffDeletions, &v.EvaluationScores,
+			&v.InputTokens, &v.OutputTokens, &v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
 		variations = append(variations, v)

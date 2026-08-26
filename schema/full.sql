@@ -1,5 +1,5 @@
 -- MendelBuild Core Schema
--- This file represents the complete schema after all migrations (001-025).
+-- This file represents the complete schema after all migrations (001-026).
 -- It should be kept in sync with migrations for reference.
 --
 -- See DESIGN.md Section 2 for conceptual overview.
@@ -346,6 +346,10 @@ CREATE TABLE variations (
 
     -- Cached evaluation scores [added in 017]
     evaluation_scores JSONB,
+
+    -- Token usage tracking [added in 026]
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
 
     status TEXT NOT NULL DEFAULT 'creating'
         CHECK (status IN ('creating', 'pending', 'blocked', 'migrating', 'active', 'draining',

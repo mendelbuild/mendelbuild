@@ -221,9 +221,19 @@ type Variation struct {
 	DiffAdditions      *int            `json:"diff_additions,omitempty"`       // Lines added vs main
 	DiffDeletions      *int            `json:"diff_deletions,omitempty"`       // Lines deleted vs main
 	EvaluationScores   json.RawMessage `json:"evaluation_scores,omitempty"`    // Cached evaluation scores
+	InputTokens        int             `json:"input_tokens"`                   // Cumulative input tokens used
+	OutputTokens       int             `json:"output_tokens"`                  // Cumulative output tokens used
 	Status             VariationStatus `json:"status"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
+}
+
+// TokenCost calculates estimated cost in USD based on Claude Sonnet pricing.
+// Input: $3/M tokens, Output: $15/M tokens
+func (v *Variation) TokenCost() float64 {
+	inputCost := float64(v.InputTokens) * 3.0 / 1_000_000
+	outputCost := float64(v.OutputTokens) * 15.0 / 1_000_000
+	return inputCost + outputCost
 }
 
 // VariationStateHistory records a state transition for a Variation.
