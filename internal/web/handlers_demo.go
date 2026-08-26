@@ -615,6 +615,12 @@ func (s *Server) handleStopDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	projID, err := uuid.Parse(projectID)
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
 	// Find running demo
 	demoInst, err := s.db.GetRunningDemoByVariation(ctx, variationID)
 	if err != nil {
@@ -622,7 +628,7 @@ func (s *Server) handleStopDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract work_dir from process info
+	// Extract work_dir and deploy_mode from process info
 	var processInfo map[string]interface{}
 	if demoInst.ProcessInfo != nil {
 		json.Unmarshal(demoInst.ProcessInfo, &processInfo)
@@ -631,13 +637,23 @@ func (s *Server) handleStopDemo(w http.ResponseWriter, r *http.Request) {
 	if workDir == "" {
 		workDir = git.WorkDirForVariation(projectID, variationID.String())
 	}
+	deployMode, _ := processInfo["deploy_mode"].(string)
 
-	// Run teardown instructions for demo process
-	cmd := exec.CommandContext(ctx, "sh", "-c", demoInst.TeardownInstructions)
-	cmd.Dir = workDir
-	if err := cmd.Run(); err != nil {
+	var teardownErr error
+
+	if deployMode == "cloud" {
+		// Cloud deployment - run teardown in Docker with secrets
+		teardownErr = s.runCloudTeardown(ctx, projID, variationID, workDir)
+	} else {
+		// Docker-compose deployment - simple sh -c
+		cmd := exec.CommandContext(ctx, "sh", "-c", demoInst.TeardownInstructions)
+		cmd.Dir = workDir
+		teardownErr = cmd.Run()
+	}
+
+	if teardownErr != nil {
 		// Mark as error but continue
-		errMsg := fmt.Sprintf("Teardown failed: %v", err)
+		errMsg := fmt.Sprintf("Teardown failed: %v", teardownErr)
 		s.db.UpdateDemoInstanceStatus(ctx, demoInst.ID, domain.DemoInstanceStatusError, &errMsg)
 	} else {
 		// Mark as stopped
@@ -652,6 +668,58 @@ func (s *Server) handleStopDemo(w http.ResponseWriter, r *http.Request) {
 
 	// Redirect to variation detail
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
+}
+
+// runCloudTeardown runs the teardown script in a Docker container with secrets.
+func (s *Server) runCloudTeardown(ctx context.Context, projectID, variationID uuid.UUID, workDir string) error {
+	// Load hosting config
+	hostingCfg, err := demo.LoadHostingConfig(workDir)
+	if err != nil {
+		return fmt.Errorf("load hosting config: %w", err)
+	}
+	if hostingCfg == nil {
+		return fmt.Errorf("no hosting config found")
+	}
+
+	// Build environment with decrypted secrets
+	env := os.Environ()
+	env = append(env, fmt.Sprintf("MENDEL_VARIATION_ID=%s", variationID.String()))
+
+	key, err := crypto.GetKey()
+	if err != nil {
+		return fmt.Errorf("encryption not configured: %w", err)
+	}
+
+	for _, secretName := range hostingCfg.RequiredSecrets {
+		cred, err := s.db.GetProjectCredential(ctx, projectID, secretName)
+		if err != nil {
+			return fmt.Errorf("load credential %s: %w", secretName, err)
+		}
+		decrypted, err := crypto.Decrypt(cred.EncryptedValue, key)
+		if err != nil {
+			return fmt.Errorf("decrypt %s: %w", secretName, err)
+		}
+		env = append(env, fmt.Sprintf("%s=%s", secretName, string(decrypted)))
+	}
+
+	// Build docker run command
+	dockerArgs := []string{
+		"run", "--rm",
+		"-v", workDir + ":/workspace",
+		"-w", "/workspace/.mendel",
+		"--entrypoint", "/bin/sh",
+	}
+	for _, e := range env {
+		dockerArgs = append(dockerArgs, "-e", e)
+	}
+	dockerArgs = append(dockerArgs, hostingCfg.DeployerImage, "/workspace/.mendel/"+hostingCfg.TeardownScript)
+
+	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, string(output))
+	}
+	return nil
 }
 
 // revertVariationMigration reverts a variation's migration if it was applied and not yet reverted.
