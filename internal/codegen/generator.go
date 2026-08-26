@@ -104,55 +104,90 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 
 	logger(domain.LogLevelMilestone, fmt.Sprintf("Starting code generation for variation '%s'", variation.Name))
 
-	// 1. Clone repository to work directory
-	// Work directories persist until variation is resolved (merged/rejected/pruned)
+	// 1. Check for pending revision (user feedback) - determines clone strategy
+	var pendingRevision *domain.VariationRevision
+	pendingRevision, _ = g.db.GetPendingVariationRevision(ctx, variation.ID)
+
+	isRevision := pendingRevision != nil
+	if isRevision {
+		g.db.UpdateVariationRevisionStatus(ctx, pendingRevision.ID, domain.VariationRevisionStatusInProgress, nil)
+		logger(domain.LogLevelMilestone, fmt.Sprintf("Processing revision: %s", pendingRevision.Feedback))
+	}
+
+	// 2. Set up work directory
 	workDir := git.WorkDirForVariation(g.config.ProjectID, variation.ID.String())
 	gitClient := git.NewClient(workDir)
+	branchName := fmt.Sprintf("mendel/%s/%s", hopName, variation.Name)
+	result.BranchName = branchName
 
 	// Infrastructure failures use "error" status (retryable)
 	// Code/test failures use "terminated" status (not retryable)
 
-	// Clean up any existing work directory from a previous attempt
-	if _, err := os.Stat(workDir); err == nil {
-		logger(domain.LogLevelInfo, "Cleaning up existing work directory from previous attempt")
-		if err := os.RemoveAll(workDir); err != nil {
-			result.Error = fmt.Sprintf("failed to clean up work directory: %v", err)
+	if isRevision {
+		// For revisions: clone existing branch (or use existing work dir)
+		if _, err := os.Stat(workDir); err == nil {
+			// Work directory exists - pull latest
+			logger(domain.LogLevelInfo, "Using existing work directory, pulling latest")
+			// Already on the branch, just make sure it's up to date
+		} else {
+			// Clone the existing variation branch
+			logger(domain.LogLevelInfo, fmt.Sprintf("Cloning existing branch %s", branchName))
+			if err := gitClient.Clone(ctx, g.config.RepositoryURL, branchName, g.config.AuthToken); err != nil {
+				result.Error = fmt.Sprintf("clone failed: %v", err)
+				logger(domain.LogLevelError, result.Error)
+				g.db.UpdateVariationRevisionStatus(ctx, pendingRevision.ID, domain.VariationRevisionStatusFailed, &result.Error)
+				g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusError, result.Error)
+				return result, nil
+			}
+		}
+	} else {
+		// For fresh generation: clean up and clone from main
+		if _, err := os.Stat(workDir); err == nil {
+			logger(domain.LogLevelInfo, "Cleaning up existing work directory from previous attempt")
+			if err := os.RemoveAll(workDir); err != nil {
+				result.Error = fmt.Sprintf("failed to clean up work directory: %v", err)
+				logger(domain.LogLevelError, result.Error)
+				g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusError, result.Error)
+				return result, nil
+			}
+		}
+
+		logger(domain.LogLevelInfo, fmt.Sprintf("Cloning repository to %s", workDir))
+		if err := gitClient.Clone(ctx, g.config.RepositoryURL, g.config.MainBranch, g.config.AuthToken); err != nil {
+			result.Error = fmt.Sprintf("clone failed: %v", err)
+			logger(domain.LogLevelError, result.Error)
+			g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusError, result.Error)
+			return result, nil
+		}
+		logger(domain.LogLevelMilestone, "Repository cloned successfully")
+
+		// Create branch
+		logger(domain.LogLevelInfo, fmt.Sprintf("Creating branch: %s", branchName))
+		if err := gitClient.CreateBranch(ctx, branchName); err != nil {
+			result.Error = fmt.Sprintf("create branch failed: %v", err)
 			logger(domain.LogLevelError, result.Error)
 			g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusError, result.Error)
 			return result, nil
 		}
 	}
 
-	logger(domain.LogLevelInfo, fmt.Sprintf("Cloning repository to %s", workDir))
-	if err := gitClient.Clone(ctx, g.config.RepositoryURL, g.config.MainBranch, g.config.AuthToken); err != nil {
-		result.Error = fmt.Sprintf("clone failed: %v", err)
-		logger(domain.LogLevelError, result.Error)
-		g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusError, result.Error)
-		return result, nil
-	}
-	logger(domain.LogLevelMilestone, "Repository cloned successfully")
-
-	// 2. Create branch
-	branchName := fmt.Sprintf("mendel/%s/%s", hopName, variation.Name)
-	result.BranchName = branchName
-
-	logger(domain.LogLevelInfo, fmt.Sprintf("Creating branch: %s", branchName))
-	if err := gitClient.CreateBranch(ctx, branchName); err != nil {
-		result.Error = fmt.Sprintf("create branch failed: %v", err)
-		logger(domain.LogLevelError, result.Error)
-		g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusError, result.Error)
-		return result, nil
-	}
-
-	// 3. Run code generation via API tool loop
+	// 4. Run code generation via API tool loop
 	exec := executor.New(g.config.APIKey, workDir).
 		WithEventHandler(g.createEventHandler(ctx, variation.ID, logger))
 
-	prompt := BuildImplementationPrompt(hopName, variation.Name, variation.Approach)
+	var prompt string
+	if pendingRevision != nil {
+		prompt = BuildRevisionPrompt(hopName, variation.Name, variation.Approach, pendingRevision.Feedback)
+	} else {
+		prompt = BuildImplementationPrompt(hopName, variation.Name, variation.Approach)
+	}
 	execResult, err := exec.Run(ctx, executor.SystemPrompt(), prompt)
 	if err != nil {
 		result.Error = fmt.Sprintf("executor error: %v", err)
 		logger(domain.LogLevelError, result.Error)
+		if pendingRevision != nil {
+			g.db.UpdateVariationRevisionStatus(ctx, pendingRevision.ID, domain.VariationRevisionStatusFailed, &result.Error)
+		}
 		g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusError, result.Error)
 		return result, nil
 	}
@@ -164,6 +199,9 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 	if !execResult.Success {
 		result.Error = fmt.Sprintf("code generation failed: %v", execResult.Error)
 		logger(domain.LogLevelError, result.Error)
+		if pendingRevision != nil {
+			g.db.UpdateVariationRevisionStatus(ctx, pendingRevision.ID, domain.VariationRevisionStatusFailed, &result.Error)
+		}
 		g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusTerminated, result.Error)
 		return result, nil
 	}
@@ -267,6 +305,12 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 
 	// 12. Record state transition
 	g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusPending, "code generation successful")
+
+	// 13. Mark revision as completed if one was being processed
+	if pendingRevision != nil {
+		g.db.UpdateVariationRevisionStatus(ctx, pendingRevision.ID, domain.VariationRevisionStatusCompleted, nil)
+		logger(domain.LogLevelMilestone, "Revision completed successfully!")
+	}
 
 	logger(domain.LogLevelMilestone, "Code generation completed successfully!")
 	result.Success = true

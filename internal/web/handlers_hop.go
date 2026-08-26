@@ -615,6 +615,66 @@ func (s *Server) handleRebaseVariation(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
 }
 
+// handleRequestChange creates a VariationRevision and puts the variation back into "creating" state.
+func (s *Server) handleRequestChange(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID := chi.URLParam(r, "projectID")
+
+	variationID, err := uuid.Parse(chi.URLParam(r, "variationID"))
+	if err != nil {
+		http.Error(w, "invalid variation ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	feedback := strings.TrimSpace(r.FormValue("feedback"))
+	if feedback == "" {
+		http.Error(w, "feedback is required", http.StatusBadRequest)
+		return
+	}
+
+	variation, err := s.db.GetVariation(ctx, variationID)
+	if err != nil {
+		http.Error(w, "variation not found", http.StatusNotFound)
+		return
+	}
+
+	// Only allow change requests for pending or error status
+	if variation.Status != domain.VariationStatusPending &&
+		variation.Status != domain.VariationStatusError &&
+		variation.Status != domain.VariationStatusBlocked {
+		http.Error(w, "can only request changes for variations in pending, error, or blocked status", http.StatusBadRequest)
+		return
+	}
+
+	// Create the revision record
+	revision := &domain.VariationRevision{
+		ID:          uuid.New(),
+		VariationID: variationID,
+		Feedback:    feedback,
+		Status:      domain.VariationRevisionStatusPending,
+		CreatedAt:   time.Now(),
+	}
+
+	if err := s.db.CreateVariationRevision(ctx, revision); err != nil {
+		http.Error(w, "failed to create revision: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Set variation back to "creating" status
+	s.db.AtomicUpdateVariationStatus(ctx, variationID, variation.Status, domain.VariationStatusCreating)
+
+	// Log the revision request
+	s.db.CreateVariationLog(ctx, variationID, domain.LogLevelMilestone, fmt.Sprintf("Change requested: %s", feedback))
+
+	// Redirect back to variation detail
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
+}
+
 func (s *Server) handleRetryWithFix(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	projectID := chi.URLParam(r, "projectID")

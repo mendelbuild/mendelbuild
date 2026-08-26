@@ -236,6 +236,28 @@ type VariationStateHistory struct {
 	Reason         *string   `json:"reason,omitempty"`
 }
 
+// VariationRevisionStatus represents the state of a revision request.
+type VariationRevisionStatus string
+
+const (
+	VariationRevisionStatusPending    VariationRevisionStatus = "pending"
+	VariationRevisionStatusInProgress VariationRevisionStatus = "in_progress"
+	VariationRevisionStatusCompleted  VariationRevisionStatus = "completed"
+	VariationRevisionStatusFailed     VariationRevisionStatus = "failed"
+)
+
+// VariationRevision tracks a user's request to improve a variation.
+type VariationRevision struct {
+	ID           uuid.UUID               `json:"id"`
+	VariationID  uuid.UUID               `json:"variation_id"`
+	Feedback     string                  `json:"feedback"`
+	Status       VariationRevisionStatus `json:"status"`
+	ErrorMessage *string                 `json:"error_message,omitempty"`
+	CreatedAt    time.Time               `json:"created_at"`
+	StartedAt    *time.Time              `json:"started_at,omitempty"`
+	CompletedAt  *time.Time              `json:"completed_at,omitempty"`
+}
+
 // LogLevel represents the severity/type of a variation log entry.
 type LogLevel string
 

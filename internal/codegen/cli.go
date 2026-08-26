@@ -293,3 +293,30 @@ func BuildImplementationPrompt(hopName, variationName, approach string) string {
 
 	return prompt.String()
 }
+
+// BuildRevisionPrompt constructs a prompt for applying user feedback to an existing variation.
+func BuildRevisionPrompt(hopName, variationName, approach, feedback string) string {
+	var prompt strings.Builder
+
+	prompt.WriteString(fmt.Sprintf("# Task: Revise the '%s' variation for hop '%s'\n\n", variationName, hopName))
+
+	prompt.WriteString("## Original Approach\n\n")
+	prompt.WriteString(approach)
+	prompt.WriteString("\n\n")
+
+	prompt.WriteString("## User Feedback\n\n")
+	prompt.WriteString("The user has requested the following change:\n\n")
+	prompt.WriteString("> " + strings.ReplaceAll(feedback, "\n", "\n> "))
+	prompt.WriteString("\n\n")
+
+	prompt.WriteString("## Instructions\n\n")
+	prompt.WriteString("1. This variation has already been implemented - review the existing code\n")
+	prompt.WriteString("2. Make the changes requested in the user feedback above\n")
+	prompt.WriteString("3. Follow existing code style and patterns\n")
+	prompt.WriteString("4. Update or add tests if appropriate\n")
+	prompt.WriteString("5. Stop when changes are complete - do NOT run tests yourself\n\n")
+
+	prompt.WriteString("Focus on addressing the specific feedback. Make minimal changes beyond what's needed.\n")
+
+	return prompt.String()
+}

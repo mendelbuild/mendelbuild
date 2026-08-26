@@ -695,6 +695,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/variations/{variationID}/retry-fix", s.handleRetryWithFix)
 		r.Post("/variations/{variationID}/terminate", s.handleTerminateVariation)
 		r.Post("/variations/{variationID}/rebase", s.handleRebaseVariation)
+		r.Post("/variations/{variationID}/request-change", s.handleRequestChange)
 		r.Post("/variations/{variationID}/start-demo", s.handleStartDemo)
 		r.Post("/variations/{variationID}/stop-demo", s.handleStopDemo)
 		r.Post("/variations/{variationID}/retry-demo", s.handleRetryDemo)

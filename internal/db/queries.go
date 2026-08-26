@@ -1883,6 +1883,92 @@ func (db *DB) MarkVariationMigrationReverted(ctx context.Context, id uuid.UUID) 
 	return nil
 }
 
+// =====================================================
+// Variation Revision Queries (added in 025)
+// =====================================================
+
+// CreateVariationRevision creates a new revision request for a variation.
+func (db *DB) CreateVariationRevision(ctx context.Context, r *domain.VariationRevision) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO variation_revisions (id, variation_id, feedback, status, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, r.ID, r.VariationID, r.Feedback, r.Status, r.CreatedAt)
+	return err
+}
+
+// GetVariationRevision retrieves a revision by ID.
+func (db *DB) GetVariationRevision(ctx context.Context, id uuid.UUID) (*domain.VariationRevision, error) {
+	var r domain.VariationRevision
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, variation_id, feedback, status, error_message, created_at, started_at, completed_at
+		FROM variation_revisions WHERE id = $1
+	`, id).Scan(&r.ID, &r.VariationID, &r.Feedback, &r.Status, &r.ErrorMessage, &r.CreatedAt, &r.StartedAt, &r.CompletedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// GetVariationRevisions retrieves all revisions for a variation, newest first.
+func (db *DB) GetVariationRevisions(ctx context.Context, variationID uuid.UUID) ([]domain.VariationRevision, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, variation_id, feedback, status, error_message, created_at, started_at, completed_at
+		FROM variation_revisions
+		WHERE variation_id = $1
+		ORDER BY created_at DESC
+	`, variationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var revisions []domain.VariationRevision
+	for rows.Next() {
+		var r domain.VariationRevision
+		if err := rows.Scan(&r.ID, &r.VariationID, &r.Feedback, &r.Status, &r.ErrorMessage, &r.CreatedAt, &r.StartedAt, &r.CompletedAt); err != nil {
+			return nil, err
+		}
+		revisions = append(revisions, r)
+	}
+	return revisions, rows.Err()
+}
+
+// GetPendingVariationRevision gets the oldest pending revision for a variation.
+func (db *DB) GetPendingVariationRevision(ctx context.Context, variationID uuid.UUID) (*domain.VariationRevision, error) {
+	var r domain.VariationRevision
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id, variation_id, feedback, status, error_message, created_at, started_at, completed_at
+		FROM variation_revisions
+		WHERE variation_id = $1 AND status = 'pending'
+		ORDER BY created_at ASC
+		LIMIT 1
+	`, variationID).Scan(&r.ID, &r.VariationID, &r.Feedback, &r.Status, &r.ErrorMessage, &r.CreatedAt, &r.StartedAt, &r.CompletedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// UpdateVariationRevisionStatus updates the status of a revision.
+func (db *DB) UpdateVariationRevisionStatus(ctx context.Context, id uuid.UUID, status domain.VariationRevisionStatus, errorMsg *string) error {
+	var completedAt interface{}
+	var startedAt interface{}
+
+	if status == domain.VariationRevisionStatusInProgress {
+		startedAt = time.Now()
+	}
+	if status == domain.VariationRevisionStatusCompleted || status == domain.VariationRevisionStatusFailed {
+		completedAt = time.Now()
+	}
+
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE variation_revisions
+		SET status = $2, error_message = $3, started_at = COALESCE($4, started_at), completed_at = COALESCE($5, completed_at)
+		WHERE id = $1
+	`, id, status, errorMsg, startedAt, completedAt)
+	return err
+}
+
 // GetInputRequestCache retrieves the cache JSON for a decision.
 func (db *DB) GetInputRequestCache(ctx context.Context, inputRequestID uuid.UUID) (json.RawMessage, error) {
 	var cache json.RawMessage
