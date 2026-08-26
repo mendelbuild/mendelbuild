@@ -3,11 +3,68 @@
 <h1>{{.Project.Name}}</h1>
 <h2>Strategy: {{.Strategy.Name}}</h2>
 
-{{if $.ProductionURL}}
+{{if $.DeploymentChannel}}
+{{with $.DeploymentChannel}}
+<div class="card" style="margin-bottom: 20px; {{if .ProdURL}}background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); border: 1px solid #28a745;{{else if .IsDemoValidated}}background: linear-gradient(135deg, #fff3cd 0%, #ffeeba 100%); border: 1px solid #ffc107;{{else}}background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border: 1px solid #6c757d;{{end}}">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <h2 style="margin: 0 0 5px 0; {{if .ProdURL}}color: #155724;{{else if .IsDemoValidated}}color: #856404;{{else}}color: #495057;{{end}}">
+                Deployment Channel
+            </h2>
+            <div style="margin-bottom: 8px;">
+                <span style="font-weight: bold;">{{.ArtifactKind}}</span> &rarr;
+                {{if .HostingPlatform}}<span>{{.HostingPlatform.Name}}</span>{{end}}
+            </div>
+            {{if .ProdURL}}
+            <a href="{{.ProdURL}}" target="_blank" style="color: #155724; font-size: 1.1em;">{{.ProdURL}}</a>
+            <div style="font-size: 0.85em; color: #155724; margin-top: 5px;">
+                Deployed: {{.ProdDeployedAt.Format "2006-01-02 15:04"}}
+            </div>
+            {{else}}
+            <div style="font-size: 0.9em; margin-top: 5px;">
+                {{if .IsDemoValidated}}
+                <span style="color: #856404;">Demo validated</span>
+                {{if .IsProdValidated}} &bull; <span style="color: #155724;">Prod validated</span>{{else}} &bull; <span style="color: #6c757d;">Prod not validated</span>{{end}}
+                {{else}}
+                <span style="color: #6c757d;">Not validated yet</span>
+                {{end}}
+            </div>
+            {{end}}
+        </div>
+        <div style="display: flex; gap: 10px;">
+            {{if .ProdURL}}
+            <a href="{{.ProdURL}}" target="_blank" style="padding: 8px 16px; background: #28a745; color: white; text-decoration: none; border-radius: 4px; font-weight: bold;">
+                View
+            </a>
+            {{end}}
+            <a href="/p/{{$.ProjectID}}/deployment" style="padding: 8px 16px; background: #007bff; color: white; text-decoration: none; border-radius: 4px;">
+                {{if .ProdURL}}Manage{{else}}Set Up{{end}}
+            </a>
+        </div>
+    </div>
+</div>
+{{end}}
+{{else if $.SupportedCombos}}
+<div class="card" style="margin-bottom: 20px; background: linear-gradient(135deg, #cce5ff 0%, #b8daff 100%); border: 1px solid #007bff;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <h2 style="margin: 0 0 5px 0; color: #004085;">Set Up Deployment</h2>
+            <div style="color: #004085; font-size: 0.95em;">
+                Configure how this project deploys to production and demos.
+            </div>
+        </div>
+        <a href="/p/{{$.ProjectID}}/deployment" style="padding: 8px 16px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; font-weight: bold;">
+            Configure
+        </a>
+    </div>
+</div>
+{{end}}
+
+{{if $.ProductionURL}}{{if not $.DeploymentChannel}}
 <div class="card" style="margin-bottom: 20px; background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); border: 1px solid #28a745;">
     <div style="display: flex; justify-content: space-between; align-items: center;">
         <div>
-            <h2 style="margin: 0 0 5px 0; color: #155724;">Production</h2>
+            <h2 style="margin: 0 0 5px 0; color: #155724;">Production (Legacy)</h2>
             <a href="{{$.ProductionURL}}" target="_blank" style="color: #155724; font-size: 1.1em;">{{$.ProductionURL}}</a>
             <div style="font-size: 0.85em; color: #155724; margin-top: 5px;">
                 Last deployed: {{$.ProductionDeployedAt}}
@@ -25,7 +82,7 @@
         </div>
     </div>
 </div>
-{{end}}
+{{end}}{{end}}
 
 <div style="display: flex; gap: 20px; align-items: flex-start;">
     <div style="flex: 2;">

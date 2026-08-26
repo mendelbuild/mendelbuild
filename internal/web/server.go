@@ -89,6 +89,16 @@ func (s *Server) seedHostingPlatforms() {
 	if count > 0 {
 		fmt.Printf("[startup] Seeded %d hosting platforms\n", count)
 	}
+
+	// Seed deployment combos (depends on platforms being seeded first)
+	comboCount, err := hosting.SeedCombosIfEmpty(ctx, s.db)
+	if err != nil {
+		fmt.Printf("[startup] Warning: could not seed deployment combos: %v\n", err)
+		return
+	}
+	if comboCount > 0 {
+		fmt.Printf("[startup] Seeded %d deployment combos\n", comboCount)
+	}
 }
 
 // cleanupStaleDemos marks any demos that were "running" or "starting" before
@@ -669,6 +679,10 @@ func (s *Server) setupRoutes() {
 		r.Post("/settings/members", s.handleAddMember)
 		r.Post("/settings/members/{userID}/remove", s.handleRemoveMember)
 		r.Post("/redeploy", s.handleRedeploy)
+
+		// Deployment channel routes
+		r.Get("/deployment", s.handleDeploymentChannel)
+		r.Post("/deployment/channel", s.handleSetDeploymentChannel)
 
 		// OKR Editor routes
 		r.Get("/okr", s.handleOKREditor)

@@ -2,6 +2,7 @@ package hosting
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/bhs/mendelbuild/internal/domain"
 )
@@ -62,6 +63,17 @@ func DefaultPlatforms() []domain.HostingPlatform {
 - Deploy script should create service via API and trigger deploy
 - Teardown script should delete the service`,
 		},
+		{
+			Slug:          "gke",
+			Name:          "Google Kubernetes Engine",
+			DeployerImage: "google/cloud-sdk:slim",
+			Instructions: `GKE Kubernetes deployment:
+- Use 'gcloud container' and 'kubectl' commands
+- Required env vars: GCP_PROJECT_ID, GCP_SERVICE_ACCOUNT_KEY (JSON), GKE_CLUSTER_NAME, GKE_ZONE
+- Deploy script should authenticate, get cluster credentials, and apply k8s manifests
+- Teardown script should delete the deployment/service resources
+- Use 'kubectl apply -f' for manifests or 'helm install' for Helm charts`,
+		},
 	}
 }
 
@@ -103,4 +115,90 @@ func RefreshAll(ctx context.Context, db DB) (int, error) {
 		}
 	}
 	return len(defaults), nil
+}
+
+// ComboSpec defines a supported (artifact_kind, platform_slug) combination.
+type ComboSpec struct {
+	ArtifactKind domain.DeployArtifactKind
+	PlatformSlug string
+	Notes        string
+	Guidance     map[string]any
+}
+
+// DefaultCombos returns the initial sparse matrix of supported deployment combinations.
+func DefaultCombos() []ComboSpec {
+	return []ComboSpec{
+		{
+			ArtifactKind: domain.DeployArtifactContainer,
+			PlatformSlug: "fly-io",
+			Notes:        "Single container deployment to Fly.io",
+			Guidance: map[string]any{
+				"requires":    []string{"Dockerfile"},
+				"healthCheck": "Use fly.toml [http_service.checks] for health checks",
+				"tips":        []string{"fly launch auto-detects Dockerfile", "Use fly secrets for env vars"},
+			},
+		},
+		{
+			ArtifactKind: domain.DeployArtifactContainer,
+			PlatformSlug: "cloud-run",
+			Notes:        "Single container deployment to Google Cloud Run",
+			Guidance: map[string]any{
+				"requires":    []string{"Dockerfile", "GCP project with Cloud Run API enabled"},
+				"healthCheck": "Cloud Run uses container PORT health by default",
+				"tips":        []string{"Use Artifact Registry for images", "Set --allow-unauthenticated for public access"},
+			},
+		},
+		{
+			ArtifactKind: domain.DeployArtifactKubernetes,
+			PlatformSlug: "gke",
+			Notes:        "Kubernetes deployment to Google Kubernetes Engine",
+			Guidance: map[string]any{
+				"requires":    []string{"k8s manifests or Helm chart", "GKE cluster"},
+				"healthCheck": "Use readiness/liveness probes in deployment spec",
+				"tips":        []string{"Use Workload Identity for IAM", "Consider Autopilot for simpler ops"},
+			},
+		},
+	}
+}
+
+// ComboDB interface for deployment combo operations.
+type ComboDB interface {
+	CountSupportedDeploymentCombos(ctx context.Context) (int, error)
+	CreateSupportedDeploymentCombo(ctx context.Context, c *domain.SupportedDeploymentCombo) error
+	GetHostingPlatformBySlug(ctx context.Context, slug string) (*domain.HostingPlatform, error)
+}
+
+// SeedCombosIfEmpty seeds the supported_deployment_combos table if empty.
+func SeedCombosIfEmpty(ctx context.Context, db ComboDB) (int, error) {
+	count, err := db.CountSupportedDeploymentCombos(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if count > 0 {
+		return 0, nil
+	}
+
+	specs := DefaultCombos()
+	seeded := 0
+	for _, spec := range specs {
+		platform, err := db.GetHostingPlatformBySlug(ctx, spec.PlatformSlug)
+		if err != nil {
+			continue // Skip if platform doesn't exist (e.g., GKE not seeded yet)
+		}
+
+		guidanceJSON, _ := json.Marshal(spec.Guidance)
+		notes := spec.Notes
+
+		combo := &domain.SupportedDeploymentCombo{
+			ArtifactKind:      spec.ArtifactKind,
+			HostingPlatformID: platform.ID,
+			Notes:             &notes,
+			Guidance:          guidanceJSON,
+		}
+		if err := db.CreateSupportedDeploymentCombo(ctx, combo); err != nil {
+			return seeded, err
+		}
+		seeded++
+	}
+	return seeded, nil
 }

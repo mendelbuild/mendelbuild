@@ -602,3 +602,100 @@ func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 
 	http.Redirect(w, r, "/p/"+projectID.String()+"/settings?success=1", http.StatusSeeOther)
 }
+
+// handleDeploymentChannel shows the deployment channel configuration page.
+func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	project, err := s.db.GetProject(ctx, projectID)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	// Get current channel if any
+	channel, _ := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
+
+	// Get all channels (history)
+	channels, _ := s.db.ListProjectDeploymentChannels(ctx, projectID)
+
+	// Get supported combos
+	combos, err := s.db.ListSupportedDeploymentCombos(ctx)
+	if err != nil {
+		http.Error(w, "failed to load deployment options", http.StatusInternalServerError)
+		return
+	}
+
+	data := map[string]interface{}{
+		"Title":          "Deployment: " + project.Name,
+		"ProjectID":      projectID.String(),
+		"Project":        project,
+		"Channel":        channel,
+		"ChannelHistory": channels,
+		"Combos":         combos,
+		"Success":        r.URL.Query().Get("success") == "1",
+	}
+	s.addUserToData(r, data)
+
+	if err := renderPage(w, "deployment_channel.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleSetDeploymentChannel sets or changes the project's deployment channel.
+func (s *Server) handleSetDeploymentChannel(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	comboID, err := uuid.Parse(r.FormValue("combo_id"))
+	if err != nil {
+		http.Error(w, "invalid combo selection", http.StatusBadRequest)
+		return
+	}
+
+	// Verify combo exists and get its details
+	combos, err := s.db.ListSupportedDeploymentCombos(ctx)
+	if err != nil {
+		http.Error(w, "failed to load combos", http.StatusInternalServerError)
+		return
+	}
+
+	var selectedCombo *domain.SupportedDeploymentCombo
+	for i := range combos {
+		if combos[i].ID == comboID {
+			selectedCombo = &combos[i]
+			break
+		}
+	}
+	if selectedCombo == nil {
+		http.Error(w, "selected deployment option not found", http.StatusBadRequest)
+		return
+	}
+
+	// Create the new channel (this disables any existing active one)
+	channel := &domain.ProjectDeploymentChannel{
+		ProjectID:         projectID,
+		ArtifactKind:      selectedCombo.ArtifactKind,
+		HostingPlatformID: selectedCombo.HostingPlatformID,
+	}
+	if err := s.db.CreateProjectDeploymentChannel(ctx, channel); err != nil {
+		http.Error(w, "failed to create deployment channel", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/p/"+projectID.String()+"/deployment?success=1", http.StatusSeeOther)
+}

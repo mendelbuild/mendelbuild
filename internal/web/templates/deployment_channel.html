@@ -1,0 +1,139 @@
+{{define "page-content"}}
+<h1>{{.Project.Name}}</h1>
+<h2>Deployment Configuration</h2>
+
+<p style="color: #666; margin-bottom: 20px;">
+    <a href="/p/{{.ProjectID}}/strategy" style="color: #007bff;">&larr; Back to Strategy</a>
+</p>
+
+{{if .Success}}
+<div style="padding: 12px 16px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; margin-bottom: 20px; color: #155724;">
+    Deployment channel updated successfully.
+</div>
+{{end}}
+
+<div style="display: flex; gap: 20px; align-items: flex-start;">
+    <div style="flex: 2;">
+        {{if .Channel}}
+        <div class="card">
+            <h2>Current Channel</h2>
+            <div style="padding: 16px; background: #f8f9fa; border-radius: 4px; margin-bottom: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="font-size: 1.2em; font-weight: bold; margin-bottom: 8px;">
+                            {{.Channel.ArtifactKind}} &rarr; {{if .Channel.HostingPlatform}}{{.Channel.HostingPlatform.Name}}{{end}}
+                        </div>
+                        <div style="font-size: 0.9em; color: #666;">
+                            Created: {{.Channel.CreatedAt.Format "2006-01-02 15:04"}}
+                        </div>
+                    </div>
+                    <div style="text-align: right;">
+                        {{if .Channel.IsDemoValidated}}
+                        <span style="display: inline-block; padding: 4px 8px; background: #28a745; color: white; border-radius: 4px; font-size: 0.85em; margin-bottom: 4px;">Demo Validated</span>
+                        {{else}}
+                        <span style="display: inline-block; padding: 4px 8px; background: #6c757d; color: white; border-radius: 4px; font-size: 0.85em; margin-bottom: 4px;">Demo Not Validated</span>
+                        {{end}}
+                        <br>
+                        {{if .Channel.IsProdValidated}}
+                        <span style="display: inline-block; padding: 4px 8px; background: #28a745; color: white; border-radius: 4px; font-size: 0.85em;">Prod Validated</span>
+                        {{else}}
+                        <span style="display: inline-block; padding: 4px 8px; background: #6c757d; color: white; border-radius: 4px; font-size: 0.85em;">Prod Not Validated</span>
+                        {{end}}
+                    </div>
+                </div>
+                {{if .Channel.ProdURL}}
+                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #dee2e6;">
+                    <strong>Production URL:</strong>
+                    <a href="{{.Channel.ProdURL}}" target="_blank">{{.Channel.ProdURL}}</a>
+                </div>
+                {{end}}
+            </div>
+
+            <h3>Validation</h3>
+            <p style="color: #666; margin-bottom: 12px;">
+                Before demos or production deployments can proceed, the deployment path must be validated.
+            </p>
+            <div style="display: flex; gap: 10px;">
+                {{if not .Channel.IsDemoValidated}}
+                <form method="POST" action="/p/{{.ProjectID}}/deployment/validate-demo" style="margin: 0;">
+                    <button type="submit" style="padding: 8px 16px; background: #ffc107; color: #212529; border: none; border-radius: 4px; cursor: pointer;">
+                        Validate Demo Path
+                    </button>
+                </form>
+                {{end}}
+                {{if not .Channel.IsProdValidated}}
+                <form method="POST" action="/p/{{.ProjectID}}/deployment/validate-prod" style="margin: 0;">
+                    <button type="submit" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Validate Production Path
+                    </button>
+                </form>
+                {{end}}
+            </div>
+        </div>
+        {{end}}
+
+        <div class="card">
+            <h2>{{if .Channel}}Change{{else}}Select{{end}} Deployment Channel</h2>
+            <p style="color: #666; margin-bottom: 16px;">
+                Choose how this project will be deployed. This determines the artifact type and hosting platform.
+            </p>
+
+            {{if .Combos}}
+            <form method="POST" action="/p/{{.ProjectID}}/deployment/channel">
+                <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;">
+                    {{range .Combos}}
+                    <label style="display: flex; align-items: flex-start; padding: 12px; background: #f8f9fa; border: 2px solid #dee2e6; border-radius: 4px; cursor: pointer; transition: border-color 0.2s;">
+                        <input type="radio" name="combo_id" value="{{.ID}}" style="margin-top: 3px; margin-right: 12px;"
+                            {{if $.Channel}}{{if and (eq $.Channel.ArtifactKind .ArtifactKind) (eq $.Channel.HostingPlatformID .HostingPlatformID)}}checked{{end}}{{end}}>
+                        <div>
+                            <div style="font-weight: bold; margin-bottom: 4px;">
+                                {{.ArtifactKind}} &rarr; {{if .HostingPlatform}}{{.HostingPlatform.Name}}{{end}}
+                            </div>
+                            {{if .Notes}}<div style="font-size: 0.9em; color: #666;">{{.Notes}}</div>{{end}}
+                        </div>
+                    </label>
+                    {{end}}
+                </div>
+                <button type="submit" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    {{if .Channel}}Update Channel{{else}}Set Channel{{end}}
+                </button>
+            </form>
+            {{else}}
+            <p class="empty">No deployment options available. Contact your administrator.</p>
+            {{end}}
+        </div>
+    </div>
+
+    <div style="flex: 1;">
+        {{if .ChannelHistory}}
+        <div class="card">
+            <h2>History</h2>
+            {{range .ChannelHistory}}
+            <div style="padding: 8px 0; border-bottom: 1px solid #eee; {{if .IsActive}}background: #f8f9fa; margin: -4px -8px; padding: 8px;{{end}}">
+                <div style="font-weight: {{if .IsActive}}bold{{else}}normal{{end}};">
+                    {{.ArtifactKind}} &rarr; {{if .HostingPlatform}}{{.HostingPlatform.Name}}{{end}}
+                </div>
+                <div style="font-size: 0.8em; color: #666;">
+                    {{if .IsActive}}Current{{else}}Disabled {{.DisabledAt.Format "2006-01-02"}}{{end}}
+                </div>
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+
+        <div class="card">
+            <h2>About Deployment Channels</h2>
+            <p style="font-size: 0.9em; color: #666; margin-bottom: 12px;">
+                A deployment channel defines:
+            </p>
+            <ul style="font-size: 0.9em; color: #666; padding-left: 20px; margin: 0;">
+                <li><strong>Artifact Kind</strong> - what your project produces (container, k8s manifests, etc.)</li>
+                <li><strong>Hosting Platform</strong> - where it runs (Fly.io, GKE, etc.)</li>
+            </ul>
+            <p style="font-size: 0.9em; color: #666; margin-top: 12px;">
+                Mendel validates each channel before allowing demos or production deploys.
+            </p>
+        </div>
+    </div>
+</div>
+{{end}}

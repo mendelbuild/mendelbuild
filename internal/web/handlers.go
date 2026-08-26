@@ -240,14 +240,26 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 		productionDeployedAt = deployment.DeployedAt.Format("2006-01-02 15:04")
 	}
 
+	// Get deployment channel info
+	var deploymentChannel *domain.ProjectDeploymentChannel
+	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
+	if err == nil {
+		deploymentChannel = channel
+	}
+
+	// Get supported combos for channel setup
+	supportedCombos, _ := s.db.ListSupportedDeploymentCombos(ctx)
+
 	data := map[string]interface{}{
-		"Title":               "Strategy: " + view.Strategy.Name,
-		"ProjectID":           projectID.String(),
-		"Strategy":            view,
-		"PendingInputRequest":     pendingInputRequest,
-		"PendingInputRequests":    pendingInputRequests,
-		"ProductionURL":       productionURL,
+		"Title":                "Strategy: " + view.Strategy.Name,
+		"ProjectID":            projectID.String(),
+		"Strategy":             view,
+		"PendingInputRequest":  pendingInputRequest,
+		"PendingInputRequests": pendingInputRequests,
+		"ProductionURL":        productionURL,
 		"ProductionDeployedAt": productionDeployedAt,
+		"DeploymentChannel":    deploymentChannel,
+		"SupportedCombos":      supportedCombos,
 	}
 	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)

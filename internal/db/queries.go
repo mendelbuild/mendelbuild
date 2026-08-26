@@ -2888,6 +2888,13 @@ func (db *DB) CreateSupportedDeploymentCombo(ctx context.Context, c *domain.Supp
 	`, c.ArtifactKind, c.HostingPlatformID, c.Notes, c.Guidance).Scan(&c.ID, &c.CreatedAt)
 }
 
+// CountSupportedDeploymentCombos returns the number of supported combos.
+func (db *DB) CountSupportedDeploymentCombos(ctx context.Context) (int, error) {
+	var count int
+	err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM supported_deployment_combos`).Scan(&count)
+	return count, err
+}
+
 // GetActiveProjectDeploymentChannel returns the current active channel for a project.
 func (db *DB) GetActiveProjectDeploymentChannel(ctx context.Context, projectID uuid.UUID) (*domain.ProjectDeploymentChannel, error) {
 	var c domain.ProjectDeploymentChannel
