@@ -35,6 +35,8 @@ func main() {
 	switch cmd {
 	case "serve":
 		runServer(args)
+	case "setup":
+		runSetup(args)
 	case "load-strategy":
 		loadStrategy(args)
 	case "migrate":
@@ -59,8 +61,9 @@ func printUsage() {
 
 Commands:
   serve             Start the MendelBuild server (HTTP API + webapp)
-  load-strategy     Load a strategy from JSON file
+  setup             Initialize Mendel (seed hosting platforms, deployment combos)
   migrate           Run database migrations
+  load-strategy     Load a strategy from JSON file
   propose-roadmap   Generate a roadmap proposal for a strategy
   generate          Run code generation for a hop's approved variations
   assign-owner      Assign a user as owner to all projects without an owner
@@ -79,6 +82,47 @@ func getConnString() string {
 		return s
 	}
 	return defaultConnString
+}
+
+func runSetup(args []string) {
+	fs := flag.NewFlagSet("setup", flag.ExitOnError)
+	fs.Parse(args)
+
+	ctx := context.Background()
+	database, err := db.Connect(ctx, getConnString())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error connecting to database: %v\n", err)
+		os.Exit(1)
+	}
+	defer database.Close()
+
+	fmt.Println("Running Mendel setup...")
+
+	// Seed hosting platforms
+	platformCount, err := hosting.SeedIfEmpty(ctx, database)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error seeding hosting platforms: %v\n", err)
+		os.Exit(1)
+	}
+	if platformCount > 0 {
+		fmt.Printf("  Seeded %d hosting platforms\n", platformCount)
+	} else {
+		fmt.Println("  Hosting platforms already seeded")
+	}
+
+	// Seed deployment combos
+	comboCount, err := hosting.SeedCombosIfEmpty(ctx, database)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error seeding deployment combos: %v\n", err)
+		os.Exit(1)
+	}
+	if comboCount > 0 {
+		fmt.Printf("  Seeded %d deployment combos\n", comboCount)
+	} else {
+		fmt.Println("  Deployment combos already seeded")
+	}
+
+	fmt.Println("Setup complete.")
 }
 
 func runServer(args []string) {

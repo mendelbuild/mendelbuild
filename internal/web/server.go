@@ -17,7 +17,6 @@ import (
 	"github.com/bhs/mendelbuild/internal/demo"
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/bhs/mendelbuild/internal/git"
-	"github.com/bhs/mendelbuild/internal/hosting"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
@@ -73,32 +72,8 @@ func NewServer(database *db.DB, addr, version, buildTime string) *Server {
 
 	s.setupRoutes()
 	s.cleanupStaleDemos()
-	s.seedHostingPlatforms()
 	s.startVariationWorker()
 	return s
-}
-
-// seedHostingPlatforms seeds the hosting_platforms table with defaults if empty.
-func (s *Server) seedHostingPlatforms() {
-	ctx := context.Background()
-	count, err := hosting.SeedIfEmpty(ctx, s.db)
-	if err != nil {
-		fmt.Printf("[startup] Warning: could not seed hosting platforms: %v\n", err)
-		return
-	}
-	if count > 0 {
-		fmt.Printf("[startup] Seeded %d hosting platforms\n", count)
-	}
-
-	// Seed deployment combos (depends on platforms being seeded first)
-	comboCount, err := hosting.SeedCombosIfEmpty(ctx, s.db)
-	if err != nil {
-		fmt.Printf("[startup] Warning: could not seed deployment combos: %v\n", err)
-		return
-	}
-	if comboCount > 0 {
-		fmt.Printf("[startup] Seeded %d deployment combos\n", comboCount)
-	}
 }
 
 // cleanupStaleDemos marks any demos that were "running" or "starting" before
