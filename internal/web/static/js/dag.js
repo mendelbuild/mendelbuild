@@ -16,7 +16,9 @@ const RoadmapDAG = {
         // Variation statuses
         creating: { fill: '#cce5ff', stroke: '#007bff', text: '#004085' },
         error: { fill: '#f8d7da', stroke: '#dc3545', text: '#721c24' },
-        terminated: { fill: '#e2e3e5', stroke: '#6c757d', text: '#383d41' },
+        // terminated is a code/test failure, not a clean shutdown; it shares the
+        // failure palette with error and rejected rather than the inert grey.
+        terminated: { fill: '#f8d7da', stroke: '#dc3545', text: '#721c24' },
         merged: { fill: '#d4edda', stroke: '#28a745', text: '#155724' },
     },
 

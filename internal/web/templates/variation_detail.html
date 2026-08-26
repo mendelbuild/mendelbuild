@@ -11,7 +11,7 @@
                 <tr>
                     <th style="width: 120px;">Status</th>
                     <td>
-                        <span class="status {{if eq .Variation.Status "pending"}}status-pending{{else if eq .Variation.Status "creating"}}status-active{{else if eq .Variation.Status "error"}}status-error{{else if eq .Variation.Status "terminated"}}status-resolved{{else}}status-{{.Variation.Status}}{{end}}">
+                        <span class="status {{if eq .Variation.Status "pending"}}status-pending{{else if eq .Variation.Status "creating"}}status-active{{else if eq .Variation.Status "error"}}status-error{{else if eq .Variation.Status "terminated"}}status-error{{else}}status-{{.Variation.Status}}{{end}}">
                             {{.Variation.Status}}
                         </span>
                     </td>

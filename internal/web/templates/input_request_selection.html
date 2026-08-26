@@ -81,7 +81,7 @@
                         <td class="row-header">Status</td>
                         {{range .SelectionData.Variations}}
                         <td style="text-align: center;">
-                            <span class="status {{if eq .Status "pending"}}status-pending{{else if eq .Status "merged"}}status-resolved{{else if eq .Status "rejected"}}status-resolved{{else}}status-error{{end}}">
+                            <span class="status {{if eq .Status "pending"}}status-pending{{else if or (eq .Status "merged") (eq .Status "selected")}}status-resolved{{else if or (eq .Status "error") (eq .Status "terminated")}}status-error{{else}}status-neutral{{end}}">
                                 {{.Status}}
                             </span>
                         </td>

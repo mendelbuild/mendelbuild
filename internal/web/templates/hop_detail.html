@@ -72,7 +72,7 @@
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
                     <div>
                         <a href="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}" style="font-weight: bold; font-size: 1.1em; color: #007bff; text-decoration: none;">{{.Variation.Name}}</a>
-                        <span class="status {{if eq .Variation.Status "pending"}}status-pending{{else if eq .Variation.Status "creating"}}status-active{{else if eq .Variation.Status "error"}}status-error{{else if eq .Variation.Status "terminated"}}status-resolved{{else}}status-{{.Variation.Status}}{{end}}" style="margin-left: 10px;">
+                        <span class="status {{if eq .Variation.Status "pending"}}status-pending{{else if eq .Variation.Status "creating"}}status-active{{else if eq .Variation.Status "error"}}status-error{{else if eq .Variation.Status "terminated"}}status-error{{else}}status-{{.Variation.Status}}{{end}}" style="margin-left: 10px;">
                             {{.Variation.Status}}
                         </span>
                         {{if .Variation.CommitRef}}

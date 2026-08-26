@@ -105,6 +105,9 @@
         .status-resolved { background: #d4edda; color: #155724; }
         .status-error { background: #f8d7da; color: #721c24; }
         .status-needs_assignment { background: #e2e3e5; color: #383d41; }
+        /* For statuses that are neither success nor failure. Without this the
+           templates are forced to pick a misleading extreme. */
+        .status-neutral { background: #e2e3e5; color: #383d41; }
         .status-selecting { background: #fff3cd; color: #856404; }
         .empty { color: #666; font-style: italic; }
         .tabs {
