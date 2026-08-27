@@ -3,7 +3,7 @@
 <h1>Hop: {{.Hop.Name}}</h1>
 <p><a href="/p/{{$.ProjectID}}/strategy">&larr; Back to Strategy</a></p>
 
-{{template "roadmap-strip" .Strip}}
+{{template "roadmap-panel" .Roadmap}}
 {{template "lifecycle-ribbon" .Ribbon}}
 
 {{if .NeedsProductionCredentials}}

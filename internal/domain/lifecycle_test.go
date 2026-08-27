@@ -160,6 +160,71 @@ func TestTrialTrackAppliesOnlyWhenRelevant(t *testing.T) {
 	}
 }
 
+// TestTrialTrackMatchesWhatTheHopAsksFor: a trial is not one fixed thing. A Hop
+// that only wants a clickable demo never migrates data and never takes real
+// traffic, so promising either would describe work that will not happen.
+func TestTrialTrackMatchesWhatTheHopAsksFor(t *testing.T) {
+	labelsOf := func(r Ribbon) string {
+		var s string
+		for _, st := range r.Track(VariationTrackTrial).Stages {
+			s += st.Label + "|"
+		}
+		return s
+	}
+
+	demo := labelsOf(VariationLifecycle(
+		&Variation{Status: VariationStatusActive}, nil, &Hop{RequiresDemo: true}))
+	for _, banned := range []string{"live traffic", "migration", "Draining"} {
+		if strings.Contains(demo, banned) {
+			t.Errorf("demo-only trial mentions %q: %s", banned, demo)
+		}
+	}
+
+	prod := labelsOf(VariationLifecycle(
+		&Variation{Status: VariationStatusActive}, nil, &Hop{RequiresProduction: true}))
+	if !strings.Contains(prod, "Serving live traffic") {
+		t.Errorf(`a production trial should say "Serving live traffic": %s`, prod)
+	}
+
+	// Migrations are a detail of some deployments, so the word should surface
+	// only while one is actually running.
+	migrating := labelsOf(VariationLifecycle(
+		&Variation{Status: VariationStatusMigrating}, nil, &Hop{RequiresProduction: true}))
+	if !strings.Contains(migrating, "Applying data migrations") {
+		t.Errorf("a migrating Variation should name the migration: %s", migrating)
+	}
+	if strings.Contains(prod, "migration") {
+		t.Errorf("a Variation that is not migrating should not mention migrations: %s", prod)
+	}
+}
+
+// TestStatusLabelNeverCallsFailureComplete: "Complete" is reserved for a
+// terminal state that actually succeeded. Reporting a failed build as complete
+// is the same class of bug as painting it green.
+func TestStatusLabelNeverCallsFailureComplete(t *testing.T) {
+	for _, st := range allVariationStatuses {
+		r := VariationLifecycle(&Variation{Status: st}, nil, &Hop{})
+		if r.Tone == ToneFailure && r.StatusLabel() == "Complete" {
+			t.Errorf("variation %q failed but its badge reads Complete", st)
+		}
+		if r.StatusLabel() == "Complete" && r.Tone != ToneSuccess {
+			t.Errorf("variation %q reads Complete with tone %q", st, r.Tone)
+		}
+	}
+	for _, st := range allHopStatuses {
+		r := HopLifecycle(&Hop{Status: st}, nil)
+		if r.Tone == ToneFailure && r.StatusLabel() == "Complete" {
+			t.Errorf("hop %q failed but its badge reads Complete", st)
+		}
+	}
+
+	failed := VariationLifecycle(&Variation{Status: VariationStatusTerminated}, nil, &Hop{})
+	if failed.StatusLabel() != "Failed" || failed.StatusClass() != "failed" {
+		t.Errorf("a terminated Variation should be badged Failed, got %q/%q",
+			failed.StatusLabel(), failed.StatusClass())
+	}
+}
+
 func TestHopHeadlineReflectsVariations(t *testing.T) {
 	h := &Hop{ID: uuid.New(), Status: HopStatusActive}
 

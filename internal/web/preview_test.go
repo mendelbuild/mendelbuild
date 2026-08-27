@@ -13,9 +13,9 @@ import (
 	"github.com/bhs/mendelbuild/internal/domain"
 )
 
-// TestGeneratePreview dumps a gallery of every lifecycle ribbon and roadmap
-// strip state to a single HTML file, so the components can be reviewed without
-// a database or a running server:
+// TestGeneratePreview dumps a gallery of every lifecycle ribbon state to a
+// single HTML file, so the component can be reviewed without a database or a
+// running server:
 //
 //	MENDEL_PREVIEW=/tmp/preview.html go test ./internal/web/ -run TestGeneratePreview
 //
@@ -48,27 +48,6 @@ func TestGeneratePreview(t *testing.T) {
 		}
 	}
 
-	section("Roadmap strip")
-	pid := uuid.New()
-	label("hop with predecessors and successors")
-	render("roadmap-strip", &RoadmapStrip{
-		ProjectID: pid.String(),
-		Before:    []StripHop{{ID: uuid.New(), Name: "auth-refactor", Tone: domain.ToneSuccess}},
-		Current:   StripHop{ID: uuid.New(), Name: "rate-limiting", Tone: domain.ToneProgress, Current: true},
-		After: []StripHop{
-			{ID: uuid.New(), Name: "billing-v2", Tone: domain.ToneNeutral},
-			{ID: uuid.New(), Name: "usage-metering", Tone: domain.ToneNeutral},
-		},
-		MoreAfter: 2,
-	})
-	label("hop with truncated predecessors")
-	render("roadmap-strip", &RoadmapStrip{
-		ProjectID:  pid.String(),
-		MoreBefore: 4,
-		Before:     []StripHop{{ID: uuid.New(), Name: "schema-migration", Tone: domain.ToneFailure}},
-		Current:    StripHop{ID: uuid.New(), Name: "checkout-flow", Tone: domain.ToneWaiting, Current: true},
-	})
-
 	section("Hop lifecycle")
 	for _, st := range []domain.HopStatus{
 		domain.HopStatusPending, domain.HopStatusActive, domain.HopStatusSelecting,
@@ -86,7 +65,8 @@ func TestGeneratePreview(t *testing.T) {
 		[]domain.Variation{{Status: domain.VariationStatusCreating}, {Status: domain.VariationStatusCreating}, {Status: domain.VariationStatusCreating}}))
 
 	section("Variation lifecycle")
-	trialHop := &domain.Hop{RequiresDemo: true}
+	prodHop := &domain.Hop{RequiresProduction: true}
+	demoHop := &domain.Hop{RequiresDemo: true}
 	for _, st := range []domain.VariationStatus{
 		domain.VariationStatusCreating, domain.VariationStatusBlocked, domain.VariationStatusPending,
 		domain.VariationStatusMigrating, domain.VariationStatusActive, domain.VariationStatusDraining,
@@ -94,7 +74,17 @@ func TestGeneratePreview(t *testing.T) {
 		domain.VariationStatusRejected, domain.VariationStatusMerged,
 	} {
 		label("variation status: " + string(st))
-		render("lifecycle-ribbon", domain.VariationLifecycle(&domain.Variation{Status: st}, []domain.VariationRevision{}, trialHop))
+		render("lifecycle-ribbon", domain.VariationLifecycle(&domain.Variation{Status: st}, []domain.VariationRevision{}, prodHop))
+	}
+
+	// The same statuses on a Hop that only wants a clickable demo. A demo trial
+	// never migrates data and never takes real traffic, so the Trial track must
+	// not describe it in those terms.
+	for _, st := range []domain.VariationStatus{
+		domain.VariationStatusActive, domain.VariationStatusDraining,
+	} {
+		label("variation status: " + string(st) + " — demo-only Hop, so no live-traffic language")
+		render("lifecycle-ribbon", domain.VariationLifecycle(&domain.Variation{Status: st}, []domain.VariationRevision{}, demoHop))
 	}
 
 	label(`variation status: creating WITH a revision in flight — the case the Refine track exists for`)
@@ -103,14 +93,14 @@ func TestGeneratePreview(t *testing.T) {
 		[]domain.VariationRevision{
 			{ID: uuid.New(), Status: domain.VariationRevisionStatusCompleted},
 			{ID: uuid.New(), Status: domain.VariationRevisionStatusInProgress},
-		}, trialHop))
+		}, prodHop))
 	label("variation status: pending, after 2 revisions applied")
 	render("lifecycle-ribbon", domain.VariationLifecycle(
 		&domain.Variation{Status: domain.VariationStatusPending},
 		[]domain.VariationRevision{
 			{ID: uuid.New(), Status: domain.VariationRevisionStatusCompleted},
 			{ID: uuid.New(), Status: domain.VariationRevisionStatusCompleted},
-		}, trialHop))
+		}, prodHop))
 	label("variation status: pending — hop needs no trial (Trial track dimmed)")
 	render("lifecycle-ribbon", domain.VariationLifecycle(
 		&domain.Variation{Status: domain.VariationStatusPending}, []domain.VariationRevision{}, &domain.Hop{}))
@@ -147,11 +137,14 @@ body { max-width: 960px; }
     margin: 20px 0 6px;
 }
 </style>
-<h1>Lifecycle ribbon &amp; roadmap strip</h1>
+<h1>Lifecycle ribbon</h1>
 <p class="preview-intro">Every state, rendered from the real templates and the
 real <code>domain</code> lifecycle mapping — not mockups. The grey monospace
 lines are the underlying database status values, shown only to label each
 example; they do not appear in the product.</p>
+<p class="preview-intro">The roadmap panel that sits above the ribbon on Hop and
+Variation pages is not shown here: it is the live roadmap graph, and drawing it
+needs the running app.</p>
 %s`, css, body.String())
 
 	if err := os.WriteFile(out, []byte(page), 0o644); err != nil {

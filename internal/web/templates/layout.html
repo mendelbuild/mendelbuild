@@ -189,7 +189,15 @@
             flex-wrap: wrap;
             margin-bottom: 12px;
         }
-        .ribbon-headline { font-size: 1.15em; font-weight: 600; color: #222; }
+        .ribbon-status-label {
+            font-size: 0.72em;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #999;
+        }
+        .ribbon-status-label::after { content: ":"; }
+        .ribbon-headline { font-size: 1.15em; font-weight: 600; color: #222; margin-left: -6px; }
         .ribbon-actor {
             font-size: 0.75em;
             font-weight: 600;
@@ -202,7 +210,10 @@
         }
         .ribbon-actor-you { background: #fff3cd; color: #856404; }
         .ribbon-actor-mendel { background: #cce5ff; color: #004085; }
-        .ribbon-actor-nobody { background: #e9ecef; color: #6c757d; }
+        .ribbon-actor-done { background: #d4edda; color: #155724; }
+        /* A terminal failure must not wear the same badge as a terminal success. */
+        .ribbon-actor-failed { background: #f8d7da; color: #721c24; }
+        .ribbon-actor-closed { background: #e9ecef; color: #6c757d; }
         .ribbon-next { margin: 12px 0 0 0; color: #555; font-size: 0.92em; }
 
         .track { margin-bottom: 10px; }
@@ -217,40 +228,61 @@
         }
         .track-note { text-transform: none; letter-spacing: 0; color: #aaa; }
 
+        /* A stepper, not a set of radio buttons. Three things carry the
+           direction of travel: arrows rather than plain rules between stages,
+           arrows that stay coloured only as far as progress has actually got,
+           and marks inside the dots — a tick or a cross — that a radio group
+           would never have. */
         .stages {
             list-style: none;
             margin: 0;
             padding: 0;
             display: flex;
             flex-wrap: wrap;
+            align-items: center;
             gap: 4px 0;
         }
         .stage {
             display: flex;
             align-items: center;
-            gap: 6px;
-            padding-right: 14px;
+            gap: 7px;
             font-size: 0.85em;
             color: #999;
             position: relative;
         }
-        /* Connector between stages. */
+        /* Connector: a shaft with an arrowhead, drawn as one clipped block. */
         .stage:not(:last-child)::after {
             content: "";
-            width: 10px;
-            height: 1px;
-            background: #ddd;
-            margin-left: 4px;
-        }
-        .stage-dot {
-            width: 9px;
+            width: 22px;
             height: 9px;
+            margin: 0 9px;
+            flex-shrink: 0;
+            background: #dcdcdc;
+            clip-path: polygon(0 40%, 62% 40%, 62% 0, 100% 50%, 62% 100%, 62% 60%, 0 60%);
+        }
+        /* Only the traversed part of the track takes colour, so the ribbon
+           reads as a progress bar at a glance. */
+        .stage-done:not(:last-child)::after { background: var(--tone, #28a745); }
+
+        .stage-dot {
+            width: 15px;
+            height: 15px;
             border-radius: 50%;
-            border: 1.5px solid #ccc;
+            border: 1.5px solid #d5d5d5;
             background: white;
             flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            line-height: 1;
+            color: white;
         }
-        .stage-done .stage-dot { background: var(--tone, #28a745); border-color: var(--tone, #28a745); }
+        .stage-done .stage-dot {
+            background: var(--tone, #28a745);
+            border-color: var(--tone, #28a745);
+        }
+        .stage-done .stage-dot::after { content: "\2713"; } /* tick */
         .stage-done { color: #666; }
         .stage-current .stage-dot {
             background: var(--tone, #007bff);
@@ -258,8 +290,19 @@
             box-shadow: 0 0 0 3px color-mix(in srgb, var(--tone, #007bff) 25%, transparent);
         }
         .stage-current { color: #222; font-weight: 600; }
-        .stage-failed .stage-dot { background: var(--tone, #dc3545); border-color: var(--tone, #dc3545); }
+        .stage-failed .stage-dot {
+            background: var(--tone, #dc3545);
+            border-color: var(--tone, #dc3545);
+        }
+        .stage-failed .stage-dot::after { content: "\2715"; } /* cross */
         .stage-failed { color: var(--tone-ink, #721c24); font-weight: 600; }
+        /* Not reached yet: smaller and hollow, so it is plainly an empty slot
+           ahead rather than an option alongside the others. */
+        .stage-upcoming .stage-dot {
+            width: 11px;
+            height: 11px;
+            border-style: dashed;
+        }
         .stage-note {
             font-size: 0.85em;
             font-weight: 400;
@@ -269,43 +312,59 @@
             border-radius: 8px;
         }
 
-        /* ---- Roadmap strip -------------------------------------------------- */
-        .strip {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            flex-wrap: wrap;
-            padding: 8px 12px;
-            margin-bottom: 15px;
-            background: #fff;
+        /* ---- Embedded roadmap panel -----------------------------------------
+           The real roadmap, scrolled to the Hop this page is about. Collapsed
+           it is a wide, short letterbox; the toggle grows it in place rather
+           than sending the reader to another page. */
+        .roadmap-panel {
+            margin-bottom: 20px;
+            background: white;
             border: 1px solid #e8e8e8;
             border-radius: 6px;
-            font-size: 0.88em;
+            overflow: hidden;
         }
-        .strip-caption {
+        .roadmap-panel-head {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 12px;
+            border-bottom: 1px solid #f0f0f0;
+            background: #fbfbfb;
+        }
+        .roadmap-panel-caption {
             font-size: 0.78em;
+            font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.06em;
-            color: #aaa;
-            margin-right: 4px;
+            color: #999;
         }
-        .strip-hop {
+        .roadmap-panel-hint { font-size: 0.75em; color: #bbb; }
+        .roadmap-panel-toggle {
+            margin-left: auto;
             padding: 3px 10px;
-            border-radius: 12px;
+            font-size: 0.8em;
+            color: #555;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .roadmap-panel-toggle:hover { background: #f1f3f5; color: #222; }
+        .roadmap-panel-all {
+            font-size: 0.82em;
+            color: #007bff;
             text-decoration: none;
-            background: var(--tone-bg, #e2e3e5);
-            color: var(--tone-ink, #383d41);
             white-space: nowrap;
         }
-        a.strip-hop:hover { text-decoration: underline; }
-        .strip-current {
-            font-weight: 700;
-            box-shadow: 0 0 0 2px var(--tone, #6c757d);
+        .roadmap-panel-all:hover { text-decoration: underline; }
+        .roadmap-panel-canvas {
+            position: relative;
+            overflow: hidden;
+            cursor: grab;
+            height: 170px;
+            transition: height 0.18s ease;
         }
-        .strip-arrow { color: #ccc; }
-        .strip-more { color: #999; font-size: 0.9em; }
-        .strip-all { margin-left: auto; color: #007bff; text-decoration: none; white-space: nowrap; }
-        .strip-all:hover { text-decoration: underline; }
+        .roadmap-panel.is-expanded .roadmap-panel-canvas { height: 480px; }
 
         .settings-warning {
             background: #fff3cd;

@@ -3,16 +3,17 @@ Shared components. This file is parsed alongside layout.html for every page, so
 any template defined here is available everywhere.
 
 lifecycle-ribbon expects a domain.Ribbon.
-roadmap-strip expects a *web.RoadmapStrip.
+roadmap-panel   expects a *web.MiniRoadmap.
 */}}
 
 {{define "lifecycle-ribbon"}}
 <div class="ribbon ribbon-{{.Tone}}">
     <div class="ribbon-head">
+        <span class="ribbon-status-label">Status</span>
         <span class="ribbon-headline">{{.Headline}}</span>
-        <span class="ribbon-actor ribbon-actor-{{.WaitingOn}}">
-            {{if .WaitingOnYou}}Your move{{else if .Terminal}}Complete{{else}}Mendel is working{{end}}
-        </span>
+        {{/* StatusLabel, not WaitingOn: a finished Variation whose build failed
+             is terminal, but it is not "Complete". */}}
+        <span class="ribbon-actor ribbon-actor-{{.StatusClass}}">{{.StatusLabel}}</span>
     </div>
 
     {{range .Tracks}}
@@ -24,7 +25,7 @@ roadmap-strip expects a *web.RoadmapStrip.
         <ol class="stages">
             {{range .Stages}}
             <li class="stage stage-{{.State}} tone-{{.Tone}}">
-                <span class="stage-dot"></span>
+                <span class="stage-dot" aria-hidden="true"></span>
                 <span class="stage-label">{{.Label}}</span>
                 {{if .Note}}<span class="stage-note">{{.Note}}</span>{{end}}
             </li>
@@ -37,34 +38,64 @@ roadmap-strip expects a *web.RoadmapStrip.
 </div>
 {{end}}
 
-{{define "roadmap-strip"}}
-{{if .HasNeighbors}}
-<nav class="strip" aria-label="Position in roadmap">
-    <span class="strip-caption">Roadmap</span>
+{{define "roadmap-panel"}}
+{{if .HasContext}}
+<section class="roadmap-panel" data-roadmap-panel>
+    <div class="roadmap-panel-head">
+        <span class="roadmap-panel-caption">Roadmap</span>
+        <span class="roadmap-panel-hint">Drag to pan &middot; shift-scroll to zoom</span>
+        <button type="button" class="roadmap-panel-toggle" data-roadmap-toggle aria-expanded="false">Expand</button>
+        <a class="roadmap-panel-all" href="/p/{{.ProjectID}}/roadmap">Open full roadmap &rarr;</a>
+    </div>
+    <div class="roadmap-panel-canvas" data-roadmap-canvas></div>
+</section>
 
-    {{if .MoreBefore}}
-    <span class="strip-more">+{{.MoreBefore}} more</span>
-    <span class="strip-arrow" aria-hidden="true">&rarr;</span>
-    {{end}}
+<script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+<script src="/static/js/roadmap-view.js"></script>
+<script>
+(function() {
+    function draw() {
+        const panel = document.querySelector('[data-roadmap-panel]');
+        if (!panel) return;
+        const canvas = panel.querySelector('[data-roadmap-canvas]');
 
-    {{range .Before}}
-    <a class="strip-hop tone-{{.Tone}}" href="/p/{{$.ProjectID}}/hops/{{.ID}}">{{.Name}}</a>
-    <span class="strip-arrow" aria-hidden="true">&rarr;</span>
-    {{end}}
+        // The renderer needs dagre from a CDN. If it did not load, say so and
+        // point at the full roadmap rather than leaving an empty box.
+        if (typeof dagre === 'undefined' || typeof RoadmapView === 'undefined') {
+            canvas.innerHTML = '<p class="empty" style="padding: 20px;">Roadmap could not be drawn. ' +
+                '<a href="/p/{{.ProjectID}}/roadmap">Open the full roadmap</a>.</p>';
+            return;
+        }
 
-    <span class="strip-hop strip-current tone-{{.Current.Tone}}" aria-current="true">{{.Current.Name}}</span>
+        const ctl = RoadmapView.render(canvas, {
+            hops: {{.HopsJSON}} || [],
+            edges: {{.EdgesJSON}} || [],
+            projectID: "{{.ProjectID}}",
+            focusHopID: "{{.FocusHopID}}",
+            // The panel sits in a scrolling page, so a plain wheel must scroll
+            // the page rather than pan the graph.
+            wheelPan: false,
+        });
 
-    {{range .After}}
-    <span class="strip-arrow" aria-hidden="true">&rarr;</span>
-    <a class="strip-hop tone-{{.Tone}}" href="/p/{{$.ProjectID}}/hops/{{.ID}}">{{.Name}}</a>
-    {{end}}
+        const toggle = panel.querySelector('[data-roadmap-toggle]');
+        toggle.addEventListener('click', function() {
+            const expanded = panel.classList.toggle('is-expanded');
+            toggle.textContent = expanded ? 'Collapse' : 'Expand';
+            toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        });
+        // Re-center once the canvas has finished growing, not when the class
+        // flips: mid-transition its height is still the old one.
+        canvas.addEventListener('transitionend', function(e) {
+            if (e.propertyName === 'height' && ctl) ctl.center();
+        });
+    }
 
-    {{if .MoreAfter}}
-    <span class="strip-arrow" aria-hidden="true">&rarr;</span>
-    <span class="strip-more">+{{.MoreAfter}} more</span>
-    {{end}}
-
-    <a class="strip-all" href="/p/{{.ProjectID}}/roadmap">Full roadmap &rarr;</a>
-</nav>
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', draw);
+    } else {
+        draw();
+    }
+})();
+</script>
 {{end}}
 {{end}}

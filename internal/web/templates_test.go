@@ -169,62 +169,96 @@ func TestRibbonShowsWhoseMoveItIs(t *testing.T) {
 	}
 }
 
-// TestRoadmapStripExecutes covers the nil case explicitly. buildRoadmapStrip
-// returns nil when the surrounding Hops cannot be loaded, and the strip is
-// contextual, so that must render as nothing rather than panicking the page.
-func TestRoadmapStripExecutes(t *testing.T) {
+// TestRibbonBadgeDistinguishesOutcomes guards the mirror image of the
+// failure-as-success bug: a Variation whose build failed and one that was
+// merged are both terminal, and labelling them alike would erase the only
+// distinction that matters.
+func TestRibbonBadgeDistinguishesOutcomes(t *testing.T) {
 	tmpl := partialsTemplate(t)
 
-	var nilStrip *RoadmapStrip
-	var buf bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&buf, "roadmap-strip", nilStrip); err != nil {
-		t.Fatalf("nil strip must render harmlessly, got: %v", err)
+	cases := []struct {
+		status  domain.VariationStatus
+		want    string
+		notWant string
+	}{
+		{domain.VariationStatusTerminated, "Failed", "Complete"},
+		{domain.VariationStatusMerged, "Complete", "Failed"},
+		{domain.VariationStatusRejected, "Closed", "Complete"},
+		{domain.VariationStatusPruned, "Closed", "Complete"},
 	}
-	if strings.TrimSpace(buf.String()) != "" {
-		t.Errorf("nil strip should render nothing, got %q", buf.String())
-	}
-
-	// An isolated Hop has no neighbours and should also render nothing, rather
-	// than a strip containing only itself.
-	lonely := &RoadmapStrip{
-		ProjectID: uuid.New().String(),
-		Current:   StripHop{ID: uuid.New(), Name: "only-hop", Current: true},
-	}
-	buf.Reset()
-	if err := tmpl.ExecuteTemplate(&buf, "roadmap-strip", lonely); err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(buf.String()) != "" {
-		t.Errorf("a Hop with no neighbours should render no strip, got %q", buf.String())
-	}
-
-	// A populated strip should name every neighbour and link to the roadmap.
-	projectID := uuid.New()
-	populated := &RoadmapStrip{
-		ProjectID: projectID.String(),
-		Before:    []StripHop{{ID: uuid.New(), Name: "auth-refactor", Tone: domain.ToneSuccess}},
-		Current:   StripHop{ID: uuid.New(), Name: "rate-limiting", Tone: domain.ToneProgress, Current: true},
-		After:     []StripHop{{ID: uuid.New(), Name: "billing", Tone: domain.ToneNeutral}},
-		MoreAfter: 2,
-	}
-	buf.Reset()
-	if err := tmpl.ExecuteTemplate(&buf, "roadmap-strip", populated); err != nil {
-		t.Fatal(err)
-	}
-	out := buf.String()
-	for _, want := range []string{"auth-refactor", "rate-limiting", "billing", "+2 more", "Full roadmap"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("strip output missing %q", want)
+	for _, c := range cases {
+		ribbon := domain.VariationLifecycle(&domain.Variation{Status: c.status}, nil, &domain.Hop{})
+		var buf bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&buf, "lifecycle-ribbon", ribbon); err != nil {
+			t.Fatalf("%s: %v", c.status, err)
 		}
-	}
-	if !strings.Contains(out, "/p/"+projectID.String()+"/roadmap") {
-		t.Error("strip should link to the full roadmap")
+		out := buf.String()
+		if !strings.Contains(out, c.want) {
+			t.Errorf("%s: badge should read %q", c.status, c.want)
+		}
+		if strings.Contains(out, c.notWant) {
+			t.Errorf("%s: badge must not read %q", c.status, c.notWant)
+		}
 	}
 }
 
-// TestDetailPagesRender renders the two pages the ribbon and strip were added
-// to, end to end through renderPage. This is what catches a nil dereference or
-// a bad field path in the page itself, which parsing cannot.
+// TestRoadmapPanelExecutes covers the nil case explicitly. buildMiniRoadmap
+// returns nil when the graph cannot be loaded, and the panel is contextual, so
+// that must render as nothing rather than panicking the page.
+func TestRoadmapPanelExecutes(t *testing.T) {
+	tmpl := partialsTemplate(t)
+
+	var nilPanel *MiniRoadmap
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "roadmap-panel", nilPanel); err != nil {
+		t.Fatalf("nil panel must render harmlessly, got: %v", err)
+	}
+	if strings.TrimSpace(buf.String()) != "" {
+		t.Errorf("nil panel should render nothing, got %q", buf.String())
+	}
+
+	// A one-Hop roadmap adds no context, so it should render nothing.
+	lonely := &MiniRoadmap{ProjectID: uuid.New().String(), HopCount: 1}
+	buf.Reset()
+	if err := tmpl.ExecuteTemplate(&buf, "roadmap-panel", lonely); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(buf.String()) != "" {
+		t.Errorf("a single-Hop roadmap should render no panel, got %q", buf.String())
+	}
+
+	projectID := uuid.New()
+	focusID := uuid.New()
+	populated := &MiniRoadmap{
+		ProjectID:  projectID.String(),
+		FocusHopID: focusID.String(),
+		HopCount:   3,
+		HopsJSON:   template.JS(`[{"ID":"a","Name":"auth-refactor","Status":"completed"}]`),
+		EdgesJSON:  template.JS(`[{"from":"a","to":"b"}]`),
+	}
+	buf.Reset()
+	if err := tmpl.ExecuteTemplate(&buf, "roadmap-panel", populated); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{focusID.String(), "auth-refactor", "Open full roadmap", "roadmap-view.js"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("panel output missing %q", want)
+		}
+	}
+	if !strings.Contains(out, "/p/"+projectID.String()+"/roadmap") {
+		t.Error("panel should link to the full roadmap")
+	}
+	// html/template escapes strings in a script context; template.JS is what
+	// keeps the payload parseable as JSON. See CLAUDE.md.
+	if strings.Contains(out, "&#34;") {
+		t.Error("roadmap payload was HTML-escaped; it must be template.JS")
+	}
+}
+
+// TestDetailPagesRender renders the two pages that carry the ribbon and the
+// roadmap panel, end to end through renderPage. This is what catches a nil
+// dereference or a bad field path in the page itself, which parsing cannot.
 func TestDetailPagesRender(t *testing.T) {
 	projectID := uuid.New()
 	now := time.Now()
@@ -239,10 +273,12 @@ func TestDetailPagesRender(t *testing.T) {
 		Name: "token-bucket", Approach: "Per-key token bucket in Redis.",
 		Status: domain.VariationStatusPending, CreatedAt: now, UpdatedAt: now,
 	}
-	strip := &RoadmapStrip{
-		ProjectID: projectID.String(),
-		Before:    []StripHop{{ID: uuid.New(), Name: "auth-refactor", Tone: domain.ToneSuccess}},
-		Current:   StripHop{ID: hop.ID, Name: hop.Name, Tone: domain.ToneProgress, Current: true},
+	roadmap := &MiniRoadmap{
+		ProjectID:  projectID.String(),
+		FocusHopID: hop.ID.String(),
+		HopCount:   2,
+		HopsJSON:   template.JS(`[{"ID":"a","Name":"auth-refactor","Status":"completed"}]`),
+		EdgesJSON:  template.JS(`[]`),
 	}
 
 	t.Run("hop_detail.html", func(t *testing.T) {
@@ -252,7 +288,7 @@ func TestDetailPagesRender(t *testing.T) {
 			Project:    &domain.Project{ID: projectID, Name: "Demo"},
 			Variations: []VariationWithLogs{{Variation: variation}},
 			Ribbon:     domain.HopLifecycle(hop, []domain.Variation{variation}),
-			Strip:      strip,
+			Roadmap:    roadmap,
 		}
 		body := renderForTest(t, "hop_detail.html", projectID, view)
 		for _, want := range []string{view.Ribbon.Headline, "auth-refactor", "rate-limiting", "token-bucket"} {
@@ -273,7 +309,7 @@ func TestDetailPagesRender(t *testing.T) {
 			Hop:       hop,
 			Revisions: revisions,
 			Ribbon:    domain.VariationLifecycle(&v, revisions, hop),
-			Strip:     strip,
+			Roadmap:   roadmap,
 		}
 		body := renderForTest(t, "variation_detail.html", projectID, view)
 		for _, want := range []string{view.Ribbon.Headline, "auth-refactor", "Use a sliding window instead."} {

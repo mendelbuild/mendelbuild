@@ -32,11 +32,39 @@ var (
 	buildLabels   = []string{"Writing code", "Code ready"}
 	refineKeys    = []string{"requested", "applying", "applied"}
 	refineLabels  = []string{"Change requested", "Applying your feedback", "Feedback applied"}
-	trialKeys     = []string{"migrating", "live", "drained"}
-	trialLabels   = []string{"Applying migrations", "Live on traffic", "Traffic drained"}
 	verdictKeys   = []string{"awaiting", "decided"}
 	verdictLabels = []string{"Awaiting decision", "Decided"}
 )
+
+// trialShape describes what a trial actually consists of for a given Hop.
+//
+// A trial is not one fixed thing. A Hop that only wants a clickable demo never
+// migrates data and never takes real traffic, so labelling its stages
+// "Applying migrations" and "Serving live traffic" would promise work that will
+// never happen — the sort of invented detail that makes the system harder to
+// understand, not easier.
+type trialShape struct {
+	note       string // Distinguishes the two kinds in the track header
+	keys       []string
+	labels     []string
+	production bool
+}
+
+func shapeOfTrial(h *Hop) trialShape {
+	if h != nil && h.RequiresProduction {
+		return trialShape{
+			note:       "live traffic",
+			keys:       []string{"deployed", "live", "drained"},
+			labels:     []string{"Deployed", "Serving live traffic", "Traffic drained"},
+			production: true,
+		}
+	}
+	return trialShape{
+		note:   "demo deployment",
+		keys:   []string{"deployed", "running", "torndown"},
+		labels: []string{"Deployed", "Demo available", "Torn down"},
+	}
+}
 
 // revisionSummary describes the revision history of a Variation.
 type revisionSummary struct {
@@ -73,6 +101,7 @@ func summarizeRevisions(revs []VariationRevision) revisionSummary {
 // production traffic will never be deployed.
 func VariationLifecycle(v *Variation, revs []VariationRevision, h *Hop) Ribbon {
 	rev := summarizeRevisions(revs)
+	trial := shapeOfTrial(h)
 	st := v.Status
 
 	// A revision in flight masquerades as `creating`. Detect that first: the
@@ -128,17 +157,27 @@ func VariationLifecycle(v *Variation, revs []VariationRevision, h *Hop) Ribbon {
 	case st == VariationStatusMigrating:
 		r.Tone, r.WaitingOn = ToneProgress, ActorMendel
 		r.Headline = "Applying data migrations"
-		r.NextAction = "Mendel is preparing this variation's environment before sending it traffic."
+		r.NextAction = "Mendel is preparing this variation's environment before the trial starts."
 
 	case st == VariationStatusActive:
 		r.Tone, r.WaitingOn = ToneProgress, ActorMendel
-		r.Headline = "Live and receiving traffic"
-		r.NextAction = "This variation is running. Results are being gathered for the comparison."
+		if trial.production {
+			r.Headline = "Serving live traffic"
+			r.NextAction = "This variation is handling real traffic. Results are being gathered for the comparison."
+		} else {
+			r.Headline = "Running in the demo environment"
+			r.NextAction = "This variation is deployed and clickable. Try it, or wait for the comparison."
+		}
 
 	case st == VariationStatusDraining:
 		r.Tone, r.WaitingOn = ToneProgress, ActorMendel
-		r.Headline = "Draining traffic"
-		r.NextAction = "Traffic is being shifted away from this variation before it is cleaned up."
+		if trial.production {
+			r.Headline = "Draining traffic"
+			r.NextAction = "Traffic is being shifted away from this variation before it is cleaned up."
+		} else {
+			r.Headline = "Shutting down the demo"
+			r.NextAction = "The demo deployment is being torn down."
+		}
 
 	case st == VariationStatusPruned:
 		r.Tone, r.WaitingOn = ToneNeutral, ActorNobody
@@ -224,11 +263,18 @@ func variationRefineTrack(revs []VariationRevision, rev revisionSummary, refinin
 }
 
 func variationTrialTrack(st VariationStatus, h *Hop) Track {
+	shape := shapeOfTrial(h)
 	reached := st == VariationStatusMigrating || st == VariationStatusActive || st == VariationStatusDraining
 	wanted := h != nil && (h.RequiresDemo || h.RequiresProduction)
 
+	seq := func(current int, tone Tone) Track {
+		t := stageSeq(VariationTrackTrial, "Trial", shape.keys, shape.labels, current, tone)
+		t.Note = shape.note
+		return t
+	}
+
 	if !reached && !wanted {
-		t := stageSeq(VariationTrackTrial, "Trial", trialKeys, trialLabels, -1, ToneNeutral)
+		t := seq(-1, ToneNeutral)
 		t.Applicable = false
 		t.Note = "This Hop does not require a deployed trial"
 		return t
@@ -236,15 +282,23 @@ func variationTrialTrack(st VariationStatus, h *Hop) Track {
 
 	switch st {
 	case VariationStatusMigrating:
-		return stageSeq(VariationTrackTrial, "Trial", trialKeys, trialLabels, 0, ToneProgress)
+		// Migrations are a detail of getting deployed, and only some trials have
+		// them, so the word appears only when one is actually running.
+		t := seq(0, ToneProgress)
+		t.Stages[0].Label = "Applying data migrations"
+		return t
 	case VariationStatusActive:
-		return stageSeq(VariationTrackTrial, "Trial", trialKeys, trialLabels, 1, ToneProgress)
+		return seq(1, ToneProgress)
 	case VariationStatusDraining:
-		t := stageSeq(VariationTrackTrial, "Trial", trialKeys, trialLabels, 2, ToneProgress)
-		t.Stages[2].Label = "Draining traffic"
+		t := seq(2, ToneProgress)
+		if shape.production {
+			t.Stages[2].Label = "Draining traffic"
+		} else {
+			t.Stages[2].Label = "Shutting down"
+		}
 		return t
 	default:
-		return stageSeq(VariationTrackTrial, "Trial", trialKeys, trialLabels, -1, ToneNeutral)
+		return seq(-1, ToneNeutral)
 	}
 }
 

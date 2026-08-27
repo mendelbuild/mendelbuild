@@ -63,7 +63,7 @@ var templateFuncs = template.FuncMap{
 // parsePageTemplate creates a template from layout + shared partials + a
 // specific page template. This avoids conflicts when multiple pages define the
 // same block name, while making the partials in partials.html (the lifecycle
-// ribbon, the roadmap strip) available to every page.
+// ribbon, the roadmap panel) available to every page.
 func parsePageTemplate(pageName string) *template.Template {
 	return template.Must(template.New("").Funcs(templateFuncs).ParseFS(
 		templatesFS,
@@ -381,71 +381,11 @@ func (s *Server) handleRoadmap(w http.ResponseWriter, r *http.Request) {
 	}
 	strategy := strategies[0]
 
-	// Get all hops for the strategy
-	hops, err := s.db.GetHopsByStrategy(ctx, strategy.ID)
+	// Same graph the embedded panel on Hop and Variation pages draws.
+	hopViews, edges, err := s.buildRoadmapGraph(ctx, strategy.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-
-	// Get variations for each hop (including proposed ones from pending decisions)
-	hopViews := make([]RoadmapHopView, 0, len(hops))
-	for _, hop := range hops {
-		variations, _ := s.db.GetVariationsByHop(ctx, hop.ID)
-		varViews := make([]RoadmapVariationView, 0)
-
-		if len(variations) > 0 {
-			// Show actual variations
-			for _, v := range variations {
-				varViews = append(varViews, RoadmapVariationView{
-					ID:     v.ID.String(),
-					Name:   v.Name,
-					Status: string(v.Status),
-				})
-			}
-		} else {
-			// Check for pending variation_review input request with proposed variations
-			inputRequest, err := s.db.GetInputRequestBySubjectAndKind(ctx, "hop", hop.ID, domain.InputRequestKindVariationReview)
-			if err == nil && inputRequest != nil && inputRequest.Status != domain.InputRequestStatusResolved && inputRequest.Details != nil {
-				// Parse proposed variations from input request details
-				var proposal struct {
-					Variations []struct {
-						Name string `json:"name"`
-					} `json:"variations"`
-				}
-				if json.Unmarshal([]byte(*inputRequest.Details), &proposal) == nil {
-					for _, v := range proposal.Variations {
-						varViews = append(varViews, RoadmapVariationView{
-							ID:     "", // No ID yet - not clickable
-							Name:   v.Name,
-							Status: "proposed",
-						})
-					}
-				}
-			}
-		}
-
-		hopViews = append(hopViews, RoadmapHopView{
-			ID:         hop.ID.String(),
-			Name:       hop.Name,
-			Status:     string(hop.Status),
-			Variations: varViews,
-		})
-	}
-
-	// Get all dependencies
-	deps, err := s.db.GetHopDependenciesByStrategy(ctx, strategy.ID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	edges := make([]RoadmapEdge, 0, len(deps))
-	for _, d := range deps {
-		edges = append(edges, RoadmapEdge{
-			From: d.DependsOnHopID.String(),
-			To:   d.HopID.String(),
-		})
 	}
 
 	// Convert to JSON for JavaScript

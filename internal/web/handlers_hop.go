@@ -85,7 +85,7 @@ type HopDetailView struct {
 	TotalOutputTokens        int
 
 	Ribbon domain.Ribbon // Plain-English lifecycle position and next action
-	Strip  *RoadmapStrip // Immediate neighbours in the roadmap DAG
+	Roadmap *MiniRoadmap  // The project roadmap, scrolled to this Hop
 }
 
 func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
@@ -216,7 +216,7 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 		TotalInputTokens:           tokenTotals.InputTokens,
 		TotalOutputTokens:          tokenTotals.OutputTokens,
 		Ribbon:                     domain.HopLifecycle(hop, rawVariations),
-		Strip:                      s.buildRoadmapStrip(ctx, projectID, hop),
+		Roadmap:                      s.buildMiniRoadmap(ctx, projectID, hop),
 	}
 
 	data := map[string]interface{}{
@@ -290,7 +290,7 @@ type VariationDetailView struct {
 
 	Revisions []domain.VariationRevision // User-requested changes; drives the Refine track
 	Ribbon    domain.Ribbon              // Plain-English lifecycle position and next action
-	Strip     *RoadmapStrip              // Parent Hop's neighbours in the roadmap DAG
+	Roadmap   *MiniRoadmap               // The project roadmap, scrolled to the parent Hop
 }
 
 func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
@@ -419,7 +419,7 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		Logs:                  logs,
 		Revisions:             revisions,
 		Ribbon:                domain.VariationLifecycle(variation, revisions, hop),
-		Strip:                 s.buildRoadmapStrip(ctx, projectID, hop),
+		Roadmap:                 s.buildMiniRoadmap(ctx, projectID, hop),
 		DemoInstance:          demoInstance,
 		DemoLogs:              demoLogs,
 		GitHubURL:             githubURL,

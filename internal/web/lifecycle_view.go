@@ -2,107 +2,142 @@ package web
 
 import (
 	"context"
-	"sort"
+	"encoding/json"
+	"html/template"
 
 	"github.com/google/uuid"
 
 	"github.com/bhs/mendelbuild/internal/domain"
 )
 
-// stripNeighbors caps how many Hops are shown on either side of the current
-// one. The strip is a header element, so it has to stay on one line; anything
-// beyond the cap is reported as a count with a link to the full roadmap.
-const stripNeighbors = 3
-
-// StripHop is one Hop rendered in the roadmap strip.
-type StripHop struct {
-	ID      uuid.UUID
-	Name    string
-	Tone    domain.Tone
-	Current bool
-}
-
-// RoadmapStrip places a Hop among its immediate neighbours in the roadmap DAG.
-// It answers "where am I and what is next to me" on pages that would otherwise
-// show a Hop with no surrounding context.
-type RoadmapStrip struct {
+// MiniRoadmap is the project roadmap, embedded on a page about one Hop and
+// scrolled to that Hop.
+//
+// It carries the same payload the full roadmap page does and is drawn by the
+// same JavaScript renderer. Showing a reduced, bespoke summary of the graph was
+// the obvious alternative and the wrong one: a second drawing of the roadmap
+// would drift from the real one, and the shape of the graph — how much is
+// upstream, how much is still ahead — is most of what the panel is for.
+type MiniRoadmap struct {
 	ProjectID  string
-	Before     []StripHop // Hops this one depends on
-	Current    StripHop
-	After      []StripHop // Hops that depend on this one
-	MoreBefore int        // Predecessors not shown because of the cap
-	MoreAfter  int        // Successors not shown because of the cap
+	FocusHopID string
+	HopCount   int
+	HopsJSON   template.JS
+	EdgesJSON  template.JS
 }
 
-// HasNeighbors reports whether there is anything to show besides the current
-// Hop. An isolated Hop renders no strip at all rather than a lonely single node.
-func (r *RoadmapStrip) HasNeighbors() bool {
-	return r != nil && (len(r.Before) > 0 || len(r.After) > 0 || r.MoreBefore > 0 || r.MoreAfter > 0)
-}
+// HasContext reports whether the panel is worth drawing. A roadmap of one Hop
+// tells the reader nothing they cannot see from the page they are already on.
+func (m *MiniRoadmap) HasContext() bool { return m != nil && m.HopCount > 1 }
 
-// buildRoadmapStrip assembles the neighbourhood around hop. It returns nil if
-// the surrounding Hops cannot be loaded; the strip is contextual, so failing to
-// build it must never fail the page.
-func (s *Server) buildRoadmapStrip(ctx context.Context, projectID uuid.UUID, hop *domain.Hop) *RoadmapStrip {
+// buildMiniRoadmap assembles the roadmap payload focused on hop. It returns nil
+// if the graph cannot be loaded; the panel is contextual, so failing to build it
+// must never fail the page.
+func (s *Server) buildMiniRoadmap(ctx context.Context, projectID uuid.UUID, hop *domain.Hop) *MiniRoadmap {
 	if hop == nil {
 		return nil
 	}
 
-	all, err := s.db.GetHopsByStrategy(ctx, hop.StrategyID)
+	hops, edges, err := s.buildRoadmapGraph(ctx, hop.StrategyID)
+	if err != nil || len(hops) == 0 {
+		return nil
+	}
+
+	hopsJSON, err := json.Marshal(hops)
 	if err != nil {
 		return nil
 	}
-	byID := make(map[uuid.UUID]domain.Hop, len(all))
-	for _, h := range all {
-		byID[h.ID] = h
+	edgesJSON, err := json.Marshal(edges)
+	if err != nil {
+		return nil
 	}
 
-	strip := &RoadmapStrip{
-		ProjectID: projectID.String(),
-		Current:   stripHopFrom(hop, true),
+	return &MiniRoadmap{
+		ProjectID:  projectID.String(),
+		FocusHopID: hop.ID.String(),
+		HopCount:   len(hops),
+		// template.JS, not string: html/template escapes strings in a script
+		// context and would corrupt the JSON. See CLAUDE.md.
+		HopsJSON:  template.JS(hopsJSON),
+		EdgesJSON: template.JS(edgesJSON),
 	}
-
-	// Predecessors: the Hops this one depends on.
-	predIDs, _ := s.db.GetHopDependsOn(ctx, hop.ID)
-	strip.Before, strip.MoreBefore = resolveStripHops(predIDs, byID)
-
-	// Successors: the Hops that depend on this one. GetHopDependencies selects
-	// rows where depends_on_hop_id is this Hop, so the dependent side is HopID.
-	deps, _ := s.db.GetHopDependencies(ctx, hop.ID)
-	succIDs := make([]uuid.UUID, 0, len(deps))
-	for _, d := range deps {
-		succIDs = append(succIDs, d.HopID)
-	}
-	strip.After, strip.MoreAfter = resolveStripHops(succIDs, byID)
-
-	return strip
 }
 
-// resolveStripHops turns Hop IDs into renderable entries, sorted by name for a
-// stable order, and truncated to the neighbour cap.
-func resolveStripHops(ids []uuid.UUID, byID map[uuid.UUID]domain.Hop) ([]StripHop, int) {
-	out := make([]StripHop, 0, len(ids))
-	for _, id := range ids {
-		h, ok := byID[id]
-		if !ok {
-			continue
+// buildRoadmapGraph loads every Hop in a strategy, its Variations, and the
+// dependency edges between them, in the shape the roadmap renderer expects.
+//
+// Hops with no Variations yet fall back to the proposed Variations sitting in an
+// unresolved review, so a Hop that is mid-proposal does not read as empty.
+func (s *Server) buildRoadmapGraph(ctx context.Context, strategyID uuid.UUID) ([]RoadmapHopView, []RoadmapEdge, error) {
+	hops, err := s.db.GetHopsByStrategy(ctx, strategyID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	hopViews := make([]RoadmapHopView, 0, len(hops))
+	for _, hop := range hops {
+		variations, _ := s.db.GetVariationsByHop(ctx, hop.ID)
+		varViews := make([]RoadmapVariationView, 0)
+
+		if len(variations) > 0 {
+			for _, v := range variations {
+				varViews = append(varViews, RoadmapVariationView{
+					ID:     v.ID.String(),
+					Name:   v.Name,
+					Status: string(v.Status),
+				})
+			}
+		} else {
+			varViews = append(varViews, proposedVariations(ctx, s, hop.ID)...)
 		}
-		hop := h
-		out = append(out, stripHopFrom(&hop, false))
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 
-	if len(out) > stripNeighbors {
-		return out[:stripNeighbors], len(out) - stripNeighbors
+		hopViews = append(hopViews, RoadmapHopView{
+			ID:         hop.ID.String(),
+			Name:       hop.Name,
+			Status:     string(hop.Status),
+			Variations: varViews,
+		})
 	}
-	return out, 0
+
+	deps, err := s.db.GetHopDependenciesByStrategy(ctx, strategyID)
+	if err != nil {
+		return nil, nil, err
+	}
+	edges := make([]RoadmapEdge, 0, len(deps))
+	for _, d := range deps {
+		edges = append(edges, RoadmapEdge{
+			From: d.DependsOnHopID.String(),
+			To:   d.HopID.String(),
+		})
+	}
+
+	return hopViews, edges, nil
 }
 
-func stripHopFrom(h *domain.Hop, current bool) StripHop {
-	return StripHop{
-		ID:      h.ID,
-		Name:    h.Name,
-		Tone:    domain.HopLifecycle(h, nil).Tone,
-		Current: current,
+// proposedVariations reads the Variations named in a Hop's open variation review,
+// which exist only inside the request's details until the review is approved.
+func proposedVariations(ctx context.Context, s *Server, hopID uuid.UUID) []RoadmapVariationView {
+	ir, err := s.db.GetInputRequestBySubjectAndKind(ctx, "hop", hopID, domain.InputRequestKindVariationReview)
+	if err != nil || ir == nil || ir.Status == domain.InputRequestStatusResolved || ir.Details == nil {
+		return nil
 	}
+
+	var proposal struct {
+		Variations []struct {
+			Name string `json:"name"`
+		} `json:"variations"`
+	}
+	if json.Unmarshal([]byte(*ir.Details), &proposal) != nil {
+		return nil
+	}
+
+	out := make([]RoadmapVariationView, 0, len(proposal.Variations))
+	for _, v := range proposal.Variations {
+		out = append(out, RoadmapVariationView{
+			ID:     "", // No ID yet, so not clickable.
+			Name:   v.Name,
+			Status: "proposed",
+		})
+	}
+	return out
 }

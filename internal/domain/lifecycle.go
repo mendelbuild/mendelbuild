@@ -94,6 +94,48 @@ func (r Ribbon) WaitingOnYou() bool { return r.WaitingOn == ActorYou }
 // Terminal reports whether the entity has reached an end state.
 func (r Ribbon) Terminal() bool { return r.WaitingOn == ActorNobody }
 
+// StatusLabel is the badge text: whose move it is, or — once nothing further
+// will happen — how it ended.
+//
+// Terminal is not a synonym for success. A Variation whose build failed and one
+// that was merged to main are both finished, and labelling them alike ("Complete")
+// is the same class of bug as painting a failure green. Three outcomes are
+// distinguished: it worked, it failed, or it was closed without either.
+func (r Ribbon) StatusLabel() string {
+	switch {
+	case r.WaitingOn == ActorYou:
+		return "Your move"
+	case r.WaitingOn == ActorMendel:
+		return "Mendel is working"
+	case r.Tone == ToneFailure:
+		return "Failed"
+	case r.Tone == ToneSuccess:
+		return "Complete"
+	default:
+		// Neutral terminal: eliminated, not selected, cancelled. Over, but
+		// neither a success nor a failure.
+		return "Closed"
+	}
+}
+
+// StatusClass is the CSS modifier matching StatusLabel. Templates must style the
+// badge from this rather than from WaitingOn, which cannot tell a terminal
+// failure from a terminal success.
+func (r Ribbon) StatusClass() string {
+	switch r.StatusLabel() {
+	case "Your move":
+		return "you"
+	case "Mendel is working":
+		return "mendel"
+	case "Failed":
+		return "failed"
+	case "Complete":
+		return "done"
+	default:
+		return "closed"
+	}
+}
+
 // Track returns the track with the given key, or nil.
 func (r Ribbon) Track(key string) *Track {
 	for i := range r.Tracks {

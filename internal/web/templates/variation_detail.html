@@ -3,7 +3,7 @@
 <h1>Variation: {{.Variation.Name}}</h1>
 <p><a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">&larr; Back to Hop: {{.Hop.Name}}</a></p>
 
-{{template "roadmap-strip" .Strip}}
+{{template "roadmap-panel" .Roadmap}}
 {{template "lifecycle-ribbon" .Ribbon}}
 
 <div style="display: flex; gap: 20px; align-items: flex-start;">
