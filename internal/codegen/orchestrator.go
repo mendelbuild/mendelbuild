@@ -202,11 +202,13 @@ type VariationProposalData struct {
 }
 
 // ProposedVariationData is a single variation in a proposal.
+// The JSON shape matches agent.VariationProposal, which is what the web layer
+// stores on the InputRequest.
 type ProposedVariationData struct {
-	Name            string `json:"name"`
-	Approach        string `json:"approach"`
-	Differentiation string `json:"differentiation"`
-	EstimatedTokens int    `json:"estimated_tokens"`
+	Name             string  `json:"name"`
+	Approach         string  `json:"approach"`
+	Differentiation  string  `json:"differentiation"`
+	EstimatedCostUSD float64 `json:"estimated_cost_usd"`
 }
 
 // ParseVariationProposal parses a variation proposal from an InputRequest's details.

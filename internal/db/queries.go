@@ -160,16 +160,38 @@ func (db *DB) LoadStrategy(ctx context.Context, input *domain.StrategyInput) (uu
 
 	// Upsert funding sources
 	for _, fund := range input.Strategy.Funding {
-		fundID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("funding:%s:%s", strategyID, fund.ResourceType)))
+		fundID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("funding:%s:%s", strategyID, fund.Name)))
 		_, err = tx.Exec(ctx, `
-			INSERT INTO funding_sources (id, strategy_id, resource_type, amount, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $5)
+			INSERT INTO funding_sources (id, strategy_id, name, amount_usd, period_start, period_end, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
 			ON CONFLICT (id) DO UPDATE SET
-				amount = EXCLUDED.amount,
-				updated_at = $5
-		`, fundID, strategyID, fund.ResourceType, fund.Amount, now)
+				name = EXCLUDED.name,
+				amount_usd = EXCLUDED.amount_usd,
+				period_start = EXCLUDED.period_start,
+				period_end = EXCLUDED.period_end,
+				updated_at = $7
+		`, fundID, strategyID, fund.Name, fund.AmountUSD,
+			parseInputDate(fund.PeriodStart), parseInputDate(fund.PeriodEnd), now)
 		if err != nil {
-			return uuid.Nil, fmt.Errorf("upsert funding source %s: %w", fund.ResourceType, err)
+			return uuid.Nil, fmt.Errorf("upsert funding source %s: %w", fund.Name, err)
+		}
+
+		// Tie the budget to the key results it is meant to move. Those key
+		// results carry target dates, which is what makes a budget answerable
+		// to a milestone rather than only to a calendar.
+		for _, krRef := range fund.KeyResultIDs {
+			krID, err := uuid.Parse(krRef)
+			if err != nil {
+				krID = uuid.NewSHA1(uuid.NameSpaceOID, []byte("keyresult:"+krRef))
+			}
+			_, err = tx.Exec(ctx, `
+				INSERT INTO funding_success_criteria (id, funding_source_id, key_result_id, weight, created_at)
+				VALUES ($1, $2, $3, 1.0, $4)
+				ON CONFLICT (funding_source_id, key_result_id) DO NOTHING
+			`, uuid.New(), fundID, krID, now)
+			if err != nil {
+				return uuid.Nil, fmt.Errorf("link funding %s to key result %s: %w", fund.Name, krRef, err)
+			}
 		}
 	}
 
@@ -330,9 +352,9 @@ func (db *DB) GetKeyResultsByObjective(ctx context.Context, objectiveID uuid.UUI
 // GetFundingSourcesByStrategy retrieves all funding sources for a strategy.
 func (db *DB) GetFundingSourcesByStrategy(ctx context.Context, strategyID uuid.UUID) ([]domain.FundingSource, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, strategy_id, resource_type, amount, created_at, updated_at
+		SELECT id, strategy_id, name, amount_usd, period_start, period_end, created_at, updated_at
 		FROM funding_sources WHERE strategy_id = $1
-		ORDER BY resource_type
+		ORDER BY created_at
 	`, strategyID)
 	if err != nil {
 		return nil, err
@@ -342,7 +364,8 @@ func (db *DB) GetFundingSourcesByStrategy(ctx context.Context, strategyID uuid.U
 	var sources []domain.FundingSource
 	for rows.Next() {
 		var f domain.FundingSource
-		if err := rows.Scan(&f.ID, &f.StrategyID, &f.ResourceType, &f.Amount, &f.CreatedAt, &f.UpdatedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.StrategyID, &f.Name, &f.AmountUSD,
+			&f.PeriodStart, &f.PeriodEnd, &f.CreatedAt, &f.UpdatedAt); err != nil {
 			return nil, err
 		}
 		sources = append(sources, f)
@@ -543,24 +566,28 @@ func (db *DB) CreateHopDependency(ctx context.Context, hopID, dependsOnHopID uui
 	return err
 }
 
-// CreateBudgetAllocation creates a budget allocation for a hop.
-func (db *DB) CreateBudgetAllocation(ctx context.Context, hopID, fundingSourceID uuid.UUID, limitAmount float64) error {
+// CreateBudgetAllocation grants a Hop a USD spend ceiling from a funding source.
+func (db *DB) CreateBudgetAllocation(ctx context.Context, hopID, fundingSourceID uuid.UUID, limitUSD float64) error {
 	id := uuid.New()
 	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO budget_allocations (id, hop_id, funding_source_id, limit_amount, created_at, updated_at)
+		INSERT INTO budget_allocations (id, hop_id, funding_source_id, limit_usd, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, NOW(), NOW())
-	`, id, hopID, fundingSourceID, limitAmount)
+	`, id, hopID, fundingSourceID, limitUSD)
 	return err
 }
 
-// GetFundingSourceByType retrieves a funding source by strategy and resource type.
-func (db *DB) GetFundingSourceByType(ctx context.Context, strategyID uuid.UUID, resourceType string) (*domain.FundingSource, error) {
+// GetPrimaryFundingSource returns the strategy's largest funding source, which
+// is what Hop allocations draw against when no source is named explicitly.
+func (db *DB) GetPrimaryFundingSource(ctx context.Context, strategyID uuid.UUID) (*domain.FundingSource, error) {
 	var f domain.FundingSource
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, strategy_id, resource_type, amount, created_at, updated_at
+		SELECT id, strategy_id, name, amount_usd, period_start, period_end, created_at, updated_at
 		FROM funding_sources
-		WHERE strategy_id = $1 AND resource_type = $2
-	`, strategyID, resourceType).Scan(&f.ID, &f.StrategyID, &f.ResourceType, &f.Amount, &f.CreatedAt, &f.UpdatedAt)
+		WHERE strategy_id = $1
+		ORDER BY amount_usd DESC, created_at
+		LIMIT 1
+	`, strategyID).Scan(&f.ID, &f.StrategyID, &f.Name, &f.AmountUSD,
+		&f.PeriodStart, &f.PeriodEnd, &f.CreatedAt, &f.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -647,11 +674,11 @@ func (db *DB) GetVariation(ctx context.Context, id uuid.UUID) (*domain.Variation
 	err := db.Pool.QueryRow(ctx, `
 		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref,
 		       diff_files_changed, diff_additions, diff_deletions, evaluation_scores,
-		       input_tokens, output_tokens, status, created_at, updated_at
+		       status, created_at, updated_at
 		FROM variations WHERE id = $1
 	`, id).Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef,
 		&v.DiffFilesChanged, &v.DiffAdditions, &v.DiffDeletions, &v.EvaluationScores,
-		&v.InputTokens, &v.OutputTokens, &v.Status, &v.CreatedAt, &v.UpdatedAt)
+		&v.Status, &v.CreatedAt, &v.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -700,54 +727,12 @@ func (db *DB) UpdateVariationEvaluationScores(ctx context.Context, variationID u
 	return err
 }
 
-// AddVariationTokens increments the token counts for a variation.
-func (db *DB) AddVariationTokens(ctx context.Context, variationID uuid.UUID, inputTokens, outputTokens int) error {
-	_, err := db.Pool.Exec(ctx, `
-		UPDATE variations SET
-			input_tokens = input_tokens + $2,
-			output_tokens = output_tokens + $3,
-			updated_at = NOW()
-		WHERE id = $1
-	`, variationID, inputTokens, outputTokens)
-	return err
-}
-
-// TokenTotals holds aggregated token counts.
-type TokenTotals struct {
-	InputTokens  int
-	OutputTokens int
-}
-
-// GetHopTokenTotals returns the sum of tokens across all variations for a hop.
-func (db *DB) GetHopTokenTotals(ctx context.Context, hopID uuid.UUID) (TokenTotals, error) {
-	var totals TokenTotals
-	err := db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
-		FROM variations
-		WHERE hop_id = $1
-	`, hopID).Scan(&totals.InputTokens, &totals.OutputTokens)
-	return totals, err
-}
-
-// GetProjectTokenTotals returns the sum of tokens across all variations for a project.
-func (db *DB) GetProjectTokenTotals(ctx context.Context, projectID uuid.UUID) (TokenTotals, error) {
-	var totals TokenTotals
-	err := db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(v.input_tokens), 0), COALESCE(SUM(v.output_tokens), 0)
-		FROM variations v
-		JOIN hops h ON v.hop_id = h.id
-		JOIN strategies s ON h.strategy_id = s.id
-		WHERE s.project_id = $1
-	`, projectID).Scan(&totals.InputTokens, &totals.OutputTokens)
-	return totals, err
-}
-
 // GetVariationsByHop retrieves all variations for a hop.
 func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain.Variation, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref,
 		       diff_files_changed, diff_additions, diff_deletions, evaluation_scores,
-		       input_tokens, output_tokens, status, created_at, updated_at
+		       status, created_at, updated_at
 		FROM variations
 		WHERE hop_id = $1
 		ORDER BY created_at ASC
@@ -762,7 +747,7 @@ func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain
 		var v domain.Variation
 		if err := rows.Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef,
 			&v.DiffFilesChanged, &v.DiffAdditions, &v.DiffDeletions, &v.EvaluationScores,
-			&v.InputTokens, &v.OutputTokens, &v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
+			&v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
 		variations = append(variations, v)
@@ -828,24 +813,10 @@ func (db *DB) GetRepositoryByProject(ctx context.Context, projectID uuid.UUID) (
 	return &r, nil
 }
 
-// LogBudgetSpend logs a budget spend entry.
-func (db *DB) LogBudgetSpend(ctx context.Context, allocationID uuid.UUID, amount float64, description string) error {
-	id := uuid.New()
-	var descPtr *string
-	if description != "" {
-		descPtr = &description
-	}
-	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO budget_spend_log (id, budget_allocation_id, amount, recorded_at, description)
-		VALUES ($1, $2, $3, NOW(), $4)
-	`, id, allocationID, amount, descPtr)
-	return err
-}
-
 // GetBudgetAllocationsByHop retrieves all budget allocations for a hop.
 func (db *DB) GetBudgetAllocationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain.BudgetAllocation, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, hop_id, funding_source_id, limit_amount, created_at, updated_at
+		SELECT id, hop_id, funding_source_id, limit_usd, created_at, updated_at
 		FROM budget_allocations
 		WHERE hop_id = $1
 	`, hopID)
@@ -857,21 +828,12 @@ func (db *DB) GetBudgetAllocationsByHop(ctx context.Context, hopID uuid.UUID) ([
 	var allocations []domain.BudgetAllocation
 	for rows.Next() {
 		var a domain.BudgetAllocation
-		if err := rows.Scan(&a.ID, &a.HopID, &a.FundingSourceID, &a.LimitAmount, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.HopID, &a.FundingSourceID, &a.LimitUSD, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		allocations = append(allocations, a)
 	}
 	return allocations, nil
-}
-
-// GetBudgetSpendByAllocation retrieves total spend for a budget allocation.
-func (db *DB) GetBudgetSpendByAllocation(ctx context.Context, allocationID uuid.UUID) (float64, error) {
-	var total float64
-	err := db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount), 0) FROM budget_spend_log WHERE budget_allocation_id = $1
-	`, allocationID).Scan(&total)
-	return total, err
 }
 
 // UpsertRepository creates or updates the repository for a project.
@@ -3177,3 +3139,19 @@ func (db *DB) UpdateProjectDeploymentChannelProdValidation(ctx context.Context, 
 }
 
 
+
+
+// parseInputDate accepts either a full RFC3339 timestamp or a bare ISO date
+// from a strategy input file, and returns nil for anything it cannot read.
+func parseInputDate(v *string) *time.Time {
+	if v == nil || *v == "" {
+		return nil
+	}
+	if t, err := time.Parse(time.RFC3339, *v); err == nil {
+		return &t
+	}
+	if t, err := time.Parse("2006-01-02", *v); err == nil {
+		return &t
+	}
+	return nil
+}

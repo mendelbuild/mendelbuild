@@ -38,12 +38,14 @@
                 {{if .VariationProposal}}
                 <div style="text-align: right;">
                     <div style="font-size: 0.9em; color: #666;">
-                        Estimated: <strong>{{.VariationProposal.TotalEstimatedTokens}}</strong> tokens
+                        Estimated: <strong>{{usd .VariationProposal.TotalEstimatedUSD}}</strong>
                     </div>
-                    {{if .HopBudget}}
-                    <div style="font-size: 0.85em; {{if gt .VariationProposal.TotalEstimatedTokens .HopBudget}}color: #dc3545;{{else}}color: #28a745;{{end}}">
-                        Budget: <strong>{{.HopBudget}}</strong> tokens
+                    {{with .HopCost}}
+                    {{if .LimitUSD}}
+                    <div style="font-size: 0.85em; {{if gt $.View.VariationProposal.TotalEstimatedUSD .RemainingUSD}}color: #dc3545;{{else}}color: #28a745;{{end}}">
+                        {{usd .RemainingUSD}} left of {{usdPtr .LimitUSD}}
                     </div>
+                    {{end}}
                     {{end}}
                 </div>
                 {{end}}
@@ -102,7 +104,7 @@
                         <h3 style="margin: 0;">{{$v.Name}}</h3>
                     </label>
                     <span style="background: #e9ecef; padding: 4px 8px; border-radius: 4px; font-size: 0.85em;">
-                        ~{{$v.EstimatedTokens}} tokens
+                        ~{{usd $v.EstimatedCostUSD}}
                     </span>
                 </div>
 

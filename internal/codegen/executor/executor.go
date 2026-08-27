@@ -72,7 +72,7 @@ type Result struct {
 
 // Run executes the prompt with tool loop until completion.
 func (e *Executor) Run(ctx context.Context, systemPrompt, userPrompt string) (*Result, error) {
-	e.stats = Stats{StartTime: time.Now()}
+	e.stats = Stats{StartTime: time.Now(), Model: e.model}
 	e.emit(Event{Type: EventStart})
 
 	messages := []message{

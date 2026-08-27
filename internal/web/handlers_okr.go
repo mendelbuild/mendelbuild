@@ -638,11 +638,12 @@ func (s *Server) apiTuneOKRs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tuner := agent.NewOKRTuner(client)
-	result, _, err := tuner.TuneOKRs(ctx, input)
+	result, spend, err := tuner.TuneOKRs(ctx, input)
 	if err != nil {
 		jsonError(w, "tuning failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.recordStrategySpend(ctx, strategyID, "okr_tuner", spend)
 
 	// Update database with tuning results
 	tunedCount := 0

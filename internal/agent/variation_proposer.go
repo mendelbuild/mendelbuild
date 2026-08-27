@@ -14,7 +14,11 @@ Guidelines:
 1. Propose approaches that are genuinely different, not just minor tweaks
 2. Consider different architectural patterns, libraries, or algorithms
 3. Balance innovation with pragmatism - some approaches can be safe, others exploratory
-4. Budget estimates should be realistic for Claude token consumption during implementation
+4. Cost estimates are in US dollars and cover generating that variation. Anchor them
+   to median_variation_usd in the calibration data when it is present; an approach that
+   has to read and touch more of the codebase costs proportionally more. With no
+   history to go on, say so rather than inventing a confident figure. The variations
+   you propose should collectively fit inside available_budget_usd.
 5. Each approach should be self-contained and independently implementable
 6. Use kebab-case for variation names (e.g., 'redis-cache', 'postgresql-native')
 7. Differentiation should explain trade-offs clearly (performance vs simplicity, etc.)
@@ -30,7 +34,7 @@ const variationRevisionSystemPrompt = `You are a variation proposer for MendelBu
 
 Apply the user's feedback to modify the variations. You may:
 - Add, remove, or modify variation approaches
-- Adjust estimated token costs
+- Adjust estimated dollar costs
 - Change differentiation rationale
 - Rename variations
 
@@ -38,7 +42,11 @@ Guidelines:
 1. Propose approaches that are genuinely different, not just minor tweaks
 2. Consider different architectural patterns, libraries, or algorithms
 3. Balance innovation with pragmatism - some approaches can be safe, others exploratory
-4. Budget estimates should be realistic for Claude token consumption during implementation
+4. Cost estimates are in US dollars and cover generating that variation. Anchor them
+   to median_variation_usd in the calibration data when it is present; an approach that
+   has to read and touch more of the codebase costs proportionally more. With no
+   history to go on, say so rather than inventing a confident figure. The variations
+   you propose should collectively fit inside available_budget_usd.
 5. Each approach should be self-contained and independently implementable
 6. Use kebab-case for variation names (e.g., 'redis-cache', 'postgresql-native')
 7. Differentiation should explain trade-offs clearly (performance vs simplicity, etc.)
@@ -61,10 +69,10 @@ func NewVariationProposer(client *Client) *VariationProposer {
 }
 
 // ProposeVariations generates variation proposals for a hop.
-func (p *VariationProposer) ProposeVariations(ctx context.Context, input VariationProposerInput) (*VariationProposal, int, error) {
+func (p *VariationProposer) ProposeVariations(ctx context.Context, input VariationProposerInput) (*VariationProposal, Spend, error) {
 	inputJSON, err := json.MarshalIndent(input, "", "  ")
 	if err != nil {
-		return nil, 0, fmt.Errorf("marshal input: %w", err)
+		return nil, Spend{}, fmt.Errorf("marshal input: %w", err)
 	}
 
 	userMessage := fmt.Sprintf(`Propose %d differentiated implementation approaches for this hop:
@@ -77,26 +85,26 @@ Generate variations that explore different parts of the design space. Each shoul
 		{Role: "user", Content: userMessage},
 	}, 8192, VariationProposerResponseSchema())
 	if err != nil {
-		return nil, 0, fmt.Errorf("send message: %w", err)
+		return nil, Spend{}, fmt.Errorf("send message: %w", err)
 	}
 
 	content := resp.GetTextContent()
 	var result VariationProposerResponse
 	if err := json.Unmarshal([]byte(content), &result); err != nil {
-		return nil, 0, fmt.Errorf("parse response: %w (content: %s)", err, content)
+		return nil, Spend{}, fmt.Errorf("parse response: %w (content: %s)", err, content)
 	}
 
 	// Set the hop ID from the input
 	result.Proposal.HopID = input.Hop.ID
 
-	return &result.Proposal, resp.Usage.TotalTokens(), nil
+	return &result.Proposal, resp.Spend(), nil
 }
 
 // ReviseVariations revises existing variation proposals based on user feedback.
-func (p *VariationProposer) ReviseVariations(ctx context.Context, input VariationRevisionInput) (*VariationProposal, int, error) {
+func (p *VariationProposer) ReviseVariations(ctx context.Context, input VariationRevisionInput) (*VariationProposal, Spend, error) {
 	inputJSON, err := json.MarshalIndent(input, "", "  ")
 	if err != nil {
-		return nil, 0, fmt.Errorf("marshal input: %w", err)
+		return nil, Spend{}, fmt.Errorf("marshal input: %w", err)
 	}
 
 	userMessage := fmt.Sprintf(`Revise the variation proposals based on this feedback:
@@ -109,17 +117,17 @@ Apply the feedback to update the variations.`, string(inputJSON))
 		{Role: "user", Content: userMessage},
 	}, 8192, VariationProposerResponseSchema())
 	if err != nil {
-		return nil, 0, fmt.Errorf("send message: %w", err)
+		return nil, Spend{}, fmt.Errorf("send message: %w", err)
 	}
 
 	content := resp.GetTextContent()
 	var result VariationProposerResponse
 	if err := json.Unmarshal([]byte(content), &result); err != nil {
-		return nil, 0, fmt.Errorf("parse response: %w (content: %s)", err, content)
+		return nil, Spend{}, fmt.Errorf("parse response: %w (content: %s)", err, content)
 	}
 
 	// Set the hop ID from the input
 	result.Proposal.HopID = input.Hop.ID
 
-	return &result.Proposal, resp.Usage.TotalTokens(), nil
+	return &result.Proposal, resp.Spend(), nil
 }

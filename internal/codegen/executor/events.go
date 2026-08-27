@@ -1,6 +1,10 @@
 package executor
 
-import "time"
+import (
+	"time"
+
+	"github.com/bhs/mendelbuild/internal/domain"
+)
 
 // EventType identifies the kind of progress event.
 type EventType string
@@ -46,14 +50,33 @@ type EventHandler func(Event)
 
 // Stats tracks cumulative statistics for an execution.
 type Stats struct {
-	StartTime    time.Time
-	EndTime      time.Time
+	StartTime time.Time
+	EndTime   time.Time
+
+	// Model that produced these counts, so the caller can price them against
+	// the right rate card. An agentic run is cache-heavy, and cache tokens are
+	// priced off the input rate, which differs ~10x across models.
+	Model string
+
+	// InputTokens is the uncached remainder only: the full prompt is
+	// InputTokens + CacheRead + CacheWrite.
 	InputTokens  int
 	OutputTokens int
 	CacheRead    int
 	CacheWrite   int
-	ToolCalls    int
-	APIRounds    int
+
+	ToolCalls int
+	APIRounds int
+}
+
+// Tokens returns the counts in the shared domain shape used by the cost ledger.
+func (s Stats) Tokens() domain.TokenCounts {
+	return domain.TokenCounts{
+		InputTokens:      s.InputTokens,
+		OutputTokens:     s.OutputTokens,
+		CacheReadTokens:  s.CacheRead,
+		CacheWriteTokens: s.CacheWrite,
+	}
 }
 
 // Duration returns the total execution time.
@@ -62,14 +85,4 @@ func (s Stats) Duration() time.Duration {
 		return time.Since(s.StartTime)
 	}
 	return s.EndTime.Sub(s.StartTime)
-}
-
-// EstimatedCost returns rough cost estimate in USD.
-func (s Stats) EstimatedCost() float64 {
-	// Sonnet 4 pricing (as of mid-2026, verify current rates)
-	inputCost := float64(s.InputTokens) * 0.003 / 1000
-	outputCost := float64(s.OutputTokens) * 0.015 / 1000
-	// Cache reads are 90% cheaper
-	cacheReadCost := float64(s.CacheRead) * 0.0003 / 1000
-	return inputCost + outputCost + cacheReadCost
 }

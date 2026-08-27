@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/codegen/executor"
+	"github.com/bhs/mendelbuild/internal/cost"
 	"github.com/bhs/mendelbuild/internal/db"
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/bhs/mendelbuild/internal/git"
@@ -191,12 +192,17 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 		return result, nil
 	}
 
-	result.TokensUsed = execResult.Stats.InputTokens + execResult.Stats.OutputTokens
-	logger(domain.LogLevelInfo, fmt.Sprintf("API stats: %d rounds, %d tool calls, %d input tokens, %d output tokens",
-		execResult.Stats.APIRounds, execResult.Stats.ToolCalls, execResult.Stats.InputTokens, execResult.Stats.OutputTokens))
+	result.TokensUsed = execResult.Stats.Tokens().Total()
+	logger(domain.LogLevelInfo, fmt.Sprintf(
+		"API stats: %d rounds, %d tool calls, %d in / %d out / %d cache-read / %d cache-write tokens",
+		execResult.Stats.APIRounds, execResult.Stats.ToolCalls,
+		execResult.Stats.InputTokens, execResult.Stats.OutputTokens,
+		execResult.Stats.CacheRead, execResult.Stats.CacheWrite))
 
-	// Save token usage to database (accumulates across runs)
-	g.db.AddVariationTokens(ctx, variation.ID, execResult.Stats.InputTokens, execResult.Stats.OutputTokens)
+	// Price this run and append it to the cost ledger. Cache tokens are carried
+	// through: on a long agentic run they are most of the prompt, and counting
+	// only input/output undercounts what was actually bought.
+	g.recordSpend(ctx, variation, execResult.Stats, logger)
 
 	if !execResult.Success {
 		result.Error = fmt.Sprintf("code generation failed: %v", execResult.Error)
@@ -441,4 +447,38 @@ func ParseRepoConfig(config json.RawMessage) (*domain.RepoConfig, error) {
 		return nil, err
 	}
 	return &rc, nil
+}
+
+// recordSpend prices an executor run and files it against the Variation's Hop.
+//
+// Failures here are logged, never fatal: losing a ledger row is bad, but
+// failing a completed code generation because its receipt could not be written
+// would be worse.
+func (g *Generator) recordSpend(ctx context.Context, variation *domain.Variation, stats executor.Stats, logger func(domain.LogLevel, string)) {
+	tokens := stats.Tokens()
+	if tokens.IsZero() {
+		return
+	}
+
+	projectID, strategyID, err := g.db.ResolveHopAttribution(ctx, variation.HopID)
+	if err != nil {
+		logger(domain.LogLevelError, fmt.Sprintf("could not attribute spend: %v", err))
+		return
+	}
+
+	hopID := variation.HopID
+	variationID := variation.ID
+	entry, err := cost.NewRecorder(g.db).RecordModelUsage(ctx, cost.Attribution{
+		ProjectID:   projectID,
+		StrategyID:  &strategyID,
+		HopID:       &hopID,
+		VariationID: &variationID,
+	}, "codegen", stats.Model, tokens)
+	if err != nil {
+		logger(domain.LogLevelError, fmt.Sprintf("could not record spend: %v", err))
+		return
+	}
+	if entry != nil {
+		logger(domain.LogLevelInfo, fmt.Sprintf("Cost: $%.4f (%s)", entry.AmountUSD, stats.Model))
+	}
 }

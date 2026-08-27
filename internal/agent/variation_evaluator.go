@@ -64,10 +64,10 @@ type VariationEvaluationResponse struct {
 }
 
 // Evaluate evaluates variations against criteria.
-func (e *VariationEvaluator) Evaluate(ctx context.Context, input VariationEvaluationInput) (*VariationEvaluationResponse, int, error) {
+func (e *VariationEvaluator) Evaluate(ctx context.Context, input VariationEvaluationInput) (*VariationEvaluationResponse, Spend, error) {
 	inputJSON, err := json.MarshalIndent(input, "", "  ")
 	if err != nil {
-		return nil, 0, fmt.Errorf("marshal input: %w", err)
+		return nil, Spend{}, fmt.Errorf("marshal input: %w", err)
 	}
 
 	userMessage := fmt.Sprintf(`Evaluate these variations against the criteria:
@@ -80,14 +80,14 @@ For each variation, provide a score (0.0-1.0) for each criterion with a brief ra
 		{Role: "user", Content: userMessage},
 	}, 4096, VariationEvaluationResponseSchema())
 	if err != nil {
-		return nil, 0, fmt.Errorf("send message: %w", err)
+		return nil, Spend{}, fmt.Errorf("send message: %w", err)
 	}
 
 	content := resp.GetTextContent()
 	var result VariationEvaluationResponse
 	if err := json.Unmarshal([]byte(content), &result); err != nil {
-		return nil, 0, fmt.Errorf("parse response: %w (content: %s)", err, content)
+		return nil, Spend{}, fmt.Errorf("parse response: %w (content: %s)", err, content)
 	}
 
-	return &result, resp.Usage.TotalTokens(), nil
+	return &result, resp.Spend(), nil
 }

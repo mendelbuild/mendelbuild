@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/agent"
+	"github.com/bhs/mendelbuild/internal/cost"
 	"github.com/bhs/mendelbuild/internal/codegen"
 	"github.com/bhs/mendelbuild/internal/db"
 	"github.com/bhs/mendelbuild/internal/domain"
@@ -49,6 +50,8 @@ func main() {
 		assignOwner(args)
 	case "platforms":
 		runPlatforms(args)
+	case "rates":
+		runRates(args)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -61,13 +64,14 @@ func printUsage() {
 
 Commands:
   serve             Start the MendelBuild server (HTTP API + webapp)
-  setup             Initialize Mendel (seed hosting platforms, deployment combos)
+  setup             Initialize Mendel (seed hosting platforms, combos, rate cards)
   migrate           Run database migrations
   load-strategy     Load a strategy from JSON file
   propose-roadmap   Generate a roadmap proposal for a strategy
   generate          Run code generation for a hop's approved variations
   assign-owner      Assign a user as owner to all projects without an owner
   platforms         Manage hosting platforms (list, refresh)
+  rates             Manage model and hosting price rate cards (list, refresh)
 
 Environment:
   MENDEL_DB_URL       Postgres connection string (default: postgres://localhost:5432/mendelbuild?sslmode=disable)
@@ -122,6 +126,19 @@ func runSetup(args []string) {
 		fmt.Println("  Deployment combos already seeded")
 	}
 
+	// Seed rate cards. Prices live in the database, not in Go, so they can be
+	// refreshed as Anthropic ships models and changes pricing.
+	rateCount, err := cost.SeedIfEmpty(ctx, database)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error seeding rate cards: %v\n", err)
+		os.Exit(1)
+	}
+	if rateCount > 0 {
+		fmt.Printf("  Seeded %d rate cards\n", rateCount)
+	} else {
+		fmt.Println("  Rate cards already seeded")
+	}
+
 	fmt.Println("Setup complete.")
 }
 
@@ -137,6 +154,15 @@ func runServer(args []string) {
 		os.Exit(1)
 	}
 	defer database.Close()
+
+	// Without rate cards every charge prices to zero, and the ledger silently
+	// reports a free project. Seeding here is idempotent and cheap, so a server
+	// started against a database that predates the cost model still works.
+	if n, err := cost.SeedIfEmpty(ctx, database); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not seed rate cards: %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("Seeded %d rate cards\n", n)
+	}
 
 	server := web.NewServer(database, *addr, Version, BuildTime)
 	fmt.Printf("Starting server on %s (version: %s)\n", *addr, Version)
@@ -250,62 +276,12 @@ func proposeRoadmap(args []string) {
 		os.Exit(1)
 	}
 
-	// Load objectives with key results
-	objectives, err := database.GetObjectivesByStrategy(ctx, strategyUUID)
+	// Includes the budget, spend to date, and this project's observed cost
+	// history, so the proposer's estimates are anchored rather than invented.
+	strategyContext, err := cost.BuildStrategyContext(ctx, database, strategy)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading objectives: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error loading strategy context: %v\n", err)
 		os.Exit(1)
-	}
-
-	var objInfos []agent.ObjectiveInfo
-	for _, obj := range objectives {
-		krs, err := database.GetKeyResultsByObjective(ctx, obj.ID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading key results: %v\n", err)
-			os.Exit(1)
-		}
-
-		var krInfos []agent.KeyResultInfo
-		for _, kr := range krs {
-			krInfo := agent.KeyResultInfo{
-				ID:          kr.ID.String(),
-				Description: kr.Description,
-				TargetUnits: kr.TargetUnits,
-			}
-			if kr.TargetDate != nil {
-				date := kr.TargetDate.Format("2006-01-02")
-				krInfo.TargetDate = &date
-			}
-			krInfos = append(krInfos, krInfo)
-		}
-
-		objInfos = append(objInfos, agent.ObjectiveInfo{
-			ID:          obj.ID.String(),
-			Description: obj.Description,
-			KeyResults:  krInfos,
-		})
-	}
-
-	// Load funding sources
-	funding, err := database.GetFundingSourcesByStrategy(ctx, strategyUUID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading funding: %v\n", err)
-		os.Exit(1)
-	}
-
-	var fundingEstimates []agent.ResourceEstimate
-	for _, f := range funding {
-		fundingEstimates = append(fundingEstimates, agent.ResourceEstimate{
-			ResourceType: string(f.ResourceType),
-			Amount:       f.Amount,
-		})
-	}
-
-	strategyContext := agent.StrategyContext{
-		ID:         strategyUUID.String(),
-		Name:       strategy.Name,
-		Objectives: objInfos,
-		Funding:    fundingEstimates,
 	}
 
 	// Create Anthropic client
@@ -318,7 +294,7 @@ func proposeRoadmap(args []string) {
 	// Generate proposal
 	fmt.Println("Generating roadmap proposal...")
 	proposer := agent.NewProposer(client)
-	roadmap, tokens, err := proposer.ProposeRoadmap(ctx, strategyContext)
+	roadmap, spend, err := proposer.ProposeRoadmap(ctx, strategyContext)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating proposal: %v\n", err)
 		os.Exit(1)
@@ -354,7 +330,7 @@ func proposeRoadmap(args []string) {
 	}
 
 	// Create initial agent message
-	tokensUsed := tokens
+	tokensUsed := spend.Tokens.Total()
 	agentMessage := &domain.InputRequestMessage{
 		ID:             uuid.New(),
 		InputRequestID: inputRequest.ID,
@@ -370,7 +346,7 @@ func proposeRoadmap(args []string) {
 	}
 
 	fmt.Printf("Created input request %s\n", inputRequest.ID)
-	fmt.Printf("Tokens used: %d\n", tokens)
+	fmt.Printf("Tokens used: %d\n", tokensUsed)
 	fmt.Printf("Proposed %d hops:\n", len(roadmap.Hops))
 	for i, hop := range roadmap.Hops {
 		fmt.Printf("  %d. %s\n", i+1, hop.Name)
@@ -592,6 +568,78 @@ Subcommands:
 
 	default:
 		fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n", subcmd)
+		os.Exit(1)
+	}
+}
+
+// runRates manages the price tables Mendel uses to turn usage into dollars.
+//
+// Prices go stale as models ship and rates change, which is why they live in
+// the database rather than in this binary. Refreshing writes new cards with a
+// fresh effective date and leaves the old ones alone, so figures already in the
+// ledger keep the price that produced them and stay verifiable.
+func runRates(args []string) {
+	if len(args) < 1 {
+		fmt.Println(`Usage: mendel rates <subcommand>
+
+Subcommands:
+  list      Show the rate cards currently in force
+  refresh   Write the built-in defaults as newly effective rate cards
+  seed      Seed defaults only if the tables are empty`)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	database, err := db.Connect(ctx, getConnString())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error connecting to database: %v\n", err)
+		os.Exit(1)
+	}
+	defer database.Close()
+
+	switch args[0] {
+	case "list":
+		cards, err := database.ListModelRateCards(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error listing rate cards: %v\n", err)
+			os.Exit(1)
+		}
+		if len(cards) == 0 {
+			fmt.Println("No rate cards configured. Run 'mendel rates seed' to add defaults.")
+			return
+		}
+		fmt.Printf("%-22s %10s %10s %8s %8s  %s\n",
+			"MODEL", "IN $/MTOK", "OUT $/MTOK", "CACHE R", "CACHE W", "EFFECTIVE")
+		for _, c := range cards {
+			fmt.Printf("%-22s %10.2f %10.2f %7.2fx %7.2fx  %s\n",
+				c.Model, c.InputUSDPerMTok, c.OutputUSDPerMTok,
+				c.CacheReadMultiplier, c.CacheWriteMultiplier,
+				c.EffectiveFrom.Format("2006-01-02"))
+		}
+		fmt.Printf("\nSource: %s\n", cards[0].Source)
+
+	case "refresh":
+		count, err := cost.RefreshAll(ctx, database)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error refreshing rate cards: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Wrote %d rate cards, effective now. Existing ledger entries keep their original prices.\n", count)
+
+	case "seed":
+		count, err := cost.SeedIfEmpty(ctx, database)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error seeding rate cards: %v\n", err)
+			os.Exit(1)
+		}
+		if count == 0 {
+			fmt.Println("Rate card tables already have data. Use 'mendel rates refresh' to update.")
+		} else {
+			fmt.Printf("Seeded %d rate cards.\n", count)
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n", args[0])
 		os.Exit(1)
 	}
 }

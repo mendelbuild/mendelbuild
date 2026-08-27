@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/agent"
+	"github.com/bhs/mendelbuild/internal/cost"
 	"github.com/bhs/mendelbuild/internal/crypto"
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/bhs/mendelbuild/internal/git"
@@ -21,6 +22,8 @@ type InputRequestDetailView struct {
 	InputRequest               *domain.InputRequest
 	Messages                   []domain.InputRequestMessage
 	Roadmap                    *agent.ProposedRoadmap
+	CostAudit                  *agent.CostAuditResponse // Fact-check of the roadmap's estimates
+	StrategyCost               *StrategyCostView        // Budget the roadmap has to fit inside
 	Strategy                   *domain.Strategy
 	Hop                        *domain.Hop
 	Variation                  *domain.Variation        // For credential_request: the blocked variation
@@ -33,7 +36,7 @@ type InputRequestDetailView struct {
 	PendingCount               int
 	FailedCount                int
 	TotalCount                 int
-	HopBudget                  int          // Total token budget for the hop
+	HopCost                    *HopCostView // Estimate, ceiling and spend to date for the hop
 	Resolution                 string       // Dereferenced resolution for template comparison
 	ExistingHopsJSON           template.JS  // JSON of existing hops for DAG rendering (template.JS to avoid HTML escaping)
 	ObjectivesJSON             template.JS  // JSON map of objective ID to description
@@ -60,9 +63,9 @@ type ExistingVariationView struct {
 
 // VariationProposalView holds parsed variation proposal data.
 type VariationProposalView struct {
-	HopID              string
-	Variations         []ProposedVariationView
-	TotalEstimatedTokens int
+	HopID            string
+	Variations       []ProposedVariationView
+	TotalEstimatedUSD float64
 }
 
 // ProposedVariationView holds a single proposed variation.
@@ -71,7 +74,7 @@ type ProposedVariationView struct {
 	Name            string
 	Approach        string
 	Differentiation string
-	EstimatedTokens int
+	EstimatedCostUSD float64
 }
 
 // SelectionDataView holds data for variation selection.
@@ -162,9 +165,13 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 				view.Roadmap = &rm
 			}
 		}
+		// The auditor's verdict on those estimates, so a reviewer sees the
+		// challenge next to the claim rather than having to take it on trust.
+		view.CostAudit = s.loadCostAudit(ctx, inputRequest.ID)
 		// Load strategy and existing hops
 		if inputRequest.SubjectType != nil && *inputRequest.SubjectType == "strategy" && inputRequest.SubjectID != nil {
 			view.Strategy, _ = s.db.GetStrategy(ctx, *inputRequest.SubjectID)
+			view.StrategyCost = s.strategyCostView(ctx, *inputRequest.SubjectID)
 
 			// Load existing hops with their statuses for DAG rendering
 			existingHops, _ := s.db.GetHopsByStrategy(ctx, *inputRequest.SubjectID)
@@ -245,31 +252,19 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 				view.ConflictInfo = civ
 			} else {
 				// Normal variation proposal
-				var proposal struct {
-					HopID      string `json:"hop_id"`
-					Variations []struct {
-						Name            string `json:"name"`
-						Approach        string `json:"approach"`
-						Differentiation string `json:"differentiation"`
-						EstimatedTokens int    `json:"estimated_tokens"`
-					} `json:"variations"`
-				}
+				var proposal agent.VariationProposal
 				if err := json.Unmarshal([]byte(*inputRequest.Details), &proposal); err == nil {
-					vpv := &VariationProposalView{
-						HopID: proposal.HopID,
-					}
-					totalTokens := 0
+					vpv := &VariationProposalView{HopID: proposal.HopID}
 					for i, v := range proposal.Variations {
 						vpv.Variations = append(vpv.Variations, ProposedVariationView{
-							Index:           i,
-							Name:            v.Name,
-							Approach:        v.Approach,
-							Differentiation: v.Differentiation,
-							EstimatedTokens: v.EstimatedTokens,
+							Index:            i,
+							Name:             v.Name,
+							Approach:         v.Approach,
+							Differentiation:  v.Differentiation,
+							EstimatedCostUSD: v.EstimatedCostUSD,
 						})
-						totalTokens += v.EstimatedTokens
+						vpv.TotalEstimatedUSD += v.EstimatedCostUSD
 					}
-					vpv.TotalEstimatedTokens = totalTokens
 					view.VariationProposal = vpv
 				}
 			}
@@ -278,20 +273,7 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 		if inputRequest.SubjectType != nil && *inputRequest.SubjectType == "hop" && inputRequest.SubjectID != nil {
 			view.Hop, _ = s.db.GetHop(ctx, *inputRequest.SubjectID)
 			if view.Hop != nil {
-				// Get budget allocation for tokens
-				allocations, _ := s.db.GetBudgetAllocationsByHop(ctx, view.Hop.ID)
-				strategy, _ := s.db.GetStrategy(ctx, view.Hop.StrategyID)
-				if strategy != nil {
-					for _, alloc := range allocations {
-						sources, _ := s.db.GetFundingSourcesByStrategy(ctx, strategy.ID)
-						for _, src := range sources {
-							if src.ID == alloc.FundingSourceID && src.ResourceType == domain.ResourceTypeClaudeTokens {
-								view.HopBudget = int(alloc.LimitAmount)
-								break
-							}
-						}
-					}
-				}
+				view.HopCost = s.hopCostView(ctx, view.Hop.ID)
 
 				// Load existing variations (already created, shown as immutable)
 				// Include: pending, creating, rejected (with code), merged
@@ -553,49 +535,12 @@ func (s *Server) sendMessageRoadmap(w http.ResponseWriter, r *http.Request, inpu
 		return
 	}
 
-	objectives, err := s.db.GetObjectivesByStrategy(ctx, strategy.ID)
+	// Includes the budget, spend to date, and this project's observed cost
+	// history, so the proposer's estimates are anchored rather than invented.
+	strategyContext, err := cost.BuildStrategyContext(ctx, s.db, strategy)
 	if err != nil {
-		http.Error(w, "error loading objectives", http.StatusInternalServerError)
+		http.Error(w, "error loading strategy context: "+err.Error(), http.StatusInternalServerError)
 		return
-	}
-
-	var objInfos []agent.ObjectiveInfo
-	for _, obj := range objectives {
-		krs, _ := s.db.GetKeyResultsByObjective(ctx, obj.ID)
-		var krInfos []agent.KeyResultInfo
-		for _, kr := range krs {
-			krInfo := agent.KeyResultInfo{
-				ID:          kr.ID.String(),
-				Description: kr.Description,
-				TargetUnits: kr.TargetUnits,
-			}
-			if kr.TargetDate != nil {
-				date := kr.TargetDate.Format("2006-01-02")
-				krInfo.TargetDate = &date
-			}
-			krInfos = append(krInfos, krInfo)
-		}
-		objInfos = append(objInfos, agent.ObjectiveInfo{
-			ID:          obj.ID.String(),
-			Description: obj.Description,
-			KeyResults:  krInfos,
-		})
-	}
-
-	funding, _ := s.db.GetFundingSourcesByStrategy(ctx, strategy.ID)
-	var fundingEstimates []agent.ResourceEstimate
-	for _, f := range funding {
-		fundingEstimates = append(fundingEstimates, agent.ResourceEstimate{
-			ResourceType: string(f.ResourceType),
-			Amount:       f.Amount,
-		})
-	}
-
-	strategyContext := agent.StrategyContext{
-		ID:         strategy.ID.String(),
-		Name:       strategy.Name,
-		Objectives: objInfos,
-		Funding:    fundingEstimates,
 	}
 
 	// Call proposer for revision
@@ -612,11 +557,13 @@ func (s *Server) sendMessageRoadmap(w http.ResponseWriter, r *http.Request, inpu
 		Strategy:       strategyContext,
 	}
 
-	revisedRoadmap, tokens, err := proposer.ReviseRoadmap(ctx, revReq)
+	revisedRoadmap, spend, err := proposer.ReviseRoadmap(ctx, revReq)
 	if err != nil {
 		http.Error(w, "error revising roadmap: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.recordStrategySpend(ctx, strategy.ID, "roadmap_proposer", spend)
+	s.auditRoadmapCosts(ctx, client, inputRequest.ID, strategy.ID, strategyContext, revisedRoadmap)
 
 	// Update input request with new roadmap
 	roadmapJSON, _ := json.MarshalIndent(revisedRoadmap, "", "  ")
@@ -635,7 +582,7 @@ func (s *Server) sendMessageRoadmap(w http.ResponseWriter, r *http.Request, inpu
 		InputRequestID: inputRequest.ID,
 		Role:           "agent",
 		Content:        fmt.Sprintf("Revised roadmap based on feedback. Now has %d hops.", len(revisedRoadmap.Hops)),
-		TokensUsed:     &tokens,
+		TokensUsed:     tokensUsedPtr(spend),
 		CreatedAt:      time.Now(),
 	}
 	if err := s.db.CreateInputRequestMessage(ctx, agentMsg); err != nil {
@@ -664,15 +611,7 @@ func (s *Server) sendMessageVariation(w http.ResponseWriter, r *http.Request, in
 	}
 
 	// Parse current proposal
-	var currentProposal struct {
-		HopID      string `json:"hop_id"`
-		Variations []struct {
-			Name            string `json:"name"`
-			Approach        string `json:"approach"`
-			Differentiation string `json:"differentiation"`
-			EstimatedTokens int    `json:"estimated_tokens"`
-		} `json:"variations"`
-	}
+	var currentProposal agent.VariationProposal
 	if inputRequest.Details != nil {
 		json.Unmarshal([]byte(*inputRequest.Details), &currentProposal)
 	}
@@ -734,7 +673,7 @@ func (s *Server) sendMessageVariation(w http.ResponseWriter, r *http.Request, in
 			Name:            v.Name,
 			Approach:        v.Approach,
 			Differentiation: v.Differentiation,
-			EstimatedTokens: v.EstimatedTokens,
+			EstimatedCostUSD: v.EstimatedCostUSD,
 		})
 	}
 
@@ -746,7 +685,7 @@ func (s *Server) sendMessageVariation(w http.ResponseWriter, r *http.Request, in
 	}
 
 	proposer := agent.NewVariationProposer(client)
-	revisedProposal, tokens, err := proposer.ReviseVariations(ctx, revisionInput)
+	revisedProposal, spend, err := proposer.ReviseVariations(ctx, revisionInput)
 	if err != nil {
 		http.Error(w, "error revising variations: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -769,7 +708,7 @@ func (s *Server) sendMessageVariation(w http.ResponseWriter, r *http.Request, in
 		InputRequestID: inputRequest.ID,
 		Role:           "agent",
 		Content:        fmt.Sprintf("Revised variations based on feedback. Now has %d variations.", len(revisedProposal.Variations)),
-		TokensUsed:     &tokens,
+		TokensUsed:     tokensUsedPtr(spend),
 		CreatedAt:      time.Now(),
 	}
 	if err := s.db.CreateInputRequestMessage(ctx, agentMsg); err != nil {
@@ -821,45 +760,12 @@ func (s *Server) regenerateRoadmap(w http.ResponseWriter, r *http.Request, input
 		return
 	}
 
-	// Load strategy context
-	objectives, _ := s.db.GetObjectivesByStrategy(ctx, strategy.ID)
-	var objInfos []agent.ObjectiveInfo
-	for _, obj := range objectives {
-		krs, _ := s.db.GetKeyResultsByObjective(ctx, obj.ID)
-		var krInfos []agent.KeyResultInfo
-		for _, kr := range krs {
-			krInfo := agent.KeyResultInfo{
-				ID:          kr.ID.String(),
-				Description: kr.Description,
-				TargetUnits: kr.TargetUnits,
-			}
-			if kr.TargetDate != nil {
-				date := kr.TargetDate.Format("2006-01-02")
-				krInfo.TargetDate = &date
-			}
-			krInfos = append(krInfos, krInfo)
-		}
-		objInfos = append(objInfos, agent.ObjectiveInfo{
-			ID:          obj.ID.String(),
-			Description: obj.Description,
-			KeyResults:  krInfos,
-		})
-	}
-
-	funding, _ := s.db.GetFundingSourcesByStrategy(ctx, strategy.ID)
-	var fundingEstimates []agent.ResourceEstimate
-	for _, f := range funding {
-		fundingEstimates = append(fundingEstimates, agent.ResourceEstimate{
-			ResourceType: string(f.ResourceType),
-			Amount:       f.Amount,
-		})
-	}
-
-	strategyContext := agent.StrategyContext{
-		ID:         strategy.ID.String(),
-		Name:       strategy.Name,
-		Objectives: objInfos,
-		Funding:    fundingEstimates,
+	// Includes the budget, spend to date, and this project's observed cost
+	// history, so the proposer's estimates are anchored rather than invented.
+	strategyContext, err := cost.BuildStrategyContext(ctx, s.db, strategy)
+	if err != nil {
+		http.Error(w, "error loading strategy context: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	// Generate new proposal
@@ -870,11 +776,13 @@ func (s *Server) regenerateRoadmap(w http.ResponseWriter, r *http.Request, input
 	}
 
 	proposer := agent.NewProposer(client)
-	roadmap, tokens, err := proposer.ProposeRoadmap(ctx, strategyContext)
+	roadmap, spend, err := proposer.ProposeRoadmap(ctx, strategyContext)
 	if err != nil {
 		http.Error(w, "error generating roadmap: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.recordStrategySpend(ctx, strategy.ID, "roadmap_proposer", spend)
+	s.auditRoadmapCosts(ctx, client, inputRequest.ID, strategy.ID, strategyContext, roadmap)
 
 	// Update input request
 	roadmapJSON, _ := json.MarshalIndent(roadmap, "", "  ")
@@ -903,7 +811,7 @@ func (s *Server) regenerateRoadmap(w http.ResponseWriter, r *http.Request, input
 		InputRequestID: inputRequest.ID,
 		Role:           "agent",
 		Content:    fmt.Sprintf("Generated new roadmap proposal with %d hops.", len(roadmap.Hops)),
-		TokensUsed: &tokens,
+		TokensUsed: tokensUsedPtr(spend),
 		CreatedAt:  time.Now(),
 	}
 	s.db.CreateInputRequestMessage(ctx, agentMsg)
@@ -965,18 +873,10 @@ func (s *Server) regenerateVariations(w http.ResponseWriter, r *http.Request, in
 		repoURL = *repo.URL
 	}
 
-	// Get budget allocation for tokens
-	allocations, _ := s.db.GetBudgetAllocationsByHop(ctx, hop.ID)
-	availableBudget := 100000 // Default
-	for _, alloc := range allocations {
-		sources, _ := s.db.GetFundingSourcesByStrategy(ctx, strategy.ID)
-		for _, src := range sources {
-			if src.ID == alloc.FundingSourceID && src.ResourceType == domain.ResourceTypeClaudeTokens {
-				availableBudget = int(alloc.LimitAmount)
-				break
-			}
-		}
-	}
+	// What this Hop has left to spend, and what generation has actually cost on
+	// this project, so the proposed approaches are sized against real money.
+	availableBudget := s.hopCostView(ctx, hop.ID).RemainingUSD()
+	calibration, _ := cost.BuildCalibration(ctx, s.db, strategy.ProjectID)
 
 	// Get completed transitive dependencies for context
 	completedDeps, _ := s.db.GetCompletedTransitiveDependencies(ctx, hop.ID)
@@ -998,7 +898,8 @@ func (s *Server) regenerateVariations(w http.ResponseWriter, r *http.Request, in
 			Objectives: objectiveDescs,
 		},
 		RepositoryURL:         repoURL,
-		AvailableBudget:       availableBudget,
+		AvailableBudgetUSD:    availableBudget,
+		Calibration:           calibration,
 		NumVariations:         2,
 		CompletedDependencies: completedDependencies,
 	}
@@ -1011,37 +912,14 @@ func (s *Server) regenerateVariations(w http.ResponseWriter, r *http.Request, in
 	}
 
 	proposer := agent.NewVariationProposer(client)
-	proposal, tokens, err := proposer.ProposeVariations(ctx, input)
+	proposal, spend, err := proposer.ProposeVariations(ctx, input)
 	if err != nil {
 		http.Error(w, "error generating variations: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Convert to storage format
-	proposalData := struct {
-		HopID      uuid.UUID `json:"hop_id"`
-		Variations []struct {
-			Name            string `json:"name"`
-			Approach        string `json:"approach"`
-			Differentiation string `json:"differentiation"`
-			EstimatedTokens int    `json:"estimated_tokens"`
-		} `json:"variations"`
-	}{
-		HopID: hop.ID,
-	}
-	for _, v := range proposal.Variations {
-		proposalData.Variations = append(proposalData.Variations, struct {
-			Name            string `json:"name"`
-			Approach        string `json:"approach"`
-			Differentiation string `json:"differentiation"`
-			EstimatedTokens int    `json:"estimated_tokens"`
-		}{
-			Name:            v.Name,
-			Approach:        v.Approach,
-			Differentiation: v.Differentiation,
-			EstimatedTokens: v.EstimatedTokens,
-		})
-	}
+	proposalData := *proposal
+	proposalData.HopID = hop.ID.String()
 
 	// Update input request
 	proposalJSON, _ := json.MarshalIndent(proposalData, "", "  ")
@@ -1070,7 +948,7 @@ func (s *Server) regenerateVariations(w http.ResponseWriter, r *http.Request, in
 		InputRequestID: inputRequest.ID,
 		Role:           "agent",
 		Content:        fmt.Sprintf("Generated new variation proposal with %d variations.\n\nRationale: %s", len(proposal.Variations), proposal.Rationale),
-		TokensUsed:     &tokens,
+		TokensUsed:     tokensUsedPtr(spend),
 		CreatedAt:      time.Now(),
 	}
 	s.db.CreateInputRequestMessage(ctx, agentMsg)
@@ -1209,6 +1087,10 @@ func (s *Server) approveRoadmap(w http.ResponseWriter, r *http.Request, inputReq
 		}
 	}
 
+	// The auditor's verdicts, carried into hop creation so each Hop lands with
+	// both the estimate it was proposed at and the one it was challenged with.
+	costAudit := s.loadCostAudit(ctx, inputRequest.ID)
+
 	// Create hops and dependencies
 	now := time.Now()
 	hopNameToID := make(map[string]uuid.UUID)
@@ -1248,13 +1130,7 @@ func (s *Server) approveRoadmap(w http.ResponseWriter, r *http.Request, inputReq
 		newHopCount++
 
 		// Create budget allocations
-		for _, cost := range ph.EstimatedCosts {
-			fundingSource, err := s.db.GetFundingSourceByType(ctx, *inputRequest.SubjectID, cost.ResourceType)
-			if err != nil {
-				continue // Skip if funding source doesn't exist
-			}
-			s.db.CreateBudgetAllocation(ctx, hopID, fundingSource.ID, cost.Amount)
-		}
+		s.recordHopEstimate(ctx, hopID, *inputRequest.SubjectID, ph, costAudit)
 	}
 
 	// Second pass: create dependencies for new hops only
@@ -1339,27 +1215,14 @@ func (s *Server) approveVariations(w http.ResponseWriter, r *http.Request, input
 	}
 
 	// Parse variation proposal
-	var proposal struct {
-		HopID      uuid.UUID `json:"hop_id"`
-		Variations []struct {
-			Name            string `json:"name"`
-			Approach        string `json:"approach"`
-			Differentiation string `json:"differentiation"`
-			EstimatedTokens int    `json:"estimated_tokens"`
-		} `json:"variations"`
-	}
+	var proposal agent.VariationProposal
 	if err := json.Unmarshal([]byte(*inputRequest.Details), &proposal); err != nil {
 		http.Error(w, "error parsing variations: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Filter to only selected variations
-	var selectedVariations []struct {
-		Name            string `json:"name"`
-		Approach        string `json:"approach"`
-		Differentiation string `json:"differentiation"`
-		EstimatedTokens int    `json:"estimated_tokens"`
-	}
+	var selectedVariations []agent.ProposedVariation
 	var selectedNames []string
 	for i, v := range proposal.Variations {
 		if selectedIndices[i] {
@@ -1559,45 +1422,12 @@ func (s *Server) handleProposeRoadmap(w http.ResponseWriter, r *http.Request) {
 	}
 	strategy := strategies[0]
 
-	// Build strategy context
-	objectives, _ := s.db.GetObjectivesByStrategy(ctx, strategy.ID)
-	var objInfos []agent.ObjectiveInfo
-	for _, obj := range objectives {
-		krs, _ := s.db.GetKeyResultsByObjective(ctx, obj.ID)
-		var krInfos []agent.KeyResultInfo
-		for _, kr := range krs {
-			krInfo := agent.KeyResultInfo{
-				ID:          kr.ID.String(),
-				Description: kr.Description,
-				TargetUnits: kr.TargetUnits,
-			}
-			if kr.TargetDate != nil {
-				date := kr.TargetDate.Format("2006-01-02")
-				krInfo.TargetDate = &date
-			}
-			krInfos = append(krInfos, krInfo)
-		}
-		objInfos = append(objInfos, agent.ObjectiveInfo{
-			ID:          obj.ID.String(),
-			Description: obj.Description,
-			KeyResults:  krInfos,
-		})
-	}
-
-	funding, _ := s.db.GetFundingSourcesByStrategy(ctx, strategy.ID)
-	var fundingEstimates []agent.ResourceEstimate
-	for _, f := range funding {
-		fundingEstimates = append(fundingEstimates, agent.ResourceEstimate{
-			ResourceType: string(f.ResourceType),
-			Amount:       f.Amount,
-		})
-	}
-
-	strategyContext := agent.StrategyContext{
-		ID:         strategy.ID.String(),
-		Name:       strategy.Name,
-		Objectives: objInfos,
-		Funding:    fundingEstimates,
+	// Includes the budget, spend to date, and this project's observed cost
+	// history, so the proposer's estimates are anchored rather than invented.
+	strategyContext, err := cost.BuildStrategyContext(ctx, s.db, &strategy)
+	if err != nil {
+		http.Error(w, "error loading strategy context: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	// Check for existing hops
@@ -1611,7 +1441,7 @@ func (s *Server) handleProposeRoadmap(w http.ResponseWriter, r *http.Request) {
 
 	proposer := agent.NewProposer(client)
 	var roadmap *agent.ProposedRoadmap
-	var tokens int
+	var spend agent.Spend
 
 	if len(existingHops) > 0 {
 		// Build existing hop info with terminal status
@@ -1644,14 +1474,14 @@ func (s *Server) handleProposeRoadmap(w http.ResponseWriter, r *http.Request) {
 			Strategy:       strategyContext,
 		}
 
-		roadmap, tokens, err = proposer.ReviseRoadmap(ctx, revReq)
+		roadmap, spend, err = proposer.ReviseRoadmap(ctx, revReq)
 		if err != nil {
 			http.Error(w, "error revising roadmap: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	} else {
 		// No existing hops - generate from scratch
-		roadmap, tokens, err = proposer.ProposeRoadmap(ctx, strategyContext)
+		roadmap, spend, err = proposer.ProposeRoadmap(ctx, strategyContext)
 		if err != nil {
 			http.Error(w, "error generating roadmap: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -1682,9 +1512,11 @@ func (s *Server) handleProposeRoadmap(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error creating input request: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.recordStrategySpend(ctx, strategy.ID, "roadmap_proposer", spend)
+	s.auditRoadmapCosts(ctx, client, inputRequest.ID, strategy.ID, strategyContext, roadmap)
 
 	// Create agent message
-	tokensUsed := tokens
+	tokensUsed := spend.Tokens.Total()
 	msgContent := fmt.Sprintf("Generated roadmap proposal with %d hops.", len(roadmap.Hops))
 	if len(existingHops) > 0 {
 		terminalCount := 0
@@ -2010,17 +1842,7 @@ func (s *Server) createMoreVariationsInputRequest(ctx context.Context, w http.Re
 	now := time.Now()
 
 	// Create empty proposal - user will request new variations via feedback
-	proposalData := struct {
-		HopID      uuid.UUID `json:"hop_id"`
-		Variations []struct {
-			Name            string `json:"name"`
-			Approach        string `json:"approach"`
-			Differentiation string `json:"differentiation"`
-			EstimatedTokens int    `json:"estimated_tokens"`
-		} `json:"variations"`
-	}{
-		HopID: hop.ID,
-	}
+	proposalData := agent.VariationProposal{HopID: hop.ID.String()}
 	proposalJSON, _ := json.MarshalIndent(proposalData, "", "  ")
 	proposalStr := string(proposalJSON)
 
@@ -2213,11 +2035,12 @@ func (s *Server) apiEvaluateVariations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	evaluator := agent.NewVariationEvaluator(client)
-	evalResult, _, err := evaluator.Evaluate(ctx, evalInput)
+	evalResult, spend, err := evaluator.Evaluate(ctx, evalInput)
 	if err != nil {
 		http.Error(w, "evaluation failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.recordHopSpend(ctx, hopID, "variation_evaluator", spend)
 
 	// Cache new scores on each variation
 	for _, eval := range evalResult.Evaluations {

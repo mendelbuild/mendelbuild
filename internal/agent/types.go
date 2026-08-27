@@ -1,59 +1,72 @@
 package agent
 
-// ResourceEstimate is an estimated cost for a single resource type.
-type ResourceEstimate struct {
-	ResourceType string  `json:"resource_type" desc:"Resource type matching a funding source (e.g., 'dollars', 'claude_tokens')"`
-	Amount       float64 `json:"amount" desc:"Estimated consumption of this resource. Be realistic based on complexity."`
+// CompletedHopCost is one observed estimate-vs-actual outcome, passed to the
+// estimating agents so their guesses are anchored to what this project has
+// actually cost rather than to intuition.
+type CompletedHopCost struct {
+	Name        string  `json:"name" desc:"Name of the completed hop"`
+	Commentary  string  `json:"commentary" desc:"What that hop set out to achieve, so you can judge whether a new hop is comparable in scope"`
+	EstimatedUSD float64 `json:"estimated_usd" desc:"What this hop was estimated to cost in USD before it ran. Zero if it was never estimated."`
+	ActualUSD   float64 `json:"actual_usd" desc:"What this hop actually cost in USD, summed from the cost ledger"`
+	Variations  int     `json:"variations" desc:"How many variations were generated, the main driver of a hop's cost"`
+}
+
+// CostCalibration is the observed cost history handed to estimating agents.
+//
+// This is the difference between an estimate and a guess. Without it the model
+// is inventing dollar figures from nothing; with it, it has this project's own
+// track record, including how wrong the last estimates were.
+type CostCalibration struct {
+	CompletedHops     []CompletedHopCost `json:"completed_hops" desc:"Recent completed hops with their estimated and actual costs. Treat these as the strongest available evidence for what a new hop will cost."`
+	MedianHopUSD      float64            `json:"median_hop_usd" desc:"Median actual USD cost of a completed hop in this project. Zero when there is no history yet."`
+	MedianVariationUSD float64           `json:"median_variation_usd" desc:"Median actual USD cost of generating one variation. Multiply by the expected number of variations for a first-order estimate."`
+	EstimateBiasRatio float64            `json:"estimate_bias_ratio" desc:"Median of actual/estimated across completed hops. Above 1.0 means past estimates were too low and you should revise new estimates upward by roughly this factor. Zero when there is not enough history."`
+	SampleSize        int                `json:"sample_size" desc:"How many completed hops these figures are drawn from. Below 3, treat them as weak evidence and say so in your confidence."`
+}
+
+// HasHistory reports whether there is enough observed data to calibrate against.
+func (c *CostCalibration) HasHistory() bool {
+	return c != nil && c.SampleSize > 0
 }
 
 // ProposedHop is a hop proposal within a roadmap.
 type ProposedHop struct {
-	Name           string             `json:"name" desc:"Short kebab-case identifier (e.g., 'core-budget-calculator', 'user-onboarding-flow')"`
-	Commentary     string             `json:"commentary" desc:"Explains what this hop achieves, why it matters, and its expected impact. 2-4 sentences."`
-	ObjectiveIDs   []string           `json:"objective_ids" desc:"UUIDs of objectives this hop is meant to advance. Use the exact IDs from the strategy input."`
-	EstimatedCosts []ResourceEstimate `json:"estimated_costs" desc:"Resource estimates for this hop. Include entries for each relevant resource type from the strategy's funding sources. Missing funding sources are assumed to be zero cost estimates."`
-	DependsOn      []string           `json:"depends_on" desc:"Names of other hops in this roadmap that must complete first. Use exact hop names. Empty array if no dependencies."`
+	Name             string   `json:"name" desc:"Short kebab-case identifier (e.g., 'core-budget-calculator', 'user-onboarding-flow')"`
+	Commentary       string   `json:"commentary" desc:"Explains what this hop achieves, why it matters, and its expected impact. 2-4 sentences."`
+	ObjectiveIDs     []string `json:"objective_ids" desc:"UUIDs of objectives this hop is meant to advance. Use the exact IDs from the strategy input."`
+	EstimatedCostUSD float64  `json:"estimated_cost_usd" desc:"Estimated total cost of this hop in US dollars, covering model spend for every variation you expect it to need plus any hosting. Anchor this to the calibration data in the strategy input: if median_hop_usd is non-zero, a hop of ordinary scope should land near it, and estimate_bias_ratio above 1.0 means you should scale up. Do not invent a figure when history is available."`
+	CostBasis        string   `json:"cost_basis" desc:"One or two sentences stating how you arrived at the figure: which completed hops you treated as comparable, how many variations you assumed, and what would make it wrong. This is shown to a human for fact-checking, so be concrete and falsifiable rather than reassuring."`
+	CostConfidence   float64  `json:"cost_confidence" desc:"Your confidence in this estimate from 0.0 to 1.0. Be honest: with no calibration history, nothing above 0.4 is defensible. Reserve values above 0.7 for hops closely comparable to several completed ones."`
+	DependsOn        []string `json:"depends_on" desc:"Names of other hops in this roadmap that must complete first. Use exact hop names. Empty array if no dependencies."`
 }
 
 // ProposedRoadmap is an AI-generated roadmap proposal.
 type ProposedRoadmap struct {
 	Hops             []ProposedHop `json:"hops" desc:"Ordered list of hops to execute."`
-	FeasibilityNotes string        `json:"feasibility_notes" desc:"Overall assessment of roadmap feasibility, key risks, assumptions, and budget concerns. 2-4 sentences."`
+	FeasibilityNotes string        `json:"feasibility_notes" desc:"Overall assessment of roadmap feasibility, key risks, assumptions, and budget concerns. State plainly if the roadmap does not fit the available budget. 2-4 sentences."`
 }
 
-// TotalEstimatedCosts returns aggregated costs across all hops, per resource type.
-func (r *ProposedRoadmap) TotalEstimatedCosts() []ResourceEstimate {
-	totals := make(map[string]float64)
+// TotalEstimatedUSD is the summed estimate across every proposed hop.
+func (r *ProposedRoadmap) TotalEstimatedUSD() float64 {
+	var total float64
 	for _, hop := range r.Hops {
-		for _, cost := range hop.EstimatedCosts {
-			totals[cost.ResourceType] += cost.Amount
-		}
+		total += hop.EstimatedCostUSD
 	}
-
-	var result []ResourceEstimate
-	for rt, amount := range totals {
-		result = append(result, ResourceEstimate{
-			ResourceType: rt,
-			Amount:       amount,
-		})
-	}
-	return result
+	return total
 }
 
-// BudgetUtilization computes utilization per resource type given available funding.
-func (r *ProposedRoadmap) BudgetUtilization(funding []ResourceEstimate) map[string]float64 {
-	fundingByType := make(map[string]float64)
-	for _, f := range funding {
-		fundingByType[f.ResourceType] = f.Amount
+// BudgetUtilization is the fraction of the available budget this roadmap plans
+// to consume. The bool is false when there is no budget to compare against.
+func (r *ProposedRoadmap) BudgetUtilization(budgetUSD float64) (float64, bool) {
+	if budgetUSD <= 0 {
+		return 0, false
 	}
+	return r.TotalEstimatedUSD() / budgetUSD, true
+}
 
-	result := make(map[string]float64)
-	for _, cost := range r.TotalEstimatedCosts() {
-		if budget, ok := fundingByType[cost.ResourceType]; ok && budget > 0 {
-			result[cost.ResourceType] = cost.Amount / budget
-		}
-	}
-	return result
+// OverBudget reports whether the roadmap's own estimate exceeds the budget.
+func (r *ProposedRoadmap) OverBudget(budgetUSD float64) bool {
+	return budgetUSD > 0 && r.TotalEstimatedUSD() > budgetUSD
 }
 
 // ObjectiveInfo is a simplified objective representation for the proposer context.
@@ -73,10 +86,15 @@ type KeyResultInfo struct {
 
 // StrategyContext is the strategy info passed to the proposer.
 type StrategyContext struct {
-	ID         string             `json:"id" desc:"UUID of the strategy"`
-	Name       string             `json:"name" desc:"Human-readable strategy name"`
-	Objectives []ObjectiveInfo    `json:"objectives" desc:"Strategic objectives with their key results"`
-	Funding    []ResourceEstimate `json:"funding" desc:"Available budget by resource type"`
+	ID          string          `json:"id" desc:"UUID of the strategy"`
+	Name        string          `json:"name" desc:"Human-readable strategy name"`
+	Objectives  []ObjectiveInfo `json:"objectives" desc:"Strategic objectives with their key results"`
+	BudgetUSD   float64         `json:"budget_usd" desc:"Total budget available to this strategy, in US dollars. The roadmap's estimated costs must fit inside this."`
+	BudgetStart *string         `json:"budget_start,omitempty" desc:"Date the budget period begins (ISO 8601). Use with budget_end to judge whether the roadmap fits in the time available, not just the money."`
+	BudgetEnd   *string         `json:"budget_end,omitempty" desc:"Date the budget period ends (ISO 8601)"`
+	SpentUSD    float64         `json:"spent_usd" desc:"USD already spent against this strategy. Remaining budget is budget_usd minus this."`
+
+	Calibration *CostCalibration `json:"calibration,omitempty" desc:"This project's observed cost history. When present, it is the primary basis for every cost estimate you produce; ignore it only if you can say why the new work is not comparable."`
 }
 
 // ExistingHop represents a hop already in the database with its current status.
@@ -104,8 +122,8 @@ type ProposerResponse struct {
 type ProposedVariation struct {
 	Name            string `json:"name" desc:"Short kebab-case identifier for this approach (e.g., 'redis-cache', 'in-memory-cache')"`
 	Approach        string `json:"approach" desc:"Detailed description of the implementation approach. Include key technical decisions, libraries to use, and architecture. 3-6 sentences."`
-	Differentiation string `json:"differentiation" desc:"Explains how this approach differs from the others and why someone might prefer it. 2-3 sentences."`
-	EstimatedTokens int    `json:"estimated_tokens" desc:"Estimated Claude tokens needed to implement this approach. Consider complexity and code volume."`
+	Differentiation string  `json:"differentiation" desc:"Explains how this approach differs from the others and why someone might prefer it. 2-3 sentences."`
+	EstimatedCostUSD float64 `json:"estimated_cost_usd" desc:"Estimated cost in US dollars to generate this variation. Anchor to median_variation_usd from the calibration data when it is available; a more complex approach touching more files costs proportionally more."`
 }
 
 // VariationProposal is the output from the variation proposer.
@@ -137,7 +155,8 @@ type VariationProposerInput struct {
 	Hop             HopContext `json:"hop" desc:"The hop to propose variations for"`
 	RepositoryURL   string     `json:"repository_url" desc:"URL of the code repository"`
 	RepositorySummary string   `json:"repository_summary,omitempty" desc:"Optional summary of the repository structure and tech stack"`
-	AvailableBudget int        `json:"available_budget" desc:"Available Claude tokens for this hop"`
+	AvailableBudgetUSD float64 `json:"available_budget_usd" desc:"USD still available for this hop, after spend already incurred. The variations you propose should collectively fit inside it."`
+	Calibration     *CostCalibration `json:"calibration,omitempty" desc:"Observed cost history for this project, to anchor per-variation estimates against what generation has actually cost here."`
 	NumVariations   int        `json:"num_variations" desc:"Number of variations to propose (typically 2-4)"`
 	CompletedDependencies []CompletedDependencyHop `json:"completed_dependencies,omitempty" desc:"Completed dependency hops with their selected variations. These decisions are already implemented in the codebase and MUST be respected."`
 }
@@ -151,8 +170,8 @@ type VariationProposerResponse struct {
 type CurrentVariation struct {
 	Name            string `json:"name" desc:"Current variation name"`
 	Approach        string `json:"approach" desc:"Current implementation approach"`
-	Differentiation string `json:"differentiation" desc:"Current differentiation rationale"`
-	EstimatedTokens int    `json:"estimated_tokens" desc:"Current token estimate"`
+	Differentiation  string  `json:"differentiation" desc:"Current differentiation rationale"`
+	EstimatedCostUSD float64 `json:"estimated_cost_usd" desc:"Current USD cost estimate"`
 }
 
 // VariationRevisionInput is the input for revising variations based on feedback.
@@ -224,4 +243,80 @@ type ItemTuning struct {
 type OKRTuneResponse struct {
 	ObjectiveScores []ItemTuning `json:"objective_scores" desc:"Quality feedback for each objective"`
 	KeyResultScores []ItemTuning `json:"key_result_scores" desc:"Quality feedback for each key result"`
+}
+
+// CostAuditInput is what the cost auditor reviews: a proposed roadmap, the
+// budget it must fit inside, and the project's observed cost history.
+type CostAuditInput struct {
+	Strategy StrategyContext `json:"strategy" desc:"Strategy context including the available budget, spend to date, and calibration history"`
+	Roadmap  ProposedRoadmap `json:"roadmap" desc:"The proposed roadmap whose cost estimates you are auditing"`
+}
+
+// CostVerdict classifies one hop's estimate.
+type CostVerdict string
+
+const (
+	CostVerdictSound       CostVerdict = "sound"       // Estimate is defensible as written
+	CostVerdictUnderstated CostVerdict = "understated" // Real cost is likely materially higher
+	CostVerdictOverstated  CostVerdict = "overstated"  // Real cost is likely materially lower
+	CostVerdictUnsupported CostVerdict = "unsupported" // No basis to judge the figure at all
+)
+
+// HopCostVerdict is the auditor's judgement on a single hop's estimate.
+type HopCostVerdict struct {
+	HopName            string  `json:"hop_name" desc:"Exact name of the hop being audited, copied from the roadmap"`
+	Verdict            string  `json:"verdict" desc:"One of: 'sound' if the estimate is defensible as written; 'understated' if the real cost is likely materially higher; 'overstated' if likely materially lower; 'unsupported' if there is no basis to judge it. Default to 'unsupported' when the calibration history is empty and the hop's stated basis is vague."`
+	RevisedEstimateUSD float64 `json:"revised_estimate_usd" desc:"Your own estimate in USD. Repeat the proposer's figure when the verdict is 'sound'. Ground this in the calibration data rather than in the proposer's reasoning, which you should treat as a claim to be checked, not evidence."`
+	Confidence         float64 `json:"confidence" desc:"Confidence in your revised figure, 0.0 to 1.0. With fewer than three comparable completed hops, do not exceed 0.5."`
+	Reasoning          string  `json:"reasoning" desc:"Why you reached this verdict, naming the specific completed hops or figures you compared against. One to three sentences. A human will read this to decide whether to trust the number, so state what would falsify it."`
+}
+
+// CostAuditResponse is the auditor's review of a roadmap's cost estimates.
+type CostAuditResponse struct {
+	Hops            []HopCostVerdict `json:"hops" desc:"One verdict per hop in the roadmap, in the same order. Every hop must appear."`
+	TotalRevisedUSD float64          `json:"total_revised_usd" desc:"Sum of your revised per-hop estimates in USD"`
+	BudgetVerdict   string           `json:"budget_verdict" desc:"One of: 'fits' if the revised total leaves comfortable headroom against the remaining budget; 'tight' if it consumes most of it; 'exceeds' if it goes over. Judge against budget_usd minus spent_usd, not the full budget."`
+	Summary         string           `json:"summary" desc:"Plain assessment of whether this roadmap can be delivered within budget. Lead with the answer. If the estimates rest on no history, say so rather than implying more rigour than exists. 2-4 sentences."`
+	Risks           []string         `json:"risks" desc:"Specific things that would push actual cost above the revised total, e.g. 'auth-refactor touches 40+ files and may need more than 3 variations'. Empty if none are material."`
+}
+
+// TotalUnderstatedUSD is how much the auditor added to the proposer's figures,
+// which is the headline number when estimates come back low.
+func (r *CostAuditResponse) TotalUnderstatedUSD(proposed float64) float64 {
+	return r.TotalRevisedUSD - proposed
+}
+
+// FlaggedHops returns the hops whose estimates the auditor did not endorse.
+func (r *CostAuditResponse) FlaggedHops() []HopCostVerdict {
+	var out []HopCostVerdict
+	for _, h := range r.Hops {
+		if CostVerdict(h.Verdict) != CostVerdictSound {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// VerdictFor returns the auditor's judgement on a named hop, or nil if the
+// auditor did not cover it.
+func (r *CostAuditResponse) VerdictFor(hopName string) *HopCostVerdict {
+	if r == nil {
+		return nil
+	}
+	for i := range r.Hops {
+		if r.Hops[i].HopName == hopName {
+			return &r.Hops[i]
+		}
+	}
+	return nil
+}
+
+// Disputed reports whether the auditor disagreed with the proposer's figure.
+func (v *HopCostVerdict) Disputed() bool {
+	return v != nil && CostVerdict(v.Verdict) != CostVerdictSound
+}
+
+// BudgetExceeded reports whether the audited total goes over what is left.
+func (r *CostAuditResponse) BudgetExceeded() bool {
+	return r != nil && r.BudgetVerdict == "exceeds"
 }

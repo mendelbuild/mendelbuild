@@ -35,12 +35,6 @@
                     <th>Created</th>
                     <td>{{.Hop.CreatedAt.Format "2006-01-02 15:04"}}</td>
                 </tr>
-                {{if or .TotalInputTokens .TotalOutputTokens}}
-                <tr>
-                    <th>Tokens Used</th>
-                    <td>{{printf "%dk" (div .TotalInputTokens 1000)}} in / {{printf "%dk" (div .TotalOutputTokens 1000)}} out</td>
-                </tr>
-                {{end}}
             </table>
         </div>
 
@@ -55,17 +49,52 @@
         </div>
         {{end}}
 
-        {{if .Allocations}}
+        {{with .Cost}}
         <div class="card">
-            <h2>Budget Allocation</h2>
+            <h2>Cost</h2>
             <div class="funding">
-                {{range .Allocations}}
                 <div class="funding-item">
-                    <div class="amount">{{printf "%.0f" .LimitAmount}}</div>
-                    <div class="type">Allocated</div>
+                    <div class="amount">{{usd .ActualUSD}}</div>
+                    <div class="type">Spent</div>
+                </div>
+                {{if .HasEstimate}}
+                <div class="funding-item">
+                    <div class="amount">{{usdPtr .EstimateUSD}}</div>
+                    <div class="type">Estimated</div>
+                </div>
+                {{end}}
+                {{if .LimitUSD}}
+                <div class="funding-item">
+                    <div class="amount" {{if .OverBudget}}style="color: #dc3545;"{{end}}>{{usdPtr .LimitUSD}}</div>
+                    <div class="type">Ceiling</div>
                 </div>
                 {{end}}
             </div>
+
+            {{if .Variance}}
+            <p style="margin: 12px 0 0; font-weight: 600; {{if .OverBudget}}color: #dc3545;{{end}}">
+                {{.Variance}}{{if .OverBudget}} &mdash; over its ceiling{{end}}
+            </p>
+            {{end}}
+
+            {{if not .Tokens.IsZero}}
+            <p style="margin: 8px 0 0; color: #666; font-size: 0.85em;">
+                {{toks .Tokens.InputTokens}} in &middot;
+                {{toks .Tokens.OutputTokens}} out &middot;
+                {{toks .Tokens.CacheReadTokens}} cache read &middot;
+                {{toks .Tokens.CacheWriteTokens}} cache write
+            </p>
+            {{end}}
+
+            {{if .Basis}}
+            <details style="margin-top: 12px;">
+                <summary style="cursor: pointer; color: #007bff; font-size: 0.9em;">
+                    How this was estimated{{if .Confidence}} ({{pct (derefFloat .Confidence)}} confidence){{end}}
+                </summary>
+                <p style="margin: 8px 0 0; color: #555; font-size: 0.9em;">{{derefString .Basis}}</p>
+                <p style="margin: 4px 0 0; color: #888; font-size: 0.8em;">Estimated by: {{.Estimator}}</p>
+            </details>
+            {{end}}
         </div>
         {{end}}
 

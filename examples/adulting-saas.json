@@ -37,8 +37,20 @@
       }
     ],
     "funding": [
-      {"resource_type": "dollars", "amount": 50.00},
-      {"resource_type": "claude_tokens", "amount": 5000000}
+      {
+        "name": "Q4 build",
+        "amount_usd": 250.00,
+        "period_start": "2026-10-01",
+        "period_end": "2026-12-31",
+        "key_result_ids": ["calculator-usage", "session-duration"]
+      },
+      {
+        "name": "Quality hardening",
+        "amount_usd": 100.00,
+        "period_start": "2026-11-01",
+        "period_end": "2026-12-31",
+        "key_result_ids": ["test-coverage", "error-rate"]
+      }
     ]
   },
   "repository": {

@@ -40,14 +40,14 @@ func NewOKRTuner(client *Client) *OKRTuner {
 
 // TuneOKRs evaluates the quality of objectives and key results.
 // Uses Claude Haiku for cost-effectiveness.
-func (t *OKRTuner) TuneOKRs(ctx context.Context, input OKRTuneInput) (*OKRTuneResponse, int, error) {
+func (t *OKRTuner) TuneOKRs(ctx context.Context, input OKRTuneInput) (*OKRTuneResponse, Spend, error) {
 	if len(input.Objectives) == 0 && len(input.KeyResults) == 0 {
-		return &OKRTuneResponse{}, 0, nil
+		return &OKRTuneResponse{}, Spend{}, nil
 	}
 
 	inputJSON, err := json.MarshalIndent(input, "", "  ")
 	if err != nil {
-		return nil, 0, fmt.Errorf("marshal input: %w", err)
+		return nil, Spend{}, fmt.Errorf("marshal input: %w", err)
 	}
 
 	userMessage := fmt.Sprintf(`Evaluate the quality of these OKRs:
@@ -65,14 +65,14 @@ Score each item from 0.0 to 1.0 and provide brief feedback.`, string(inputJSON))
 		{Role: "user", Content: userMessage},
 	}, 4096, OKRTuneResponseSchema())
 	if err != nil {
-		return nil, 0, fmt.Errorf("send message: %w", err)
+		return nil, Spend{}, fmt.Errorf("send message: %w", err)
 	}
 
 	content := resp.GetTextContent()
 	var result OKRTuneResponse
 	if err := json.Unmarshal([]byte(content), &result); err != nil {
-		return nil, 0, fmt.Errorf("parse response: %w (content: %s)", err, content)
+		return nil, Spend{}, fmt.Errorf("parse response: %w (content: %s)", err, content)
 	}
 
-	return &result, resp.Usage.TotalTokens(), nil
+	return &result, resp.Spend(), nil
 }

@@ -38,10 +38,10 @@ func NewEvaluationCriteriaGenerator(client *Client) *EvaluationCriteriaGenerator
 }
 
 // GenerateCriteria generates evaluation criteria for a hop.
-func (g *EvaluationCriteriaGenerator) GenerateCriteria(ctx context.Context, input EvaluationCriteriaInput) (*EvaluationCriteria, int, error) {
+func (g *EvaluationCriteriaGenerator) GenerateCriteria(ctx context.Context, input EvaluationCriteriaInput) (*EvaluationCriteria, Spend, error) {
 	inputJSON, err := json.MarshalIndent(input, "", "  ")
 	if err != nil {
-		return nil, 0, fmt.Errorf("marshal input: %w", err)
+		return nil, Spend{}, fmt.Errorf("marshal input: %w", err)
 	}
 
 	userMessage := fmt.Sprintf(`Generate evaluation criteria for comparing Variations of this hop:
@@ -54,16 +54,16 @@ Create criteria that will help a human decide which implementation approach is b
 		{Role: "user", Content: userMessage},
 	}, 2048, EvaluationCriteriaResponseSchema())
 	if err != nil {
-		return nil, 0, fmt.Errorf("send message: %w", err)
+		return nil, Spend{}, fmt.Errorf("send message: %w", err)
 	}
 
 	content := resp.GetTextContent()
 	var result EvaluationCriteriaResponse
 	if err := json.Unmarshal([]byte(content), &result); err != nil {
-		return nil, 0, fmt.Errorf("parse response: %w (content: %s)", err, content)
+		return nil, Spend{}, fmt.Errorf("parse response: %w (content: %s)", err, content)
 	}
 
-	return &result.Criteria, resp.Usage.TotalTokens(), nil
+	return &result.Criteria, resp.Spend(), nil
 }
 
 // FormatCriteriaAsText converts evaluation criteria to a human-readable text format.

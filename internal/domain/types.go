@@ -129,22 +129,46 @@ type KeyResultHistory struct {
 	Source      *string   `json:"source,omitempty"`
 }
 
-// ResourceType defines the type of resource in a FundingSource.
-type ResourceType string
-
-const (
-	ResourceTypeDollars      ResourceType = "dollars"
-	ResourceTypeClaudeTokens ResourceType = "claude_tokens"
-)
-
-// FundingSource is a pool of resources allocated to a Strategy.
+// FundingSource is a pool of money allocated to a Strategy.
+//
+// USD is the unit of account. Tokens are not a unit of value -- prices differ
+// ~10x across models, cache reads are a tenth of an input token and cache
+// writes a premium over one -- so a token-denominated budget floats in worth.
+// Token counts are still recorded in full on CostEntry.
 type FundingSource struct {
-	ID           uuid.UUID    `json:"id"`
-	StrategyID   uuid.UUID    `json:"strategy_id"`
-	ResourceType ResourceType `json:"resource_type"`
-	Amount       float64      `json:"amount"`
-	CreatedAt    time.Time    `json:"created_at"`
-	UpdatedAt    time.Time    `json:"updated_at"`
+	ID         uuid.UUID  `json:"id"`
+	StrategyID uuid.UUID  `json:"strategy_id"`
+	Name       string     `json:"name"`
+	AmountUSD  float64    `json:"amount_usd"`
+
+	// Optional window this budget is meant to cover. Together with the Key
+	// Results reached through FundingSuccessCriteria (which carry target
+	// dates), this is what ties a budget to dates and to OKR milestones.
+	PeriodStart *time.Time `json:"period_start,omitempty"`
+	PeriodEnd   *time.Time `json:"period_end,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Elapsed reports how far through its period a budget is, in [0,1], and whether
+// the period is known. Used to compare burn rate against time elapsed.
+func (f *FundingSource) Elapsed(now time.Time) (float64, bool) {
+	if f.PeriodStart == nil || f.PeriodEnd == nil {
+		return 0, false
+	}
+	total := f.PeriodEnd.Sub(*f.PeriodStart)
+	if total <= 0 {
+		return 0, false
+	}
+	frac := now.Sub(*f.PeriodStart).Seconds() / total.Seconds()
+	if frac < 0 {
+		frac = 0
+	}
+	if frac > 1 {
+		frac = 1
+	}
+	return frac, true
 }
 
 // FundingSuccessCriteria links FundingSources to KeyResults.
@@ -221,19 +245,9 @@ type Variation struct {
 	DiffAdditions      *int            `json:"diff_additions,omitempty"`       // Lines added vs main
 	DiffDeletions      *int            `json:"diff_deletions,omitempty"`       // Lines deleted vs main
 	EvaluationScores   json.RawMessage `json:"evaluation_scores,omitempty"`    // Cached evaluation scores
-	InputTokens        int             `json:"input_tokens"`                   // Cumulative input tokens used
-	OutputTokens       int             `json:"output_tokens"`                  // Cumulative output tokens used
 	Status             VariationStatus `json:"status"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
-}
-
-// TokenCost calculates estimated cost in USD based on Claude Sonnet pricing.
-// Input: $3/M tokens, Output: $15/M tokens
-func (v *Variation) TokenCost() float64 {
-	inputCost := float64(v.InputTokens) * 3.0 / 1_000_000
-	outputCost := float64(v.OutputTokens) * 15.0 / 1_000_000
-	return inputCost + outputCost
 }
 
 // VariationStateHistory records a state transition for a Variation.
@@ -338,23 +352,145 @@ type DemoInstance struct {
 	CreatedAt            time.Time          `json:"created_at"`
 }
 
-// BudgetAllocation is a slice of a FundingSource assigned to a specific Hop.
+// BudgetAllocation is the spend ceiling a Hop is granted from a FundingSource.
 type BudgetAllocation struct {
 	ID              uuid.UUID `json:"id"`
 	HopID           uuid.UUID `json:"hop_id"`
 	FundingSourceID uuid.UUID `json:"funding_source_id"`
-	LimitAmount     float64   `json:"limit_amount"`
+	LimitUSD        float64   `json:"limit_usd"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
-// BudgetSpendLog records consumption against a BudgetAllocation.
-type BudgetSpendLog struct {
+// Estimator identifies who produced a HopCostEstimate.
+type Estimator string
+
+const (
+	EstimatorProposer    Estimator = "proposer"    // The roadmap proposer's first guess
+	EstimatorAuditor     Estimator = "auditor"     // The cost auditor's fact-checked revision
+	EstimatorHuman       Estimator = "human"       // A person overrode it in review
+	EstimatorCalibration Estimator = "calibration" // Derived purely from observed history
+)
+
+// HopCostEstimate is one dated estimate of what a Hop will cost, with the
+// provenance needed to judge it. Estimates are append-only: keeping the whole
+// history is what lets Mendel measure whether its own estimator is any good.
+type HopCostEstimate struct {
 	ID                 uuid.UUID `json:"id"`
-	BudgetAllocationID uuid.UUID `json:"budget_allocation_id"`
-	Amount             float64   `json:"amount"`
-	RecordedAt         time.Time `json:"recorded_at"`
-	Description        *string   `json:"description,omitempty"`
+	HopID              uuid.UUID `json:"hop_id"`
+	AmountUSD          float64   `json:"amount_usd"`
+	Estimator          Estimator `json:"estimator"`
+	Confidence         *float64  `json:"confidence,omitempty"`
+	Basis              *string   `json:"basis,omitempty"`
+	CalibratedFromHops int       `json:"calibrated_from_hops"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+// CostKind distinguishes what a ledger entry paid for.
+type CostKind string
+
+const (
+	CostKindModel   CostKind = "model"
+	CostKindHosting CostKind = "hosting"
+)
+
+// TokenCounts holds usage exactly as the Messages API reports it.
+//
+// InputTokens is the uncached remainder only: the full prompt is
+// InputTokens + CacheReadTokens + CacheWriteTokens. Counting only InputTokens
+// on a cache-heavy agentic run undercounts the prompt badly.
+type TokenCounts struct {
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	CacheReadTokens  int `json:"cache_read_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens"`
+}
+
+// Add accumulates another set of counts.
+func (t *TokenCounts) Add(o TokenCounts) {
+	t.InputTokens += o.InputTokens
+	t.OutputTokens += o.OutputTokens
+	t.CacheReadTokens += o.CacheReadTokens
+	t.CacheWriteTokens += o.CacheWriteTokens
+}
+
+// PromptTokens is the true size of the prompt, cached portions included.
+func (t TokenCounts) PromptTokens() int {
+	return t.InputTokens + t.CacheReadTokens + t.CacheWriteTokens
+}
+
+// Total is every token billed, in either direction.
+func (t TokenCounts) Total() int { return t.PromptTokens() + t.OutputTokens }
+
+// IsZero reports whether nothing was used.
+func (t TokenCounts) IsZero() bool { return t.Total() == 0 }
+
+// CostEntry is one line of the actuals ledger. Each row carries both the raw
+// telemetry the provider reported and the USD it converts to, plus the rate
+// card used, so any figure in the UI traces back to counts x a dated price.
+type CostEntry struct {
+	ID        uuid.UUID  `json:"id"`
+	ProjectID uuid.UUID  `json:"project_id"`
+
+	StrategyID  *uuid.UUID `json:"strategy_id,omitempty"`
+	HopID       *uuid.UUID `json:"hop_id,omitempty"`
+	VariationID *uuid.UUID `json:"variation_id,omitempty"`
+
+	Kind CostKind `json:"kind"`
+
+	// Which part of Mendel spent this: "codegen", "proposer", "deploy", etc.
+	Component string `json:"component"`
+
+	Model  *string     `json:"model,omitempty"`
+	Tokens TokenCounts `json:"tokens"`
+
+	DeploymentID    *uuid.UUID `json:"deployment_id,omitempty"`
+	MachineShape    *string    `json:"machine_shape,omitempty"`
+	DurationSeconds *float64   `json:"duration_seconds,omitempty"`
+
+	AmountUSD           float64    `json:"amount_usd"`
+	ModelRateCardID     *uuid.UUID `json:"model_rate_card_id,omitempty"`
+	HostingRateCardID   *uuid.UUID `json:"hosting_rate_card_id,omitempty"`
+	ReconciledAmountUSD *float64   `json:"reconciled_amount_usd,omitempty"`
+
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
+// EffectiveUSD is the reconciled figure when a provider invoice has corrected
+// the estimate, and the estimate otherwise.
+func (c *CostEntry) EffectiveUSD() float64 {
+	if c.ReconciledAmountUSD != nil {
+		return *c.ReconciledAmountUSD
+	}
+	return c.AmountUSD
+}
+
+// ModelRateCard prices one model's tokens, effective from a given date.
+// Multipliers apply to the input price.
+type ModelRateCard struct {
+	ID                   uuid.UUID `json:"id"`
+	Model                string    `json:"model"`
+	InputUSDPerMTok      float64   `json:"input_usd_per_mtok"`
+	OutputUSDPerMTok     float64   `json:"output_usd_per_mtok"`
+	CacheReadMultiplier  float64   `json:"cache_read_multiplier"`
+	CacheWriteMultiplier float64   `json:"cache_write_multiplier"`
+	BatchMultiplier      float64   `json:"batch_multiplier"`
+	EffectiveFrom        time.Time `json:"effective_from"`
+	Source               string    `json:"source"`
+	CreatedAt            time.Time `json:"created_at"`
+}
+
+// HostingRateCard prices one machine shape on one platform, per hour.
+// These are list-price approximations, never a claim about what was invoiced.
+type HostingRateCard struct {
+	ID            uuid.UUID `json:"id"`
+	PlatformSlug  string    `json:"platform_slug"`
+	MachineShape  string    `json:"machine_shape"`
+	USDPerHour    float64   `json:"usd_per_hour"`
+	BillsWhenIdle bool      `json:"bills_when_idle"`
+	EffectiveFrom time.Time `json:"effective_from"`
+	Source        string    `json:"source"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // InputRequestKind represents the type of input needed.

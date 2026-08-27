@@ -72,30 +72,91 @@
 
 <div style="display: flex; gap: 20px; align-items: flex-start;">
     <div style="flex: 2;">
+        {{with $.Cost}}
         <div class="card">
-            <h2>Funding</h2>
-            {{if .Funding}}
-            <div class="funding">
-                {{range .Funding}}
-                <div class="funding-item">
-                    <div class="amount">
-                        {{if eq .ResourceType "dollars"}}${{printf "%.2f" .Amount}}{{else}}{{printf "%.0f" .Amount}}{{end}}
-                    </div>
-                    <div class="type">{{.ResourceType}}</div>
+            <h2>Budget</h2>
+
+            {{if .HasBudget}}
+            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px;">
+                <div style="font-size: 1.3em; font-weight: 600; {{if .OverBudget}}color: #dc3545;{{end}}">
+                    {{usd .SpentUSD}} <span style="font-weight: 400; color: #666; font-size: 0.75em;">of {{usd .BudgetUSD}}</span>
+                </div>
+                <div style="color: #666; font-size: 0.9em;">{{usd .RemainingUSD}} left</div>
+            </div>
+
+            <!-- Burn bar, with a marker showing how far through the period we are.
+                 Money spent means little without the time it was spent over. -->
+            <div style="position: relative; background: #e9ecef; border-radius: 4px; height: 12px; overflow: hidden;">
+                <div style="background: {{if .OverBudget}}#dc3545{{else}}#28a745{{end}}; height: 100%; width: {{printf "%.1f" (pctWidth .BurnedFraction)}}%;"></div>
+            </div>
+            {{if .HasPeriod}}
+            <div style="position: relative; height: 14px; margin-top: -13px; pointer-events: none;">
+                <div title="Time elapsed in the budget period"
+                     style="position: absolute; left: {{printf "%.1f" (pctWidth .ElapsedFraction)}}%; top: 0; width: 2px; height: 12px; background: #212529;"></div>
+            </div>
+            {{end}}
+
+            <p style="margin: 10px 0 0; color: #666; font-size: 0.9em;">
+                {{pct .BurnedFraction}} of budget spent{{if .HasPeriod}}, {{pct .ElapsedFraction}} of the period elapsed{{end}}.
+                {{if .Pace}}<strong>{{.Pace}}</strong>.{{end}}
+            </p>
+            {{else}}
+            <p class="empty">No budget defined. Mendel is recording spend but cannot say whether it is on track.</p>
+            {{if gt .SpentUSD 0.0}}
+            <p style="margin: 8px 0 0; font-size: 1.1em;">{{usd .SpentUSD}} spent so far.</p>
+            {{end}}
+            {{end}}
+
+            {{if not .Tokens.IsZero}}
+            <p style="margin: 8px 0 0; color: #888; font-size: 0.85em;">
+                {{toks .Tokens.InputTokens}} in &middot;
+                {{toks .Tokens.OutputTokens}} out &middot;
+                {{toks .Tokens.CacheReadTokens}} cache read &middot;
+                {{toks .Tokens.CacheWriteTokens}} cache write
+            </p>
+            {{end}}
+
+            {{range .Sources}}
+            <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #eee;">
+                <div style="display: flex; justify-content: space-between;">
+                    <strong>{{.Source.Name}}</strong>
+                    <span>{{usd .Source.AmountUSD}}</span>
+                </div>
+                {{if and .Source.PeriodStart .Source.PeriodEnd}}
+                <div style="color: #666; font-size: 0.85em;">
+                    {{.Source.PeriodStart.Format "2 Jan 2006"}} &ndash; {{.Source.PeriodEnd.Format "2 Jan 2006"}}
+                </div>
+                {{end}}
+                {{if .KeyResults}}
+                <div style="margin-top: 6px; font-size: 0.85em; color: #555;">
+                    <div style="color: #888;">Spent to reach:</div>
+                    <ul style="margin: 4px 0 0; padding-left: 18px;">
+                        {{range .KeyResults}}
+                        <li>
+                            {{.Description}} &mdash; {{.TargetUnits}}
+                            {{if .TargetDate}}<span style="color: #888;">by {{.TargetDate.Format "2 Jan 2006"}}</span>{{end}}
+                        </li>
+                        {{end}}
+                    </ul>
                 </div>
                 {{end}}
             </div>
-            {{else}}
-            <p class="empty">No funding sources defined.</p>
             {{end}}
-        </div>
 
-        {{if or $.TotalInputTokens $.TotalOutputTokens}}
-        <div class="card">
-            <h2>Token Usage</h2>
-            <div style="font-size: 1.1em;">
-                {{printf "%dk" (div $.TotalInputTokens 1000)}} in / {{printf "%dk" (div $.TotalOutputTokens 1000)}} out
-            </div>
+            {{if .Components}}
+            <details style="margin-top: 16px;">
+                <summary style="cursor: pointer; color: #007bff; font-size: 0.9em;">Where the money went</summary>
+                <table style="width: 100%; margin-top: 8px; font-size: 0.9em;">
+                    {{range .Components}}
+                    <tr>
+                        <td style="padding: 3px 0;">{{.Component}}</td>
+                        <td style="padding: 3px 0; color: #888;">{{.Kind}}</td>
+                        <td style="padding: 3px 0; text-align: right;">{{usd .AmountUSD}}</td>
+                    </tr>
+                    {{end}}
+                </table>
+            </details>
+            {{end}}
         </div>
         {{end}}
 

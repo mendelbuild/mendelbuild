@@ -74,15 +74,13 @@ type HopDetailView struct {
 	Project                  *domain.Project
 	Variations               []VariationWithLogs
 	Objectives               []domain.Objective
-	Allocations              []domain.BudgetAllocation
 	PendingReview            *domain.InputRequest
 	PendingSelection         *domain.InputRequest
 	HasCreatingVariations    bool
 	HasPendingVariations     bool
 	IsStuck                  bool // No pending variations and no unresolved decisions
 	NeedsProductionCredentials bool // requires_production but no credentials configured
-	TotalInputTokens         int
-	TotalOutputTokens        int
+	Cost                     *HopCostView
 
 	Ribbon domain.Ribbon // Plain-English lifecycle position and next action
 	Roadmap *MiniRoadmap  // The project roadmap, scrolled to this Hop
@@ -121,7 +119,6 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rawVariations, _ := s.db.GetVariationsByHop(ctx, hopID)
-	allocations, _ := s.db.GetBudgetAllocationsByHop(ctx, hopID)
 
 	// Fetch recent logs for each variation
 	var variations []VariationWithLogs
@@ -197,8 +194,8 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get token totals for this hop
-	tokenTotals, _ := s.db.GetHopTokenTotals(ctx, hopID)
+	// Estimate, ceiling, spend to date and the token counts behind it.
+	costView := s.hopCostView(ctx, hopID)
 
 	view := &HopDetailView{
 		Hop:                        hop,
@@ -206,15 +203,13 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 		Project:                    project,
 		Variations:                 variations,
 		Objectives:                 objectives,
-		Allocations:                allocations,
 		PendingReview:              pendingReview,
 		PendingSelection:           pendingSelection,
 		HasCreatingVariations:      hasCreatingVariations,
 		HasPendingVariations:       hasPendingVariations,
 		IsStuck:                    isStuck,
 		NeedsProductionCredentials: needsProductionCredentials,
-		TotalInputTokens:           tokenTotals.InputTokens,
-		TotalOutputTokens:          tokenTotals.OutputTokens,
+		Cost:                       costView,
 		Ribbon:                     domain.HopLifecycle(hop, rawVariations),
 		Roadmap:                      s.buildMiniRoadmap(ctx, projectID, hop),
 	}
@@ -280,6 +275,9 @@ type VariationDetailView struct {
 	// Streaming log panels, rendered by the "log-tail" partial.
 	CodegenPanel *LogPanel
 	DemoPanel    *LogPanel
+
+	// Cost is what generating this Variation actually cost, from the ledger.
+	Cost *VariationCostView
 	GitHubURL    string                // Link to branch on GitHub (if applicable)
 	DiffURL      string                // Link to GitHub compare (main...branch)
 	CanRetryFix  bool                  // True if "Retry with Fix" is available
@@ -446,6 +444,7 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		Variation:             variation,
 		Hop:                   hop,
 		Logs:                  logs,
+		Cost:                  s.variationCostView(ctx, variation.ID),
 		CodegenPanel:          codegenPanel,
 		DemoPanel:             demoPanel,
 		Revisions:             revisions,
@@ -897,6 +896,7 @@ Focus on fixing the specific error - don't rewrite everything.`, errorContext)
 	}
 
 	logger(domain.LogLevelInfo, fmt.Sprintf("Fix stats: %d rounds, %d tool calls", result.Stats.APIRounds, result.Stats.ToolCalls))
+	s.recordVariationRun(ctx, variation, result.Stats, "codegen_fix")
 
 	if !result.Success {
 		logger(domain.LogLevelError, fmt.Sprintf("Fix failed: %v", result.Error))

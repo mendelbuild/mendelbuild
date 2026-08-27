@@ -37,8 +37,13 @@
       }
     ],
     "funding": [
-      {"resource_type": "dollars", "amount": 10.00},
-      {"resource_type": "claude_tokens", "amount": 1000000}
+      {
+        "name": "Prototype budget",
+        "amount_usd": 40.00,
+        "period_start": "2026-09-01",
+        "period_end": "2026-09-30",
+        "key_result_ids": ["game-loop", "scoring", "login-flow", "high-scores"]
+      }
     ]
   }
 }

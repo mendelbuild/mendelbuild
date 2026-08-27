@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/bhs/mendelbuild/internal/domain"
 )
 
 const (
@@ -87,14 +89,47 @@ type ContentBlock struct {
 }
 
 // Usage contains token usage information.
+//
+// InputTokens is the uncached remainder only: the full prompt is
+// InputTokens + CacheReadInputTokens + CacheCreationInputTokens. Cache tokens
+// are priced differently from plain input (a read is a tenth, a write a
+// premium), so they are carried separately rather than folded together.
 type Usage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 }
 
-// TotalTokens returns the total number of tokens used.
+// TotalTokens returns every token billed, in either direction.
 func (u Usage) TotalTokens() int {
-	return u.InputTokens + u.OutputTokens
+	return u.InputTokens + u.OutputTokens +
+		u.CacheReadInputTokens + u.CacheCreationInputTokens
+}
+
+// Tokens converts usage into the shared shape used by the cost ledger.
+func (u Usage) Tokens() domain.TokenCounts {
+	return domain.TokenCounts{
+		InputTokens:      u.InputTokens,
+		OutputTokens:     u.OutputTokens,
+		CacheReadTokens:  u.CacheReadInputTokens,
+		CacheWriteTokens: u.CacheCreationInputTokens,
+	}
+}
+
+// Spend pairs usage with the model that produced it, which is everything the
+// cost ledger needs to price an agent call.
+type Spend struct {
+	Model  string
+	Tokens domain.TokenCounts
+}
+
+// Spend describes what this response cost, for the caller to record.
+func (r *Response) Spend() Spend {
+	if r == nil {
+		return Spend{}
+	}
+	return Spend{Model: r.Model, Tokens: r.Usage.Tokens()}
 }
 
 // SendMessage sends a message to the Anthropic API and returns the response.

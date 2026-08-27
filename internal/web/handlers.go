@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"context"
 	"embed"
 	"encoding/json"
@@ -57,6 +58,57 @@ var templateFuncs = template.FuncMap{
 			return 0
 		}
 		return a / b
+	},
+
+	// usd renders money at a precision that stays honest at both ends: cents
+	// for real sums, four decimals for the sub-cent charges a single agent call
+	// produces, so they do not all render as "$0.00".
+	"usd": func(f float64) string {
+		switch {
+		case f == 0:
+			return "$0"
+		case f < 0.01:
+			return fmt.Sprintf("$%.4f", f)
+		case f < 100:
+			return fmt.Sprintf("$%.2f", f)
+		default:
+			return fmt.Sprintf("$%.0f", f)
+		}
+	},
+	"usdPtr": func(f *float64) string {
+		if f == nil {
+			return "-"
+		}
+		if *f < 0.01 && *f > 0 {
+			return fmt.Sprintf("$%.4f", *f)
+		}
+		return fmt.Sprintf("$%.2f", *f)
+	},
+	"pct": func(f float64) string {
+		return fmt.Sprintf("%.0f%%", f*100)
+	},
+	// pctWidth is pct as a bare number for CSS widths, clamped so an overspent
+	// budget does not draw a bar past the end of its track.
+	"pctWidth": func(f float64) float64 {
+		if f > 1 {
+			return 100
+		}
+		if f < 0 {
+			return 0
+		}
+		return f * 100
+	},
+	// toks abbreviates token counts, which routinely run to millions on a
+	// cache-heavy agentic run.
+	"toks": func(n int) string {
+		switch {
+		case n >= 1_000_000:
+			return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+		case n >= 1_000:
+			return fmt.Sprintf("%.0fk", float64(n)/1_000)
+		default:
+			return fmt.Sprintf("%d", n)
+		}
 	},
 }
 
@@ -130,7 +182,6 @@ type StrategyView struct {
 	Project    *domain.Project
 	Strategy   *domain.Strategy
 	Objectives []ObjectiveView
-	Funding    []domain.FundingSource
 	Hops       []domain.Hop
 }
 
@@ -247,8 +298,9 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 	// Get supported combos for channel setup
 	supportedCombos, _ := s.db.ListSupportedDeploymentCombos(ctx)
 
-	// Get project-level token totals
-	projectTokens, _ := s.db.GetProjectTokenTotals(ctx, projectID)
+	// Budget, spend to date, pace against the schedule, and the Key Results the
+	// money is meant to buy.
+	costView := s.strategyCostView(ctx, view.Strategy.ID)
 
 	data := map[string]interface{}{
 		"Title":                "Strategy: " + view.Strategy.Name,
@@ -259,8 +311,7 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 		"DeploymentChannel":    deploymentChannel,
 		"ProdDeployment":       prodDeployment,
 		"SupportedCombos":      supportedCombos,
-		"TotalInputTokens":     projectTokens.InputTokens,
-		"TotalOutputTokens":    projectTokens.OutputTokens,
+		"Cost":                 costView,
 	}
 	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)
@@ -513,16 +564,10 @@ func (s *Server) getStrategyViewByProject(ctx context.Context, project *domain.P
 		})
 	}
 
-	funding, err := s.db.GetFundingSourcesByStrategy(ctx, strategy.ID)
-	if err != nil {
-		return nil, err
-	}
-
 	return &StrategyView{
 		Project:    project,
 		Strategy:   &strategy,
 		Objectives: objViews,
-		Funding:    funding,
 		Hops:       hops,
 	}, nil
 }

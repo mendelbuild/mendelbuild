@@ -50,7 +50,7 @@ Project
 **Strategy**: The organizational unit for a body of work. Contains:
 - **Objectives**: The "O" in OKR — plain-English goals
 - **Key Results**: Quantitative targets attached to Objectives, expressed with parseable units (e.g., "1000 users", "99.9%", "< 200ms p99")
-- **Funding Sources**: Resource pools (dollars, claude_tokens) linked to Key Results via success criteria
+- **Funding Sources**: USD budgets, each with a time window, linked to Key Results via success criteria
 - **Hops**: A DAG of evolutionary experiments (sequenced by dependencies, not wall-clock time)
 
 Strategies can nest (sub-strategies) for organizational alignment.
@@ -113,12 +113,34 @@ Ecosystems have HealthFuncs that provide baseline availability and quality signa
 
 ### 2.5 Budgets and Funding
 
-**FundingSource**: A pool of resources (dollars, tokens, cloud credits) with a strategic allocation.
+**FundingSource**: A USD budget with an optional period, linked through
+`funding_success_criteria` to the Key Results it is meant to move. Because Key
+Results carry target dates, this ties a budget both to a calendar and to the
+milestones it is buying.
 
-**BudgetAllocation**: A slice of funding assigned to a specific Hop. Tracks:
-- Limit (hard ceiling)
-- Spending (actual, broken down by line item)
-- Forecast (predicted spend)
+USD is the unit of account. Tokens are not a unit of value: prices differ ~10x
+across models, a cache read costs a tenth of an input token and a cache write a
+premium over one, and batch requests are half price. A token-denominated budget
+therefore floats in worth. Token counts are still recorded in full on every
+ledger entry, as the evidence each dollar figure is derived from.
+
+**HopCostEstimate**: An append-only record of what a Hop was predicted to cost,
+with its author (`proposer`, `auditor`, `human`, `calibration`), confidence and
+stated basis. Keeping every estimate rather than overwriting is what lets Mendel
+score its own estimator against actuals and feed the result back into the next
+proposal.
+
+**BudgetAllocation**: The USD spend ceiling a Hop is granted from a
+FundingSource. Distinct from an estimate: an estimate is a prediction, a ceiling
+is a governance decision.
+
+**CostEntry**: One line of the actuals ledger. Each row carries both the raw
+telemetry the provider reported and the USD it converts to, plus the dated rate
+card that priced it, so any figure in the UI traces back to counts x a price.
+
+**Rate cards** (`model_rate_cards`, `hosting_rate_cards`): prices live in the
+database, seeded on startup and refreshed via `mendel rates refresh`, and are
+versioned by effective date so settled figures stay verifiable.
 
 Budget enforcement is soft by default: every time control returns to MendelBuild, budgets are checked. Exceeding a budget triggers a Decision (pause, kill, or continue with human approval).
 
@@ -292,12 +314,13 @@ The canonical SQL schema lives in [`schema/full.sql`](schema/full.sql) (complete
 
 - `projects`, `strategies` — organizational containers
 - `objectives`, `key_results`, `key_result_history` — OKR modeling with timeseries
-- `funding_sources`, `funding_success_criteria` — resource pools linked to KRs
+- `funding_sources`, `funding_success_criteria` — USD budgets linked to KRs
 - `hops`, `hop_dependencies` — evolutionary units and their DAG (Hops attach to Strategies)
 - `variations`, `variation_state_history` — implementation attempts and lifecycle
 - `variation_migrations` — polymorphic per-variation changes (kind + JSON params)
 - `decisions` — audit trail with objectivity/importance scores
-- `budget_allocations`, `budget_spend_log` — cost tracking
+- `budget_allocations`, `hop_cost_estimates`, `cost_entries` — ceilings, predictions, actuals
+- `model_rate_cards`, `hosting_rate_cards` — versioned prices, DB-stored and refreshable
 - `traffic_allocations`, `traffic_allocation_slices` — SDK routing rules
 - `repositories`, `ecosystems` — external systems
 

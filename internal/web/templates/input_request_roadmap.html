@@ -127,6 +127,7 @@
                 <th>Commentary</th>
                 <th style="width: 150px;">Dependencies</th>
                 <th style="width: 100px;">Objectives</th>
+                <th style="width: 130px;">Est. cost</th>
             </tr>
         </thead>
         <tbody id="hops-table-body">
@@ -137,6 +138,21 @@
                 <td style="font-size: 0.9em; color: #666;">{{.Commentary}}</td>
                 <td>{{if .DependsOn}}{{range $i, $d := .DependsOn}}{{if $i}}, {{end}}{{$d}}{{end}}{{else}}<span class="empty">none</span>{{end}}</td>
                 <td class="hop-objectives"></td>
+                <td>
+                    {{usd .EstimatedCostUSD}}
+                    {{with $.View.CostAudit.VerdictFor .Name}}
+                    {{if .Disputed}}
+                    <div style="font-size: 0.8em; color: #dc3545;" title="{{.Reasoning}}">
+                        auditor: {{.Verdict}}, {{usd .RevisedEstimateUSD}}
+                    </div>
+                    {{end}}
+                    {{end}}
+                    {{if .CostBasis}}
+                    <div style="font-size: 0.75em; color: #888;" title="{{.CostBasis}}">
+                        {{pct .CostConfidence}} confidence
+                    </div>
+                    {{end}}
+                </td>
             </tr>
             {{end}}
         </tbody>
@@ -151,6 +167,74 @@
     </div>
     {{end}}
 </div>
+
+{{/* The cost auditor's independent check on the estimates above. It runs as a
+     separate call with its own prompt, because asking the proposer to grade its
+     own arithmetic produces agreement rather than scrutiny. */}}
+{{with .CostAudit}}
+<div class="card" style="margin-top: 20px; {{if .BudgetExceeded}}border-left: 4px solid #dc3545;{{end}}">
+    <h2>Cost Review</h2>
+
+    <div style="display: flex; gap: 30px; flex-wrap: wrap; margin-bottom: 12px;">
+        <div>
+            <div style="font-size: 0.85em; color: #888;">Proposed total</div>
+            <div style="font-size: 1.2em;">{{usd $.View.Roadmap.TotalEstimatedUSD}}</div>
+        </div>
+        <div>
+            <div style="font-size: 0.85em; color: #888;">Audited total</div>
+            <div style="font-size: 1.2em; font-weight: 600;">{{usd .TotalRevisedUSD}}</div>
+        </div>
+        {{with $.View.StrategyCost}}
+        {{if .HasBudget}}
+        <div>
+            <div style="font-size: 0.85em; color: #888;">Budget remaining</div>
+            <div style="font-size: 1.2em;">{{usd .RemainingUSD}}</div>
+        </div>
+        {{end}}
+        {{end}}
+        <div>
+            <div style="font-size: 0.85em; color: #888;">Verdict</div>
+            <div style="font-size: 1.2em; font-weight: 600; {{if .BudgetExceeded}}color: #dc3545;{{else if eq .BudgetVerdict "tight"}}color: #b8860b;{{else}}color: #28a745;{{end}}">
+                {{.BudgetVerdict}}
+            </div>
+        </div>
+    </div>
+
+    <p style="margin: 0;">{{.Summary}}</p>
+
+    {{with .FlaggedHops}}
+    <table style="width: 100%; margin-top: 14px; font-size: 0.9em;">
+        <thead>
+            <tr>
+                <th style="width: 180px;">Hop</th>
+                <th style="width: 110px;">Verdict</th>
+                <th style="width: 100px;">Auditor's est.</th>
+                <th>Reasoning</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .}}
+            <tr>
+                <td><strong>{{.HopName}}</strong></td>
+                <td style="color: {{if eq .Verdict "understated"}}#dc3545{{else if eq .Verdict "unsupported"}}#b8860b{{else}}#666{{end}};">{{.Verdict}}</td>
+                <td>{{usd .RevisedEstimateUSD}}</td>
+                <td style="color: #555;">{{.Reasoning}} <span style="color: #888;">({{pct .Confidence}} confidence)</span></td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{end}}
+
+    {{with .Risks}}
+    <div style="margin-top: 14px;">
+        <strong style="font-size: 0.9em;">What could push this higher</strong>
+        <ul style="margin: 6px 0 0; padding-left: 20px; color: #555; font-size: 0.9em;">
+            {{range .}}<li>{{.}}</li>{{end}}
+        </ul>
+    </div>
+    {{end}}
+</div>
+{{end}}
 
 <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
 <script src="/static/js/dag.js"></script>

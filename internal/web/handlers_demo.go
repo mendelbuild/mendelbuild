@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -427,23 +428,42 @@ primary_region = "iad"
 		return "", fmt.Errorf("deploy failed: %s: %w", string(output), err)
 	}
 
-	// Parse the actual URL from flyctl output (more reliable than constructing it)
-	// Look for "Visit your newly deployed app at https://..."
-	outputStr := string(output)
-	var url string
-	if idx := strings.Index(outputStr, "https://"); idx != -1 {
-		// Find the end of the URL (space, newline, or end of string)
-		end := idx + 8 // skip "https://"
-		for end < len(outputStr) && outputStr[end] != ' ' && outputStr[end] != '\n' && outputStr[end] != '\r' {
-			end++
+	return flyDeployedURL(string(output), appName), nil
+}
+
+// flyVisitMarker precedes the deployed app's URL in flyctl's output.
+var flyVisitMarker = regexp.MustCompile(`Visit your newly deployed app at\s+(https://\S+)`)
+
+// flyAppHostPattern matches an app hostname on fly.dev, which is what a
+// deployed app is reachable at. fly.io URLs (dashboard, monitoring, docs) are
+// deliberately excluded.
+var flyAppHostPattern = regexp.MustCompile(`https://([a-z0-9][a-z0-9-]*)\.fly\.dev\b/?`)
+
+// flyDeployedURL extracts the deployed app's URL from flyctl deploy output.
+//
+// Taking the first https:// in the output does not work: flyctl prints a
+// dashboard link (https://fly.io/apps/<name>/monitoring) before the app URL,
+// and the build log carries whatever URLs the project's own toolchain emits,
+// so that approach has recorded npm release notes as a demo URL.
+func flyDeployedURL(output, appName string) string {
+	// flyctl states the URL outright; prefer that over inference.
+	if m := flyVisitMarker.FindStringSubmatch(output); m != nil {
+		return strings.TrimSuffix(m[1], "/")
+	}
+
+	// Otherwise take a *.fly.dev host, preferring one that names this app.
+	matches := flyAppHostPattern.FindAllStringSubmatch(output, -1)
+	for _, m := range matches {
+		if m[1] == appName {
+			return strings.TrimSuffix(m[0], "/")
 		}
-		url = strings.TrimSuffix(outputStr[idx:end], "/")
 	}
-	if url == "" {
-		// Fallback to constructed URL
-		url = fmt.Sprintf("https://%s.fly.dev", appName)
+	if len(matches) > 0 {
+		return strings.TrimSuffix(matches[0][0], "/")
 	}
-	return url, nil
+
+	// Nothing usable in the output; the app name determines the hostname.
+	return fmt.Sprintf("https://%s.fly.dev", appName)
 }
 
 // deployToCloudRun deploys a working directory to Google Cloud Run under the given service name.
@@ -895,6 +915,7 @@ func (s *Server) runFixAndDemo(projectID string, variationID, demoInstanceID uui
 		failDemo(fmt.Sprintf("Executor error: %v", err))
 		return
 	}
+	s.recordVariationRunByID(ctx, variationID, result.Stats, "demo_fix")
 
 	if !result.Success {
 		failDemo(fmt.Sprintf("Fix failed: %v", result.Error))

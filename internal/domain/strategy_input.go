@@ -37,10 +37,24 @@ type KeyResultDef struct {
 	TargetDate  *string `json:"target_date,omitempty"` // ISO8601 format
 }
 
-// FundingDef defines a funding source.
+// FundingDef defines a USD budget for a strategy.
+//
+// Budgets are denominated in dollars, not tokens: token prices differ ~10x
+// across models and cache reads and writes are priced differently again, so a
+// token budget does not describe a fixed amount of value.
 type FundingDef struct {
-	ResourceType string  `json:"resource_type"` // "dollars" or "claude_tokens"
-	Amount       float64 `json:"amount"`
+	Name      string  `json:"name"`
+	AmountUSD float64 `json:"amount_usd"`
+
+	// The period this budget is meant to cover (ISO8601 dates). Optional, but
+	// without it Mendel can report spend and not whether it is on pace.
+	PeriodStart *string `json:"period_start,omitempty"`
+	PeriodEnd   *string `json:"period_end,omitempty"`
+
+	// KeyResultIDs names the key results this budget is meant to move, using
+	// the stable IDs declared under key_results in this same file. This is what
+	// ties a budget to OKR milestones: those key results carry target dates.
+	KeyResultIDs []string `json:"key_result_ids,omitempty"`
 }
 
 // RepositoryDef defines the repository configuration.

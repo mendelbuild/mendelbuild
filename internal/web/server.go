@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/agent"
+	"github.com/bhs/mendelbuild/internal/cost"
 	"github.com/bhs/mendelbuild/internal/auth"
 	"github.com/bhs/mendelbuild/internal/codegen"
 	"github.com/bhs/mendelbuild/internal/db"
@@ -109,6 +110,13 @@ func (s *Server) startVariationWorker() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 
+		// Hosting accrues continuously rather than per event, so it is metered
+		// on its own slower cadence: often enough that a running deployment's
+		// cost is visible while it runs, rarely enough not to fill the ledger
+		// with near-empty rows.
+		hostingTicker := time.NewTicker(10 * time.Minute)
+		defer hostingTicker.Stop()
+
 		for {
 			select {
 			case <-s.stopWorker:
@@ -118,6 +126,8 @@ func (s *Server) startVariationWorker() {
 				s.processCreatingVariations()
 				s.processSelectionInputRequests()
 				s.processHopStatusUpdates()
+			case <-hostingTicker.C:
+				s.settleHostingSpend()
 			}
 		}
 	}()
@@ -270,18 +280,10 @@ func (s *Server) proposeVariationsForHop(ctx context.Context, hop *domain.Hop) e
 		return fmt.Errorf("get repository: %w", err)
 	}
 
-	// Get budget allocation for tokens
-	allocations, _ := s.db.GetBudgetAllocationsByHop(ctx, hop.ID)
-	availableBudget := 100000 // Default
-	for _, alloc := range allocations {
-		sources, _ := s.db.GetFundingSourcesByStrategy(ctx, strategy.ID)
-		for _, src := range sources {
-			if src.ID == alloc.FundingSourceID && src.ResourceType == domain.ResourceTypeClaudeTokens {
-				availableBudget = int(alloc.LimitAmount)
-				break
-			}
-		}
-	}
+	// What this Hop has left to spend, and what generation has actually cost on
+	// this project, so the proposed approaches are sized against real money.
+	availableBudget := s.hopCostView(ctx, hop.ID).RemainingUSD()
+	calibration, _ := cost.BuildCalibration(ctx, s.db, strategy.ProjectID)
 
 	// Build hop context
 	hopContext := agent.HopContext{
@@ -311,7 +313,8 @@ func (s *Server) proposeVariationsForHop(ctx context.Context, hop *domain.Hop) e
 	input := agent.VariationProposerInput{
 		Hop:                   hopContext,
 		RepositoryURL:         repoURL,
-		AvailableBudget:       availableBudget,
+		AvailableBudgetUSD:    availableBudget,
+		Calibration:           calibration,
 		NumVariations:         2, // Start with 2 variations
 		CompletedDependencies: completedDependencies,
 	}
@@ -323,10 +326,11 @@ func (s *Server) proposeVariationsForHop(ctx context.Context, hop *domain.Hop) e
 	}
 
 	proposer := agent.NewVariationProposer(client)
-	proposal, tokens, err := proposer.ProposeVariations(ctx, input)
+	proposal, spend, err := proposer.ProposeVariations(ctx, input)
 	if err != nil {
 		return fmt.Errorf("propose variations: %w", err)
 	}
+	s.recordHopSpend(ctx, hop.ID, "variation_proposer", spend)
 
 	// Generate evaluation criteria if the hop doesn't have them yet
 	if len(hop.EvaluationCriteria) == 0 {
@@ -337,7 +341,8 @@ func (s *Server) proposeVariationsForHop(ctx context.Context, hop *domain.Hop) e
 		}
 
 		criteriaGenerator := agent.NewEvaluationCriteriaGenerator(client)
-		criteria, _, err := criteriaGenerator.GenerateCriteria(ctx, criteriaInput)
+		criteria, criteriaSpend, err := criteriaGenerator.GenerateCriteria(ctx, criteriaInput)
+		s.recordHopSpend(ctx, hop.ID, "evaluation_criteria", criteriaSpend)
 		if err == nil && criteria != nil {
 			criteriaJSON, err := json.Marshal(criteria)
 			if err == nil {
@@ -360,7 +365,7 @@ func (s *Server) proposeVariationsForHop(ctx context.Context, hop *domain.Hop) e
 			Name:            v.Name,
 			Approach:        v.Approach,
 			Differentiation: v.Differentiation,
-			EstimatedTokens: v.EstimatedTokens,
+			EstimatedCostUSD: v.EstimatedCostUSD,
 		})
 	}
 
@@ -389,7 +394,7 @@ func (s *Server) proposeVariationsForHop(ctx context.Context, hop *domain.Hop) e
 	}
 
 	// Create agent message
-	tokensUsed := tokens
+	tokensUsed := spend.Tokens.Total()
 	agentMsg := &domain.InputRequestMessage{
 		ID:             uuid.New(),
 		InputRequestID: inputRequest.ID,
@@ -753,4 +758,18 @@ func (s *Server) requireProjectAccess(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// settleHostingSpend tops up the ledger with hosting cost accrued since the
+// last reading. An app left running is the spend a project is most likely to
+// lose track of, so it is metered while running rather than only at teardown.
+func (s *Server) settleHostingSpend() {
+	n, err := cost.SettleHostingSpend(context.Background(), s.db)
+	if err != nil {
+		fmt.Printf("[worker] Warning: could not settle hosting spend: %v\n", err)
+		return
+	}
+	if n > 0 {
+		fmt.Printf("[worker] Metered hosting spend for %d deployment(s)\n", n)
+	}
 }

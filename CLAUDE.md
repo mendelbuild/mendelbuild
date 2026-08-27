@@ -89,6 +89,52 @@ This applies to:
 
 The goal: Mendel's platform knowledge stays current without code changes.
 
+## Cost Model
+
+All spend is denominated in **USD**. Tokens are telemetry, not currency — prices
+differ ~10x across models, a cache read is 0.1x an input token and a cache write
+1.25x, so a token-denominated budget floats in worth. See
+`dev/claude_plans/phase_08.md` for the full design.
+
+### Recording spend
+
+Every charge goes through `cost.Recorder`. Never write `cost_entries` directly.
+
+```go
+s.recordHopSpend(ctx, hopID, "variation_proposer", spend)   // web layer helpers
+s.recordStrategySpend(ctx, strategyID, "okr_tuner", spend)
+```
+
+Agent methods return `agent.Spend` (model + all four token counts), not a bare
+token total. **When you add an agent call, record its spend** — an unrecorded
+call makes the project's cost silently understate itself.
+
+`InputTokens` from the API is the *uncached remainder only*. Full prompt size is
+`input + cache_read + cache_write`. Never price or report input tokens alone.
+
+### Never hardcode prices
+
+Rate cards live in `model_rate_cards` / `hosting_rate_cards`, are seeded on
+startup, and are refreshed with `mendel rates refresh`. This is the same rule as
+hosting platforms. Cards are versioned by `effective_from` and never rewritten,
+so figures already in the ledger stay verifiable.
+
+To update prices, edit `DefaultModelRates()` in `internal/cost/rates.go` and run
+`mendel rates refresh` — **verify current pricing from up-to-date online sources
+first**, the same as for model names.
+
+### Estimates must be falsifiable
+
+`hop_cost_estimates` is append-only and records who estimated, their confidence,
+and their stated basis. Estimating agents are given `CostCalibration` — this
+project's observed estimate-vs-actual history — and are instructed to anchor to
+it, and to say plainly when there is no history rather than inventing a
+confident figure. Preserve that instruction when editing those prompts: a
+fabricated number a human then plans against is worse than an admitted unknown.
+
+Hosting costs are **estimates** from list prices and wall-clock, never provider
+invoices. Label them as such in any UI.
+
 ## Structured LLM API Conventions
 
 All LLM API calls in MendelBuild use Anthropic's **structured outputs** feature for guaranteed JSON compliance. Schemas are generated from Go struct tags.
