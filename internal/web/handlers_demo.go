@@ -39,6 +39,11 @@ func sanitizeAppName(name string) string {
 	return strings.Trim(result.String(), "-")
 }
 
+// demoAppName constructs a DNS-safe app name for a demo deployment.
+func demoAppName(projectName string, variationID uuid.UUID) string {
+	return demoAppName(projectName, variationID)
+}
+
 // executeMigrationInstructions runs migration instructions via shell.
 // Returns nil if instructions are empty or appear to be prose rather than commands.
 // In the future, this could use Claude Code for more complex instructions.
@@ -323,7 +328,7 @@ func (s *Server) runChannelDemoDeployment(
 	logMilestone("Demo deployed: " + url)
 
 	// Build teardown command based on platform
-	appName := fmt.Sprintf("%s-%s", projectName, variationID.String()[:8])
+	appName := demoAppName(projectName, variationID)
 	var teardownCmd string
 	switch channel.HostingPlatform.Slug {
 	case "fly-io":
@@ -361,7 +366,7 @@ func (s *Server) deployToFlyIO(
 	}
 
 	// App name based on project name + variation ID (must be DNS-safe)
-	appName := fmt.Sprintf("%s-%s", projectName, variationID.String()[:8])
+	appName := demoAppName(projectName, variationID)
 
 	// Always write our fly.toml for demos (ensures correct app name)
 	// We use a Mendel-controlled app name to avoid conflicts
@@ -444,7 +449,7 @@ func (s *Server) deployToCloudRun(
 	logMilestone func(string),
 	logInfo func(string),
 ) (string, error) {
-	serviceName := fmt.Sprintf("%s-%s", projectName, variationID.String()[:8])
+	serviceName := demoAppName(projectName, variationID)
 	projectID := env["GCP_PROJECT_ID"]
 	region := "us-central1"
 
@@ -513,7 +518,7 @@ func (s *Server) deployToGKE(
 	logMilestone func(string),
 	logInfo func(string),
 ) (string, error) {
-	deploymentName := fmt.Sprintf("%s-%s", projectName, variationID.String()[:8])
+	deploymentName := demoAppName(projectName, variationID)
 	projectID := env["GCP_PROJECT_ID"]
 	clusterName := env["GKE_CLUSTER_NAME"]
 	zone := env["GKE_ZONE"]
