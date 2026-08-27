@@ -20,6 +20,25 @@ import (
 	"github.com/google/uuid"
 )
 
+// sanitizeAppName converts a project name to a DNS-safe app name.
+// Fly.io app names must be lowercase, alphanumeric, and can contain hyphens.
+func sanitizeAppName(name string) string {
+	// Convert to lowercase
+	name = strings.ToLower(name)
+	// Replace spaces and underscores with hyphens
+	name = strings.ReplaceAll(name, " ", "-")
+	name = strings.ReplaceAll(name, "_", "-")
+	// Remove any characters that aren't alphanumeric or hyphens
+	var result strings.Builder
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+			result.WriteRune(c)
+		}
+	}
+	// Trim hyphens from start and end
+	return strings.Trim(result.String(), "-")
+}
+
 // executeMigrationInstructions runs migration instructions via shell.
 // Returns nil if instructions are empty or appear to be prose rather than commands.
 // In the future, this could use Claude Code for more complex instructions.
@@ -247,6 +266,14 @@ func (s *Server) runChannelDemoDeployment(
 		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, "")
 	}
 
+	// Get project name for app naming
+	project, err := s.db.GetProject(ctx, projectID)
+	if err != nil {
+		failDemo("Failed to get project: " + err.Error())
+		return
+	}
+	projectName := sanitizeAppName(project.Name)
+
 	// Get encryption key
 	key, err := crypto.GetKey()
 	if err != nil {
@@ -277,11 +304,11 @@ func (s *Server) runChannelDemoDeployment(
 
 	switch channel.HostingPlatform.Slug {
 	case "fly-io":
-		url, deployErr = s.deployToFlyIO(ctx, variationID, workDir, env, logMilestone, logInfo)
+		url, deployErr = s.deployToFlyIO(ctx, projectName, variationID, workDir, env, logMilestone, logInfo)
 	case "cloud-run":
-		url, deployErr = s.deployToCloudRun(ctx, variationID, workDir, env, logMilestone, logInfo)
+		url, deployErr = s.deployToCloudRun(ctx, projectName, variationID, workDir, env, logMilestone, logInfo)
 	case "gke":
-		url, deployErr = s.deployToGKE(ctx, variationID, workDir, env, logMilestone, logInfo)
+		url, deployErr = s.deployToGKE(ctx, projectName, variationID, workDir, env, logMilestone, logInfo)
 	default:
 		failDemo("Unsupported platform: " + channel.HostingPlatform.Slug)
 		return
@@ -296,14 +323,15 @@ func (s *Server) runChannelDemoDeployment(
 	logMilestone("Demo deployed: " + url)
 
 	// Build teardown command based on platform
+	appName := fmt.Sprintf("%s-%s", projectName, variationID.String()[:8])
 	var teardownCmd string
 	switch channel.HostingPlatform.Slug {
 	case "fly-io":
-		teardownCmd = fmt.Sprintf("flyctl apps destroy mendel-%s --yes", variationID.String()[:8])
+		teardownCmd = fmt.Sprintf("flyctl apps destroy %s --yes", appName)
 	case "cloud-run":
-		teardownCmd = fmt.Sprintf("gcloud run services delete mendel-%s --region us-central1 --quiet", variationID.String()[:8])
+		teardownCmd = fmt.Sprintf("gcloud run services delete %s --region us-central1 --quiet", appName)
 	case "gke":
-		teardownCmd = fmt.Sprintf("kubectl delete deployment,service mendel-%s", variationID.String()[:8])
+		teardownCmd = fmt.Sprintf("kubectl delete deployment,service %s", appName)
 	}
 
 	_, err = s.db.Pool.Exec(ctx, `
@@ -319,6 +347,7 @@ func (s *Server) runChannelDemoDeployment(
 // deployToFlyIO deploys a variation to Fly.io.
 func (s *Server) deployToFlyIO(
 	ctx context.Context,
+	projectName string,
 	variationID uuid.UUID,
 	workDir string,
 	env map[string]string,
@@ -331,13 +360,13 @@ func (s *Server) deployToFlyIO(
 		return "", fmt.Errorf("no Dockerfile found in variation")
 	}
 
-	// App name based on variation ID (must be DNS-safe)
-	appName := fmt.Sprintf("mendel-%s", variationID.String()[:8])
+	// App name based on project name + variation ID (must be DNS-safe)
+	appName := fmt.Sprintf("%s-%s", projectName, variationID.String()[:8])
 
-	// Check if fly.toml exists, if not create one
+	// Always write our fly.toml for demos (ensures correct app name)
+	// We use a Mendel-controlled app name to avoid conflicts
 	flyTomlPath := filepath.Join(workDir, "fly.toml")
-	if _, err := os.Stat(flyTomlPath); os.IsNotExist(err) {
-		flyToml := fmt.Sprintf(`app = "%s"
+	flyToml := fmt.Sprintf(`app = "%s"
 primary_region = "iad"
 
 [build]
@@ -349,20 +378,8 @@ primary_region = "iad"
   auto_start_machines = true
   min_machines_running = 0
 `, appName)
-		if err := os.WriteFile(flyTomlPath, []byte(flyToml), 0644); err != nil {
-			return "", fmt.Errorf("failed to write fly.toml: %w", err)
-		}
-	} else {
-		// Update app name in existing fly.toml
-		content, _ := os.ReadFile(flyTomlPath)
-		lines := strings.Split(string(content), "\n")
-		for i, line := range lines {
-			if strings.HasPrefix(line, "app = ") {
-				lines[i] = fmt.Sprintf(`app = "%s"`, appName)
-				break
-			}
-		}
-		os.WriteFile(flyTomlPath, []byte(strings.Join(lines, "\n")), 0644)
+	if err := os.WriteFile(flyTomlPath, []byte(flyToml), 0644); err != nil {
+		return "", fmt.Errorf("failed to write fly.toml: %w", err)
 	}
 
 	// Build environment
@@ -398,20 +415,36 @@ primary_region = "iad"
 		return "", fmt.Errorf("deploy failed: %s: %w", string(output), err)
 	}
 
-	url := fmt.Sprintf("https://%s.fly.dev", appName)
+	// Parse the actual URL from flyctl output (more reliable than constructing it)
+	// Look for "Visit your newly deployed app at https://..."
+	outputStr := string(output)
+	var url string
+	if idx := strings.Index(outputStr, "https://"); idx != -1 {
+		// Find the end of the URL (space, newline, or end of string)
+		end := idx + 8 // skip "https://"
+		for end < len(outputStr) && outputStr[end] != ' ' && outputStr[end] != '\n' && outputStr[end] != '\r' {
+			end++
+		}
+		url = strings.TrimSuffix(outputStr[idx:end], "/")
+	}
+	if url == "" {
+		// Fallback to constructed URL
+		url = fmt.Sprintf("https://%s.fly.dev", appName)
+	}
 	return url, nil
 }
 
 // deployToCloudRun deploys a variation to Google Cloud Run.
 func (s *Server) deployToCloudRun(
 	ctx context.Context,
+	projectName string,
 	variationID uuid.UUID,
 	workDir string,
 	env map[string]string,
 	logMilestone func(string),
 	logInfo func(string),
 ) (string, error) {
-	serviceName := fmt.Sprintf("mendel-%s", variationID.String()[:8])
+	serviceName := fmt.Sprintf("%s-%s", projectName, variationID.String()[:8])
 	projectID := env["GCP_PROJECT_ID"]
 	region := "us-central1"
 
@@ -473,13 +506,14 @@ func (s *Server) deployToCloudRun(
 // deployToGKE deploys a variation to Google Kubernetes Engine.
 func (s *Server) deployToGKE(
 	ctx context.Context,
+	projectName string,
 	variationID uuid.UUID,
 	workDir string,
 	env map[string]string,
 	logMilestone func(string),
 	logInfo func(string),
 ) (string, error) {
-	deploymentName := fmt.Sprintf("mendel-%s", variationID.String()[:8])
+	deploymentName := fmt.Sprintf("%s-%s", projectName, variationID.String()[:8])
 	projectID := env["GCP_PROJECT_ID"]
 	clusterName := env["GKE_CLUSTER_NAME"]
 	zone := env["GKE_ZONE"]
