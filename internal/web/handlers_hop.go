@@ -276,6 +276,10 @@ type VariationDetailView struct {
 	Logs         []domain.VariationLog
 	DemoInstance *domain.DemoInstance  // Current or recent demo instance
 	DemoLogs     []domain.VariationLog // Logs specific to the current demo
+
+	// Streaming log panels, rendered by the "log-tail" partial.
+	CodegenPanel *LogPanel
+	DemoPanel    *LogPanel
 	GitHubURL    string                // Link to branch on GitHub (if applicable)
 	DiffURL      string                // Link to GitHub compare (main...branch)
 	CanRetryFix  bool                  // True if "Retry with Fix" is available
@@ -413,10 +417,37 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 	// a first build from a revision in flight.
 	revisions, _ := s.db.GetVariationRevisions(ctx, variationID)
 
+	// Code generation streams while the variation is being created.
+	codegenPanel := &LogPanel{
+		DOMID:     "codegen-logs",
+		FeedURL:   fmt.Sprintf("/api/variations/%s/logs", variationID),
+		Status:    string(variation.Status),
+		Live:      variation.Status == domain.VariationStatusCreating,
+		MaxHeight: "500px",
+		Empty:     "No logs yet.",
+		Lines:     logLinesFromVariation(logs),
+	}
+
+	// The demo panel only exists once a demo has been started.
+	var demoPanel *LogPanel
+	if demoInstance != nil {
+		demoPanel = &LogPanel{
+			DOMID:     "demo-logs",
+			FeedURL:   fmt.Sprintf("/api/demos/%s/logs", demoInstance.ID),
+			Status:    string(demoInstance.Status),
+			Live:      demoInstance.Status == domain.DemoInstanceStatusStarting,
+			MaxHeight: "300px",
+			Empty:     "No demo logs yet.",
+			Lines:     logLinesFromVariation(demoLogs),
+		}
+	}
+
 	view := &VariationDetailView{
 		Variation:             variation,
 		Hop:                   hop,
 		Logs:                  logs,
+		CodegenPanel:          codegenPanel,
+		DemoPanel:             demoPanel,
 		Revisions:             revisions,
 		Ribbon:                domain.VariationLifecycle(variation, revisions, hop),
 		Roadmap:                 s.buildMiniRoadmap(ctx, projectID, hop),

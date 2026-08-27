@@ -99,3 +99,47 @@ roadmap-panel   expects a *web.MiniRoadmap.
 </script>
 {{end}}
 {{end}}
+
+{{/*
+    log-tail renders a scrollable log panel that streams new lines in place
+    instead of reloading the page. Takes a *LogPanel.
+
+    The server renders the lines that exist now, so the panel is complete
+    without JavaScript; log-tail.js only appends what arrives afterwards, and
+    reloads the page if the owning object's status changes.
+*/}}
+{{define "log-tail"}}
+{{with .}}
+<div id="{{.DOMID}}"
+     data-log-feed="{{.FeedURL}}"
+     data-log-status="{{.Status}}"
+     data-log-live="{{if .Live}}true{{else}}false{{end}}">
+    <div data-log-scroll
+         style="max-height: {{if .MaxHeight}}{{.MaxHeight}}{{else}}300px{{end}}; overflow-y: auto; background: #f8f9fa; border-radius: 4px; padding: 10px;">
+        <table style="font-family: monospace; font-size: 0.85em; width: 100%;">
+            <tbody data-log-body>
+                {{range .Lines}}
+                <tr>
+                    <td style="white-space: nowrap; color: #999; padding-right: 10px; vertical-align: top;">{{.Timestamp}}</td>
+                    <td style="padding-right: 8px; vertical-align: top;">
+                        {{if eq .Level "milestone"}}<span style="color: #28a745; font-weight: bold;">[MILESTONE]</span>
+                        {{else if eq .Level "error"}}<span style="color: #dc3545; font-weight: bold;">[ERROR]</span>
+                        {{else if eq .Level "info"}}<span style="color: #007bff;">[INFO]</span>
+                        {{else}}<span style="color: #6c757d;">[{{.Level}}]</span>{{end}}
+                    </td>
+                    <td style="word-break: break-word;">{{.Message}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        <p data-log-empty class="empty" {{if .Lines}}style="display: none;"{{end}}>
+            {{if .Empty}}{{.Empty}}{{else}}No logs yet.{{end}}
+        </p>
+    </div>
+    {{if .Live}}
+    <div style="font-size: 0.8em; color: #666; margin-top: 4px;">Streaming&hellip;</div>
+    {{end}}
+</div>
+<script src="/static/js/log-tail.js"></script>
+{{end}}
+{{end}}

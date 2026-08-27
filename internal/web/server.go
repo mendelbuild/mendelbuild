@@ -699,8 +699,12 @@ func (s *Server) setupRoutes() {
 			r.Get("/projects/{projectID}/strategy", s.apiGetStrategy)
 			r.Get("/projects/{projectID}/hops/{hopID}/evaluate", s.apiEvaluateVariations)
 			r.Post("/projects/{projectID}/okr/tune", s.apiTuneOKRs)
-			r.Get("/demos/{demoID}/logs", s.apiGetDemoLogs)
 			r.Get("/demos/{demoID}/status", s.apiGetDemoStatus)
+
+			// Log feeds for the in-place tailer (see logtail.go).
+			r.Get("/variations/{variationID}/logs", s.apiVariationLogs)
+			r.Get("/demos/{demoID}/logs", s.apiDemoLogs)
+			r.Get("/deployments/{deploymentID}/logs", s.apiDeploymentLogs)
 		})
 	}) // end auth group
 

@@ -90,8 +90,10 @@ func TestDeploymentChannelRendersDeployStates(t *testing.T) {
 		body := renderPageForTest(t, "deployment_channel.html", map[string]interface{}{
 			"ProjectID": projectID, "Project": project, "Channel": validatedChannel(),
 			"ProdDeployment": live, "LatestProdDeployment": live,
-			"LatestProdLogs": []domain.HostingDeploymentLog{
-				{LoggedAt: time.Now(), Level: domain.LogLevelMilestone, Message: "Production deployed"},
+			"ProdLogPanel": &LogPanel{
+				DOMID: "prod-deploy-logs", FeedURL: "/api/deployments/x/logs",
+				Status: string(live.Status),
+				Lines:  []LogLine{{LoggedAt: time.Now(), Level: "milestone", Message: "Production deployed"}},
 			},
 			"ProdHistory": []domain.HostingDeployment{
 				*live, *prodDeployment(domain.HostingDeploymentStatusFailed),
@@ -109,8 +111,10 @@ func TestDeploymentChannelRendersDeployStates(t *testing.T) {
 		body := renderPageForTest(t, "deployment_channel.html", map[string]interface{}{
 			"ProjectID": projectID, "Project": project, "Channel": validatedChannel(),
 			"LatestProdDeployment": failed,
-			"LatestProdLogs": []domain.HostingDeploymentLog{
-				{LoggedAt: time.Now(), Level: domain.LogLevelError, Message: "flyctl exploded"},
+			"ProdLogPanel": &LogPanel{
+				DOMID: "prod-deploy-logs", FeedURL: "/api/deployments/x/logs",
+				Status: string(failed.Status), Live: false,
+				Lines:  []LogLine{{LoggedAt: time.Now(), Level: "error", Message: "flyctl exploded"}},
 			},
 		})
 		// A failed deploy is the case the logs exist for; if the message or the
@@ -123,16 +127,41 @@ func TestDeploymentChannelRendersDeployStates(t *testing.T) {
 		}
 	})
 
-	t.Run("deploy in progress disables the button and polls", func(t *testing.T) {
+	// A running deploy streams its log rather than reloading the page. The
+	// tailer reloads once the status changes, so the page must not also be
+	// refreshing underneath it.
+	t.Run("deploy in progress streams instead of reloading", func(t *testing.T) {
+		running := prodDeployment(domain.HostingDeploymentStatusDeploying)
 		body := renderPageForTest(t, "deployment_channel.html", map[string]interface{}{
 			"ProjectID": projectID, "Project": project, "Channel": validatedChannel(),
-			"LatestProdDeployment": prodDeployment(domain.HostingDeploymentStatusDeploying),
+			"LatestProdDeployment": running,
+			"ProdLogPanel": &LogPanel{
+				DOMID: "prod-deploy-logs", FeedURL: "/api/deployments/x/logs",
+				Status: string(running.Status), Live: true,
+			},
 		})
-		if !strings.Contains(body, "http-equiv=\"refresh\"") {
-			t.Error("an in-progress deploy should refresh so the status advances")
+		if strings.Contains(body, `http-equiv="refresh"`) {
+			t.Error("a streaming deploy must not also reload the whole page")
+		}
+		if !strings.Contains(body, `data-log-live="true"`) {
+			t.Error("an in-progress deploy should stream its log")
 		}
 		if !strings.Contains(body, "disabled") {
 			t.Error("an in-progress deploy should disable the deploy button")
+		}
+	})
+
+	// Validation has no log feed, so it is still the one case that polls.
+	t.Run("validation in progress still polls the page", func(t *testing.T) {
+		ch := validatedChannel()
+		now := time.Now()
+		ch.ProdValidatedAt = nil
+		ch.ProdValidatingAt = &now
+		body := renderPageForTest(t, "deployment_channel.html", map[string]interface{}{
+			"ProjectID": projectID, "Project": project, "Channel": ch,
+		})
+		if !strings.Contains(body, `http-equiv="refresh"`) {
+			t.Error("a running validation has no feed, so the page must still poll")
 		}
 	})
 }

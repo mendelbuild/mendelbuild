@@ -1,10 +1,10 @@
 {{define "page-content"}}
-{{/* Poll while a validation or a production deploy is still running. */}}
+{{/* Validation has no log feed of its own, so it still polls the page. A
+     running deploy does not: its log panel streams and reloads the page
+     itself once the status changes. */}}
 {{if .Channel}}{{if or .Channel.IsDemoValidating .Channel.IsProdValidating}}
 <meta http-equiv="refresh" content="3">
-{{else if .LatestProdDeployment}}{{if eq .LatestProdDeployment.Status "deploying"}}
-<meta http-equiv="refresh" content="3">
-{{end}}{{end}}{{end}}
+{{end}}{{end}}
 
 <h1>{{.Project.Name}}</h1>
 <h2>Deployment Configuration</h2>
@@ -136,18 +136,10 @@
                 </button>
             </form>
 
-            {{if .LatestProdLogs}}
-            <details {{if .LatestProdDeployment}}{{if ne .LatestProdDeployment.Status "running"}}open{{end}}{{end}}>
-                <summary style="cursor: pointer; color: #007bff;">Deploy log ({{len .LatestProdLogs}} lines)</summary>
-                <div style="background: #f8f9fa; border-radius: 4px; padding: 10px; margin-top: 8px; font-family: monospace; font-size: 0.85em; max-height: 400px; overflow-y: auto;">
-                    {{range .LatestProdLogs}}
-                    <div style="margin-bottom: 3px;">
-                        <span style="color: #666;">{{.LoggedAt.Format "15:04:05"}}</span>
-                        {{if eq .Level "milestone"}}<span style="color: #28a745;">[M]</span>{{else if eq .Level "error"}}<span style="color: #dc3545;">[E]</span>{{else}}<span style="color: #007bff;">[I]</span>{{end}}
-                        {{.Message}}
-                    </div>
-                    {{end}}
-                </div>
+            {{with .ProdLogPanel}}
+            <details {{if ne .Status "running"}}open{{end}}>
+                <summary style="cursor: pointer; color: #007bff;">Deploy log</summary>
+                <div style="margin-top: 8px;">{{template "log-tail" .}}</div>
             </details>
             {{end}}
 

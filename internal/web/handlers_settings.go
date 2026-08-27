@@ -650,9 +650,19 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 	prodHistory, _ := s.db.ListHostingDeployments(ctx, projectID, domain.HostingDeploymentKindProd, 10)
 
 	// Logs for the most recent attempt, so failures are diagnosable in the UI.
-	var latestProdLogs []domain.HostingDeploymentLog
+	// Streams in place while the deploy is still running.
+	var prodLogPanel *LogPanel
 	if latestProdDeployment != nil {
-		latestProdLogs, _ = s.db.GetHostingDeploymentLogs(ctx, latestProdDeployment.ID)
+		logs, _ := s.db.GetHostingDeploymentLogs(ctx, latestProdDeployment.ID)
+		prodLogPanel = &LogPanel{
+			DOMID:     "prod-deploy-logs",
+			FeedURL:   fmt.Sprintf("/api/deployments/%s/logs", latestProdDeployment.ID),
+			Status:    string(latestProdDeployment.Status),
+			Live:      latestProdDeployment.Status == domain.HostingDeploymentStatusDeploying,
+			MaxHeight: "400px",
+			Empty:     "No deploy logs yet.",
+			Lines:     logLinesFromDeployment(logs),
+		}
 	}
 
 	data := map[string]interface{}{
@@ -664,7 +674,7 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 		"Combos":               combos,
 		"ProdDeployment":       prodDeployment,
 		"LatestProdDeployment": latestProdDeployment,
-		"LatestProdLogs":       latestProdLogs,
+		"ProdLogPanel":         prodLogPanel,
 		"ProdHistory":          prodHistory,
 		"Success":              r.URL.Query().Get("success") == "1",
 	}

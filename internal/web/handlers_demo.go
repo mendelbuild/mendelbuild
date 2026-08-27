@@ -749,25 +749,6 @@ func (s *Server) cleanupVariationWorkDir(projectID string, variationID uuid.UUID
 	return os.RemoveAll(workDir)
 }
 
-// apiGetDemoLogs returns logs for a demo instance as JSON.
-func (s *Server) apiGetDemoLogs(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	demoID, err := uuid.Parse(chi.URLParam(r, "demoID"))
-	if err != nil {
-		http.Error(w, "invalid demo ID", http.StatusBadRequest)
-		return
-	}
-
-	logs, err := s.db.GetVariationLogsBySource(ctx, domain.SourceTypeDemo, demoID, 500)
-	if err != nil {
-		http.Error(w, "failed to get logs", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(logs)
-}
-
 // apiGetDemoStatus returns the current status of a demo instance.
 func (s *Server) apiGetDemoStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
