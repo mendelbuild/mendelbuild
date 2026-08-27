@@ -487,22 +487,33 @@ func (s *Server) handleDeleteCloudCredential(w http.ResponseWriter, r *http.Requ
 	http.Redirect(w, r, "/p/"+projectID.String()+"/settings?success=1", http.StatusSeeOther)
 }
 
-// handleRedeploy triggers a redeployment of the current main branch to production.
+// handleRedeploy deploys the current main branch to production via the project's channel.
 func (s *Server) handleRedeploy(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
 	if err != nil {
 		http.Error(w, "invalid project ID", http.StatusBadRequest)
 		return
 	}
 
-	// TODO: Implement actual deployment logic
-	// 1. Get repository info
-	// 2. Clone main branch
-	// 3. Run deploy script with credentials
-	// 4. Update deployed_instances table
+	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
+	if err != nil {
+		http.Error(w, "no deployment channel configured", http.StatusBadRequest)
+		return
+	}
+	if !channel.IsProdValidated() {
+		http.Error(w, "production deployment path is not validated", http.StatusBadRequest)
+		return
+	}
 
-	// For now, just redirect back with a message
-	http.Redirect(w, r, "/p/"+projectID.String()+"/strategy?redeploy=pending", http.StatusSeeOther)
+	go func() {
+		bgCtx := context.Background()
+		if _, err := s.runChannelProdDeployment(bgCtx, projectID, channel); err != nil {
+			fmt.Printf("[prod-deploy %s] failed: %v\n", projectID, err)
+		}
+	}()
+
+	http.Redirect(w, r, "/p/"+projectID.String()+"/deployment", http.StatusSeeOther)
 }
 
 // handleAddMember adds a member to a project.
@@ -632,14 +643,30 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Production deployment state: the live one, the latest attempt (which may
+	// be in progress or failed), and recent history.
+	prodDeployment, _ := s.db.GetCurrentProdDeployment(ctx, projectID)
+	latestProdDeployment, _ := s.db.GetLatestProdDeployment(ctx, projectID)
+	prodHistory, _ := s.db.ListHostingDeployments(ctx, projectID, domain.HostingDeploymentKindProd, 10)
+
+	// Logs for the most recent attempt, so failures are diagnosable in the UI.
+	var latestProdLogs []domain.HostingDeploymentLog
+	if latestProdDeployment != nil {
+		latestProdLogs, _ = s.db.GetHostingDeploymentLogs(ctx, latestProdDeployment.ID)
+	}
+
 	data := map[string]interface{}{
-		"Title":          "Deployment: " + project.Name,
-		"ProjectID":      projectID.String(),
-		"Project":        project,
-		"Channel":        channel,
-		"ChannelHistory": channels,
-		"Combos":         combos,
-		"Success":        r.URL.Query().Get("success") == "1",
+		"Title":                "Deployment: " + project.Name,
+		"ProjectID":            projectID.String(),
+		"Project":              project,
+		"Channel":              channel,
+		"ChannelHistory":       channels,
+		"Combos":               combos,
+		"ProdDeployment":       prodDeployment,
+		"LatestProdDeployment": latestProdDeployment,
+		"LatestProdLogs":       latestProdLogs,
+		"ProdHistory":          prodHistory,
+		"Success":              r.URL.Query().Get("success") == "1",
 	}
 	s.addUserToData(r, data)
 

@@ -5,20 +5,21 @@
 
 {{if $.DeploymentChannel}}
 {{with $.DeploymentChannel}}
-<div class="card" style="margin-bottom: 20px; {{if .ProdURL}}background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); border: 1px solid #28a745;{{else if .IsDemoValidated}}background: linear-gradient(135deg, #fff3cd 0%, #ffeeba 100%); border: 1px solid #ffc107;{{else}}background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border: 1px solid #6c757d;{{end}}">
+<div class="card" style="margin-bottom: 20px; {{if $.ProdDeployment}}background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); border: 1px solid #28a745;{{else if .IsDemoValidated}}background: linear-gradient(135deg, #fff3cd 0%, #ffeeba 100%); border: 1px solid #ffc107;{{else}}background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border: 1px solid #6c757d;{{end}}">
     <div style="display: flex; justify-content: space-between; align-items: center;">
         <div>
-            <h2 style="margin: 0 0 5px 0; {{if .ProdURL}}color: #155724;{{else if .IsDemoValidated}}color: #856404;{{else}}color: #495057;{{end}}">
+            <h2 style="margin: 0 0 5px 0; {{if $.ProdDeployment}}color: #155724;{{else if .IsDemoValidated}}color: #856404;{{else}}color: #495057;{{end}}">
                 Deployment Channel
             </h2>
             <div style="margin-bottom: 8px;">
                 <span style="font-weight: bold;">{{.ArtifactKind}}</span> &rarr;
-                {{if .HostingPlatform}}<span>{{.HostingPlatform.Name}}</span>{{end}}
+                {{if .HostingPlatform}}<span>{{.HostingPlatform.Name}}</span>{{else}}<span style="color: #dc3545;">(platform missing - reconfigure)</span>{{end}}
             </div>
-            {{if .ProdURL}}
-            <a href="{{.ProdURL}}" target="_blank" style="color: #155724; font-size: 1.1em;">{{.ProdURL}}</a>
+            {{with $.ProdDeployment}}
+            <a href="{{.URL}}" target="_blank" style="color: #155724; font-size: 1.1em;">{{.URL}}</a>
             <div style="font-size: 0.85em; color: #155724; margin-top: 5px;">
-                Deployed: {{.ProdDeployedAt.Format "2006-01-02 15:04"}}
+                Deployed: {{.StartedAt.Format "2006-01-02 15:04"}}
+                {{if .ShortCommit}}&bull; <code>{{.ShortCommit}}</code>{{end}}
             </div>
             {{else}}
             <div style="font-size: 0.9em; margin-top: 5px;">
@@ -32,13 +33,13 @@
             {{end}}
         </div>
         <div style="display: flex; gap: 10px;">
-            {{if .ProdURL}}
-            <a href="{{.ProdURL}}" target="_blank" style="padding: 8px 16px; background: #28a745; color: white; text-decoration: none; border-radius: 4px; font-weight: bold;">
+            {{with $.ProdDeployment}}
+            <a href="{{.URL}}" target="_blank" style="padding: 8px 16px; background: #28a745; color: white; text-decoration: none; border-radius: 4px; font-weight: bold;">
                 View
             </a>
             {{end}}
             <a href="/p/{{$.ProjectID}}/deployment" style="padding: 8px 16px; background: #007bff; color: white; text-decoration: none; border-radius: 4px;">
-                {{if .ProdURL}}Manage{{else}}Set Up{{end}}
+                {{if $.ProdDeployment}}Manage{{else}}Set Up{{end}}
             </a>
         </div>
     </div>
@@ -59,30 +60,6 @@
     </div>
 </div>
 {{end}}
-
-{{if $.ProductionURL}}{{if not $.DeploymentChannel}}
-<div class="card" style="margin-bottom: 20px; background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); border: 1px solid #28a745;">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div>
-            <h2 style="margin: 0 0 5px 0; color: #155724;">Production (Legacy)</h2>
-            <a href="{{$.ProductionURL}}" target="_blank" style="color: #155724; font-size: 1.1em;">{{$.ProductionURL}}</a>
-            <div style="font-size: 0.85em; color: #155724; margin-top: 5px;">
-                Last deployed: {{$.ProductionDeployedAt}}
-            </div>
-        </div>
-        <div style="display: flex; gap: 10px;">
-            <a href="{{$.ProductionURL}}" target="_blank" style="padding: 8px 16px; background: #28a745; color: white; text-decoration: none; border-radius: 4px; font-weight: bold;">
-                View
-            </a>
-            <form method="POST" action="/p/{{$.ProjectID}}/redeploy" style="margin: 0;">
-                <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                    Redeploy
-                </button>
-            </form>
-        </div>
-    </div>
-</div>
-{{end}}{{end}}
 
 <div style="display: flex; gap: 20px; align-items: flex-start;">
     <div style="flex: 2;">

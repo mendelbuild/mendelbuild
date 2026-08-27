@@ -41,7 +41,27 @@ func sanitizeAppName(name string) string {
 
 // demoAppName constructs a DNS-safe app name for a demo deployment.
 func demoAppName(projectName string, variationID uuid.UUID) string {
-	return demoAppName(projectName, variationID)
+	return fmt.Sprintf("%s-%s", projectName, variationID.String()[:8])
+}
+
+// prodAppName constructs a DNS-safe app name for a production deployment.
+func prodAppName(projectName string) string {
+	return fmt.Sprintf("%s-prod", projectName)
+}
+
+// teardownCommandFor returns the shell command that tears down a deployment of
+// appName on the given platform. Stored with the deployment so teardown works
+// even if Mendel restarts.
+func teardownCommandFor(platformSlug, appName string) string {
+	switch platformSlug {
+	case "fly-io":
+		return fmt.Sprintf("flyctl apps destroy %s --yes", appName)
+	case "cloud-run":
+		return fmt.Sprintf("gcloud run services delete %s --region us-central1 --quiet", appName)
+	case "gke":
+		return fmt.Sprintf("kubectl delete deployment,service %s", appName)
+	}
+	return ""
 }
 
 // executeMigrationInstructions runs migration instructions via shell.
@@ -304,16 +324,17 @@ func (s *Server) runChannelDemoDeployment(
 	}
 
 	// Dispatch to platform-specific deployment
+	appName := demoAppName(projectName, variationID)
 	var url string
 	var deployErr error
 
 	switch channel.HostingPlatform.Slug {
 	case "fly-io":
-		url, deployErr = s.deployToFlyIO(ctx, projectName, variationID, workDir, env, logMilestone, logInfo)
+		url, deployErr = s.deployToFlyIO(ctx, appName, workDir, env, logMilestone, logInfo)
 	case "cloud-run":
-		url, deployErr = s.deployToCloudRun(ctx, projectName, variationID, workDir, env, logMilestone, logInfo)
+		url, deployErr = s.deployToCloudRun(ctx, appName, workDir, env, logMilestone, logInfo)
 	case "gke":
-		url, deployErr = s.deployToGKE(ctx, projectName, variationID, workDir, env, logMilestone, logInfo)
+		url, deployErr = s.deployToGKE(ctx, appName, workDir, env, logMilestone, logInfo)
 	default:
 		failDemo("Unsupported platform: " + channel.HostingPlatform.Slug)
 		return
@@ -327,17 +348,7 @@ func (s *Server) runChannelDemoDeployment(
 	// Update demo instance with URL
 	logMilestone("Demo deployed: " + url)
 
-	// Build teardown command based on platform
-	appName := demoAppName(projectName, variationID)
-	var teardownCmd string
-	switch channel.HostingPlatform.Slug {
-	case "fly-io":
-		teardownCmd = fmt.Sprintf("flyctl apps destroy %s --yes", appName)
-	case "cloud-run":
-		teardownCmd = fmt.Sprintf("gcloud run services delete %s --region us-central1 --quiet", appName)
-	case "gke":
-		teardownCmd = fmt.Sprintf("kubectl delete deployment,service %s", appName)
-	}
+	teardownCmd := teardownCommandFor(channel.HostingPlatform.Slug, appName)
 
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE demo_instances
@@ -349,11 +360,10 @@ func (s *Server) runChannelDemoDeployment(
 	}
 }
 
-// deployToFlyIO deploys a variation to Fly.io.
+// deployToFlyIO deploys a working directory to Fly.io under the given app name.
 func (s *Server) deployToFlyIO(
 	ctx context.Context,
-	projectName string,
-	variationID uuid.UUID,
+	appName string,
 	workDir string,
 	env map[string]string,
 	logMilestone func(string),
@@ -362,13 +372,10 @@ func (s *Server) deployToFlyIO(
 	// Check for Dockerfile
 	dockerfilePath := filepath.Join(workDir, "Dockerfile")
 	if _, err := os.Stat(dockerfilePath); os.IsNotExist(err) {
-		return "", fmt.Errorf("no Dockerfile found in variation")
+		return "", fmt.Errorf("no Dockerfile found in repository")
 	}
 
-	// App name based on project name + variation ID (must be DNS-safe)
-	appName := demoAppName(projectName, variationID)
-
-	// Always write our fly.toml for demos (ensures correct app name)
+	// Always write our fly.toml (ensures correct app name)
 	// We use a Mendel-controlled app name to avoid conflicts
 	flyTomlPath := filepath.Join(workDir, "fly.toml")
 	flyToml := fmt.Sprintf(`app = "%s"
@@ -439,17 +446,15 @@ primary_region = "iad"
 	return url, nil
 }
 
-// deployToCloudRun deploys a variation to Google Cloud Run.
+// deployToCloudRun deploys a working directory to Google Cloud Run under the given service name.
 func (s *Server) deployToCloudRun(
 	ctx context.Context,
-	projectName string,
-	variationID uuid.UUID,
+	serviceName string,
 	workDir string,
 	env map[string]string,
 	logMilestone func(string),
 	logInfo func(string),
 ) (string, error) {
-	serviceName := demoAppName(projectName, variationID)
 	projectID := env["GCP_PROJECT_ID"]
 	region := "us-central1"
 
@@ -508,17 +513,15 @@ func (s *Server) deployToCloudRun(
 	return strings.TrimSpace(string(urlOutput)), nil
 }
 
-// deployToGKE deploys a variation to Google Kubernetes Engine.
+// deployToGKE deploys a working directory to Google Kubernetes Engine under the given deployment name.
 func (s *Server) deployToGKE(
 	ctx context.Context,
-	projectName string,
-	variationID uuid.UUID,
+	deploymentName string,
 	workDir string,
 	env map[string]string,
 	logMilestone func(string),
 	logInfo func(string),
 ) (string, error) {
-	deploymentName := demoAppName(projectName, variationID)
 	projectID := env["GCP_PROJECT_ID"]
 	clusterName := env["GKE_CLUSTER_NAME"]
 	zone := env["GKE_ZONE"]

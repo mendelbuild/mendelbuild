@@ -8,6 +8,7 @@ import (
 
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // LoadStrategy loads a strategy from the input definition, upserting as needed.
@@ -2266,105 +2267,168 @@ func (db *DB) GetCredentialRequestForVariation(ctx context.Context, variationID 
 }
 
 // =====================================================
-// Deployed Instance Queries (added in 015)
+// Hosting Deployment Queries (added in 029)
 // =====================================================
 
-// CreateDeployedInstance creates a new deployed instance record.
-func (db *DB) CreateDeployedInstance(ctx context.Context, di *domain.DeployedInstance) error {
-	now := time.Now()
-	if di.ID == uuid.Nil {
-		di.ID = uuid.New()
-	}
-	di.DeployedAt = now
-	di.CreatedAt = now
+const hostingDeploymentCols = `id, project_id, channel_id, kind, variation_id, commit_sha,
+	app_name, url, teardown_instructions, status, error_message,
+	started_at, finished_at, created_at, updated_at`
 
+func scanHostingDeployment(row interface {
+	Scan(dest ...any) error
+}) (*domain.HostingDeployment, error) {
+	var d domain.HostingDeployment
+	err := row.Scan(
+		&d.ID, &d.ProjectID, &d.ChannelID, &d.Kind, &d.VariationID, &d.CommitSHA,
+		&d.AppName, &d.URL, &d.TeardownInstructions, &d.Status, &d.ErrorMessage,
+		&d.StartedAt, &d.FinishedAt, &d.CreatedAt, &d.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// CreateHostingDeployment inserts a new deployment row in the "deploying" state.
+func (db *DB) CreateHostingDeployment(ctx context.Context, d *domain.HostingDeployment) error {
+	if d.ID == uuid.Nil {
+		d.ID = uuid.New()
+	}
+	if d.Status == "" {
+		d.Status = domain.HostingDeploymentStatusDeploying
+	}
+	return db.Pool.QueryRow(ctx, `
+		INSERT INTO hosting_deployments
+			(id, project_id, channel_id, kind, variation_id, commit_sha, app_name, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING started_at, created_at, updated_at
+	`, d.ID, d.ProjectID, d.ChannelID, d.Kind, d.VariationID, d.CommitSHA, d.AppName, d.Status).
+		Scan(&d.StartedAt, &d.CreatedAt, &d.UpdatedAt)
+}
+
+// GetHostingDeployment retrieves a deployment by ID.
+func (db *DB) GetHostingDeployment(ctx context.Context, id uuid.UUID) (*domain.HostingDeployment, error) {
+	return scanHostingDeployment(db.Pool.QueryRow(ctx,
+		`SELECT `+hostingDeploymentCols+` FROM hosting_deployments WHERE id = $1`, id))
+}
+
+// SetHostingDeploymentCommit records which commit a deployment is shipping.
+func (db *DB) SetHostingDeploymentCommit(ctx context.Context, id uuid.UUID, commitSHA string) error {
 	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO deployed_instances (id, variation_id, cloud_ecosystem, url, public_url, instance_info, deployed_at, status, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, di.ID, di.VariationID, di.CloudEcosystem, di.URL, di.PublicURL, di.InstanceInfo, di.DeployedAt, di.Status, di.CreatedAt)
+		UPDATE hosting_deployments SET commit_sha = $2, updated_at = now() WHERE id = $1
+	`, id, commitSHA)
 	return err
 }
 
-// GetDeployedInstance retrieves a deployed instance by ID.
-func (db *DB) GetDeployedInstance(ctx context.Context, id uuid.UUID) (*domain.DeployedInstance, error) {
-	var di domain.DeployedInstance
-	err := db.Pool.QueryRow(ctx, `
-		SELECT id, variation_id, cloud_ecosystem, url, public_url, instance_info, deployed_at, status, error_message, created_at
-		FROM deployed_instances WHERE id = $1
-	`, id).Scan(&di.ID, &di.VariationID, &di.CloudEcosystem, &di.URL, &di.PublicURL, &di.InstanceInfo, &di.DeployedAt, &di.Status, &di.ErrorMessage, &di.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &di, nil
+// CompleteHostingDeployment marks a deployment running and records where it landed.
+func (db *DB) CompleteHostingDeployment(ctx context.Context, id uuid.UUID, url, teardownInstructions string) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE hosting_deployments
+		SET status = 'running', url = $2, teardown_instructions = $3,
+			finished_at = now(), updated_at = now()
+		WHERE id = $1
+	`, id, url, teardownInstructions)
+	return err
 }
 
-// GetDeployedInstanceByVariation retrieves the latest deployed instance for a variation.
-func (db *DB) GetDeployedInstanceByVariation(ctx context.Context, variationID uuid.UUID) (*domain.DeployedInstance, error) {
-	var di domain.DeployedInstance
-	err := db.Pool.QueryRow(ctx, `
-		SELECT id, variation_id, cloud_ecosystem, url, public_url, instance_info, deployed_at, status, error_message, created_at
-		FROM deployed_instances
-		WHERE variation_id = $1
-		ORDER BY deployed_at DESC
-		LIMIT 1
-	`, variationID).Scan(&di.ID, &di.VariationID, &di.CloudEcosystem, &di.URL, &di.PublicURL, &di.InstanceInfo, &di.DeployedAt, &di.Status, &di.ErrorMessage, &di.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &di, nil
+// FailHostingDeployment marks a deployment failed with an error message.
+func (db *DB) FailHostingDeployment(ctx context.Context, id uuid.UUID, errMsg string) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE hosting_deployments
+		SET status = 'failed', error_message = $2, finished_at = now(), updated_at = now()
+		WHERE id = $1
+	`, id, errMsg)
+	return err
 }
 
-// ListDeployedInstancesByStatus lists all deployed instances with a given status.
-func (db *DB) ListDeployedInstancesByStatus(ctx context.Context, status domain.DeployedInstanceStatus) ([]domain.DeployedInstance, error) {
-	rows, err := db.Pool.Query(ctx, `
-		SELECT id, variation_id, cloud_ecosystem, url, public_url, instance_info, deployed_at, status, error_message, created_at
-		FROM deployed_instances
-		WHERE status = $1
-		ORDER BY deployed_at DESC
-	`, status)
+// UpdateHostingDeploymentStatus sets the status of a deployment.
+func (db *DB) UpdateHostingDeploymentStatus(ctx context.Context, id uuid.UUID, status domain.HostingDeploymentStatus) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE hosting_deployments SET status = $2, updated_at = now() WHERE id = $1
+	`, id, status)
+	return err
+}
+
+// GetCurrentProdDeployment returns the most recent successful production
+// deployment for a project, or nil if the project has never deployed.
+func (db *DB) GetCurrentProdDeployment(ctx context.Context, projectID uuid.UUID) (*domain.HostingDeployment, error) {
+	d, err := scanHostingDeployment(db.Pool.QueryRow(ctx,
+		`SELECT `+hostingDeploymentCols+` FROM hosting_deployments
+		 WHERE project_id = $1 AND kind = 'prod' AND status = 'running'
+		 ORDER BY started_at DESC LIMIT 1`, projectID))
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	return d, err
+}
+
+// GetLatestProdDeployment returns the most recent production deployment for a
+// project regardless of outcome, so callers can surface in-progress and failed
+// deploys. Returns nil if the project has never deployed.
+func (db *DB) GetLatestProdDeployment(ctx context.Context, projectID uuid.UUID) (*domain.HostingDeployment, error) {
+	d, err := scanHostingDeployment(db.Pool.QueryRow(ctx,
+		`SELECT `+hostingDeploymentCols+` FROM hosting_deployments
+		 WHERE project_id = $1 AND kind = 'prod'
+		 ORDER BY started_at DESC LIMIT 1`, projectID))
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	return d, err
+}
+
+// ListHostingDeployments returns deployments for a project, newest first.
+func (db *DB) ListHostingDeployments(ctx context.Context, projectID uuid.UUID, kind domain.HostingDeploymentKind, limit int) ([]domain.HostingDeployment, error) {
+	rows, err := db.Pool.Query(ctx,
+		`SELECT `+hostingDeploymentCols+` FROM hosting_deployments
+		 WHERE project_id = $1 AND kind = $2
+		 ORDER BY started_at DESC LIMIT $3`, projectID, kind, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var instances []domain.DeployedInstance
+	var out []domain.HostingDeployment
 	for rows.Next() {
-		var di domain.DeployedInstance
-		if err := rows.Scan(&di.ID, &di.VariationID, &di.CloudEcosystem, &di.URL, &di.PublicURL, &di.InstanceInfo, &di.DeployedAt, &di.Status, &di.ErrorMessage, &di.CreatedAt); err != nil {
+		d, err := scanHostingDeployment(rows)
+		if err != nil {
 			return nil, err
 		}
-		instances = append(instances, di)
+		out = append(out, *d)
 	}
-	return instances, nil
+	return out, rows.Err()
 }
 
-// UpdateDeployedInstanceStatus updates the status (and optionally error message) of a deployed instance.
-func (db *DB) UpdateDeployedInstanceStatus(ctx context.Context, id uuid.UUID, status domain.DeployedInstanceStatus, errorMessage *string) error {
+// AppendHostingDeploymentLog records a single log line for a deployment.
+func (db *DB) AppendHostingDeploymentLog(ctx context.Context, deploymentID uuid.UUID, level domain.LogLevel, message string) error {
 	_, err := db.Pool.Exec(ctx, `
-		UPDATE deployed_instances
-		SET status = $2, error_message = $3
-		WHERE id = $1
-	`, id, status, errorMessage)
+		INSERT INTO hosting_deployment_logs (deployment_id, level, message)
+		VALUES ($1, $2, $3)
+	`, deploymentID, level, message)
 	return err
 }
 
-// GetLatestRunningDeploymentByProject retrieves the most recent running deployment for a project.
-func (db *DB) GetLatestRunningDeploymentByProject(ctx context.Context, projectID uuid.UUID) (*domain.DeployedInstance, error) {
-	var di domain.DeployedInstance
-	err := db.Pool.QueryRow(ctx, `
-		SELECT di.id, di.variation_id, di.cloud_ecosystem, di.url, di.public_url, di.instance_info, di.deployed_at, di.status, di.error_message, di.created_at
-		FROM deployed_instances di
-		JOIN variations v ON di.variation_id = v.id
-		JOIN hops h ON v.hop_id = h.id
-		JOIN strategies s ON h.strategy_id = s.id
-		WHERE s.project_id = $1 AND di.status = 'running'
-		ORDER BY di.deployed_at DESC
-		LIMIT 1
-	`, projectID).Scan(&di.ID, &di.VariationID, &di.CloudEcosystem, &di.URL, &di.PublicURL, &di.InstanceInfo, &di.DeployedAt, &di.Status, &di.ErrorMessage, &di.CreatedAt)
+// GetHostingDeploymentLogs returns the log lines for a deployment, oldest first.
+func (db *DB) GetHostingDeploymentLogs(ctx context.Context, deploymentID uuid.UUID) ([]domain.HostingDeploymentLog, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, deployment_id, logged_at, level, message
+		FROM hosting_deployment_logs
+		WHERE deployment_id = $1
+		ORDER BY logged_at, id
+	`, deploymentID)
 	if err != nil {
 		return nil, err
 	}
-	return &di, nil
+	defer rows.Close()
+
+	var out []domain.HostingDeploymentLog
+	for rows.Next() {
+		var l domain.HostingDeploymentLog
+		if err := rows.Scan(&l.ID, &l.DeploymentID, &l.LoggedAt, &l.Level, &l.Message); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
 }
 
 // =====================================================
@@ -2926,31 +2990,51 @@ func (db *DB) CountSupportedDeploymentCombos(ctx context.Context) (int, error) {
 }
 
 // GetActiveProjectDeploymentChannel returns the current active channel for a project.
+// Uses LEFT JOIN so channels with missing/deleted platforms are still returned.
 func (db *DB) GetActiveProjectDeploymentChannel(ctx context.Context, projectID uuid.UUID) (*domain.ProjectDeploymentChannel, error) {
 	var c domain.ProjectDeploymentChannel
-	var hp domain.HostingPlatform
+	var hpID, hpSlug, hpName, hpDeployerImage, hpInstructions *string
+	var hpCreatedAt, hpUpdatedAt *time.Time
 	err := db.Pool.QueryRow(ctx, `
 		SELECT pdc.id, pdc.project_id, pdc.artifact_kind, pdc.hosting_platform_id,
 			   pdc.demo_validated_at, pdc.demo_validating_at, pdc.demo_validation_error,
 			   pdc.prod_validated_at, pdc.prod_validating_at, pdc.prod_validation_error,
-			   pdc.prod_url, pdc.prod_deployed_at,
 			   pdc.disabled_at, pdc.created_at, pdc.updated_at,
 			   hp.id, hp.slug, hp.name, hp.deployer_image, hp.instructions, hp.created_at, hp.updated_at
 		FROM project_deployment_channels pdc
-		JOIN hosting_platforms hp ON hp.id = pdc.hosting_platform_id
+		LEFT JOIN hosting_platforms hp ON hp.id = pdc.hosting_platform_id
 		WHERE pdc.project_id = $1 AND pdc.disabled_at IS NULL
 	`, projectID).Scan(
 		&c.ID, &c.ProjectID, &c.ArtifactKind, &c.HostingPlatformID,
 		&c.DemoValidatedAt, &c.DemoValidatingAt, &c.DemoValidationError,
 		&c.ProdValidatedAt, &c.ProdValidatingAt, &c.ProdValidationError,
-		&c.ProdURL, &c.ProdDeployedAt,
 		&c.DisabledAt, &c.CreatedAt, &c.UpdatedAt,
-		&hp.ID, &hp.Slug, &hp.Name, &hp.DeployerImage, &hp.Instructions, &hp.CreatedAt, &hp.UpdatedAt,
+		&hpID, &hpSlug, &hpName, &hpDeployerImage, &hpInstructions, &hpCreatedAt, &hpUpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
-	c.HostingPlatform = &hp
+	// Only populate HostingPlatform if the join found a match
+	if hpID != nil {
+		hp := domain.HostingPlatform{
+			Slug: *hpSlug,
+			Name: *hpName,
+		}
+		hp.ID, _ = uuid.Parse(*hpID)
+		if hpDeployerImage != nil {
+			hp.DeployerImage = *hpDeployerImage
+		}
+		if hpInstructions != nil {
+			hp.Instructions = *hpInstructions
+		}
+		if hpCreatedAt != nil {
+			hp.CreatedAt = *hpCreatedAt
+		}
+		if hpUpdatedAt != nil {
+			hp.UpdatedAt = *hpUpdatedAt
+		}
+		c.HostingPlatform = &hp
+	}
 	return &c, nil
 }
 
@@ -2960,7 +3044,6 @@ func (db *DB) ListProjectDeploymentChannels(ctx context.Context, projectID uuid.
 		SELECT pdc.id, pdc.project_id, pdc.artifact_kind, pdc.hosting_platform_id,
 			   pdc.demo_validated_at, pdc.demo_validating_at, pdc.demo_validation_error,
 			   pdc.prod_validated_at, pdc.prod_validating_at, pdc.prod_validation_error,
-			   pdc.prod_url, pdc.prod_deployed_at,
 			   pdc.disabled_at, pdc.created_at, pdc.updated_at,
 			   hp.id, hp.slug, hp.name, hp.deployer_image, hp.instructions, hp.created_at, hp.updated_at
 		FROM project_deployment_channels pdc
@@ -2981,8 +3064,7 @@ func (db *DB) ListProjectDeploymentChannels(ctx context.Context, projectID uuid.
 			&c.ID, &c.ProjectID, &c.ArtifactKind, &c.HostingPlatformID,
 			&c.DemoValidatedAt, &c.DemoValidatingAt, &c.DemoValidationError,
 			&c.ProdValidatedAt, &c.ProdValidatingAt, &c.ProdValidationError,
-			&c.ProdURL, &c.ProdDeployedAt,
-			&c.DisabledAt, &c.CreatedAt, &c.UpdatedAt,
+				&c.DisabledAt, &c.CreatedAt, &c.UpdatedAt,
 			&hp.ID, &hp.Slug, &hp.Name, &hp.DeployerImage, &hp.Instructions, &hp.CreatedAt, &hp.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -3094,13 +3176,4 @@ func (db *DB) UpdateProjectDeploymentChannelProdValidation(ctx context.Context, 
 	return db.CompleteProdValidation(ctx, channelID)
 }
 
-// UpdateProjectDeploymentChannelProdURL sets the production URL.
-func (db *DB) UpdateProjectDeploymentChannelProdURL(ctx context.Context, channelID uuid.UUID, url string) error {
-	_, err := db.Pool.Exec(ctx, `
-		UPDATE project_deployment_channels
-		SET prod_url = $2, prod_deployed_at = NOW(), updated_at = NOW()
-		WHERE id = $1
-	`, channelID, url)
-	return err
-}
 

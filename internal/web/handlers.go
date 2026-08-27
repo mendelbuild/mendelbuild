@@ -234,25 +234,15 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get production deployment info
-	var productionURL string
-	var productionDeployedAt string
-	deployment, err := s.db.GetLatestRunningDeploymentByProject(ctx, projectID)
-	if err == nil && deployment != nil {
-		if deployment.PublicURL != nil {
-			productionURL = *deployment.PublicURL
-		} else {
-			productionURL = deployment.URL
-		}
-		productionDeployedAt = deployment.DeployedAt.Format("2006-01-02 15:04")
-	}
-
 	// Get deployment channel info
 	var deploymentChannel *domain.ProjectDeploymentChannel
 	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
 	if err == nil {
 		deploymentChannel = channel
 	}
+
+	// Current production deployment (nil if the project has never deployed)
+	prodDeployment, _ := s.db.GetCurrentProdDeployment(ctx, projectID)
 
 	// Get supported combos for channel setup
 	supportedCombos, _ := s.db.ListSupportedDeploymentCombos(ctx)
@@ -266,9 +256,8 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 		"Strategy":             view,
 		"PendingInputRequest":  pendingInputRequest,
 		"PendingInputRequests": pendingInputRequests,
-		"ProductionURL":        productionURL,
-		"ProductionDeployedAt": productionDeployedAt,
 		"DeploymentChannel":    deploymentChannel,
+		"ProdDeployment":       prodDeployment,
 		"SupportedCombos":      supportedCombos,
 		"TotalInputTokens":     projectTokens.InputTokens,
 		"TotalOutputTokens":    projectTokens.OutputTokens,

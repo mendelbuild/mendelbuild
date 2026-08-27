@@ -1,7 +1,10 @@
 {{define "page-content"}}
+{{/* Poll while a validation or a production deploy is still running. */}}
 {{if .Channel}}{{if or .Channel.IsDemoValidating .Channel.IsProdValidating}}
 <meta http-equiv="refresh" content="3">
-{{end}}{{end}}
+{{else if .LatestProdDeployment}}{{if eq .LatestProdDeployment.Status "deploying"}}
+<meta http-equiv="refresh" content="3">
+{{end}}{{end}}{{end}}
 
 <h1>{{.Project.Name}}</h1>
 <h2>Deployment Configuration</h2>
@@ -49,10 +52,13 @@
                         {{end}}
                     </div>
                 </div>
-                {{if .Channel.ProdURL}}
+                {{with .ProdDeployment}}
                 <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #dee2e6;">
                     <strong>Production URL:</strong>
-                    <a href="{{.Channel.ProdURL}}" target="_blank">{{.Channel.ProdURL}}</a>
+                    <a href="{{.URL}}" target="_blank">{{.URL}}</a>
+                    {{if .ShortCommit}}
+                    <span style="color: #666; margin-left: 8px;">commit <code>{{.ShortCommit}}</code></span>
+                    {{end}}
                 </div>
                 {{end}}
             </div>
@@ -94,6 +100,77 @@
                 {{end}}
             </div>
         </div>
+
+        {{if .Channel.IsProdValidated}}
+        <div class="card">
+            <h2>Production Deployment</h2>
+            <p style="color: #666; margin-bottom: 12px;">
+                Deploys the current <code>main</code> branch through this channel.
+            </p>
+
+            {{with .LatestProdDeployment}}
+            <div style="padding: 12px 16px; border-radius: 4px; margin-bottom: 12px;
+                {{if eq .Status "running"}}background: #d4edda; border: 1px solid #c3e6cb;
+                {{else if eq .Status "failed"}}background: #f8d7da; border: 1px solid #f5c6cb;
+                {{else}}background: #fff3cd; border: 1px solid #ffeeba;{{end}}">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong>Latest deploy:</strong> {{.Status}}
+                        {{if .ShortCommit}}&bull; <code>{{.ShortCommit}}</code>{{end}}
+                        <div style="font-size: 0.85em; color: #555; margin-top: 4px;">
+                            Started {{.StartedAt.Format "2006-01-02 15:04:05"}}
+                        </div>
+                    </div>
+                    {{if .URL}}<a href="{{.URL}}" target="_blank">{{.URL}}</a>{{end}}
+                </div>
+                {{if .ErrorMessage}}
+                <div style="margin-top: 8px; color: #721c24;">{{.ErrorMessage}}</div>
+                {{end}}
+            </div>
+            {{end}}
+
+            <form method="POST" action="/p/{{.ProjectID}}/redeploy" style="margin: 0 0 12px 0;">
+                <button type="submit" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;"
+                    {{if .LatestProdDeployment}}{{if eq .LatestProdDeployment.Status "deploying"}}disabled{{end}}{{end}}>
+                    {{if .LatestProdDeployment}}{{if eq .LatestProdDeployment.Status "deploying"}}Deploying...{{else}}Deploy main to Production{{end}}{{else}}Deploy main to Production{{end}}
+                </button>
+            </form>
+
+            {{if .LatestProdLogs}}
+            <details {{if .LatestProdDeployment}}{{if ne .LatestProdDeployment.Status "running"}}open{{end}}{{end}}>
+                <summary style="cursor: pointer; color: #007bff;">Deploy log ({{len .LatestProdLogs}} lines)</summary>
+                <div style="background: #f8f9fa; border-radius: 4px; padding: 10px; margin-top: 8px; font-family: monospace; font-size: 0.85em; max-height: 400px; overflow-y: auto;">
+                    {{range .LatestProdLogs}}
+                    <div style="margin-bottom: 3px;">
+                        <span style="color: #666;">{{.LoggedAt.Format "15:04:05"}}</span>
+                        {{if eq .Level "milestone"}}<span style="color: #28a745;">[M]</span>{{else if eq .Level "error"}}<span style="color: #dc3545;">[E]</span>{{else}}<span style="color: #007bff;">[I]</span>{{end}}
+                        {{.Message}}
+                    </div>
+                    {{end}}
+                </div>
+            </details>
+            {{end}}
+
+            {{/* `with` rather than a bare `len`, so an absent key renders
+                 nothing instead of erroring the whole page. */}}
+            {{with .ProdHistory}}{{if gt (len .) 1}}
+            <details style="margin-top: 12px;">
+                <summary style="cursor: pointer; color: #007bff;">Deploy history</summary>
+                <table style="margin-top: 8px; width: 100%;">
+                    <tr><th>Started</th><th>Commit</th><th>Status</th><th>URL</th></tr>
+                    {{range .}}
+                    <tr>
+                        <td>{{.StartedAt.Format "2006-01-02 15:04"}}</td>
+                        <td>{{if .ShortCommit}}<code>{{.ShortCommit}}</code>{{else}}&mdash;{{end}}</td>
+                        <td>{{.Status}}</td>
+                        <td>{{if .URL}}<a href="{{.URL}}" target="_blank">{{.URL}}</a>{{else}}&mdash;{{end}}</td>
+                    </tr>
+                    {{end}}
+                </table>
+            </details>
+            {{end}}{{end}}
+        </div>
+        {{end}}
         {{end}}
 
         <div class="card">

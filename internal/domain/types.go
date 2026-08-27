@@ -463,28 +463,64 @@ type ProjectCredential struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
-// DeployedInstanceStatus represents the lifecycle state of a deployed instance.
-type DeployedInstanceStatus string
+// HostingDeploymentStatus represents the lifecycle state of a hosting deployment.
+type HostingDeploymentStatus string
 
 const (
-	DeployedInstanceStatusDeploying  DeployedInstanceStatus = "deploying"
-	DeployedInstanceStatusRunning    DeployedInstanceStatus = "running"
-	DeployedInstanceStatusFailed     DeployedInstanceStatus = "failed"
-	DeployedInstanceStatusTerminated DeployedInstanceStatus = "terminated"
+	HostingDeploymentStatusDeploying  HostingDeploymentStatus = "deploying"
+	HostingDeploymentStatusRunning    HostingDeploymentStatus = "running"
+	HostingDeploymentStatusFailed     HostingDeploymentStatus = "failed"
+	HostingDeploymentStatusTerminated HostingDeploymentStatus = "terminated"
 )
 
-// DeployedInstance tracks a variation deployed to a cloud environment.
-type DeployedInstance struct {
-	ID             uuid.UUID              `json:"id"`
-	VariationID    uuid.UUID              `json:"variation_id"`
-	CloudEcosystem string                 `json:"cloud_ecosystem"`
-	URL            string                 `json:"url"`
-	PublicURL      *string                `json:"public_url,omitempty"`
-	InstanceInfo   json.RawMessage        `json:"instance_info,omitempty"`
-	DeployedAt     time.Time              `json:"deployed_at"`
-	Status         DeployedInstanceStatus `json:"status"`
-	ErrorMessage   *string                `json:"error_message,omitempty"`
-	CreatedAt      time.Time              `json:"created_at"`
+// HostingDeploymentKind distinguishes what a deployment is for.
+type HostingDeploymentKind string
+
+const (
+	HostingDeploymentKindDemo HostingDeploymentKind = "demo"
+	HostingDeploymentKindProd HostingDeploymentKind = "prod"
+)
+
+// HostingDeployment records a deployment made through a project's deployment
+// channel. Demo deployments carry a VariationID; production deployments track
+// the main branch and have none.
+type HostingDeployment struct {
+	ID        uuid.UUID             `json:"id"`
+	ProjectID uuid.UUID             `json:"project_id"`
+	ChannelID uuid.UUID             `json:"channel_id"`
+	Kind      HostingDeploymentKind `json:"kind"`
+
+	VariationID *uuid.UUID `json:"variation_id,omitempty"`
+
+	CommitSHA            *string `json:"commit_sha,omitempty"`
+	AppName              string  `json:"app_name"`
+	URL                  *string `json:"url,omitempty"`
+	TeardownInstructions *string `json:"teardown_instructions,omitempty"`
+
+	Status       HostingDeploymentStatus `json:"status"`
+	ErrorMessage *string                 `json:"error_message,omitempty"`
+
+	StartedAt  time.Time  `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+// ShortCommit returns the abbreviated commit SHA, or "" if unknown.
+func (d *HostingDeployment) ShortCommit() string {
+	if d.CommitSHA == nil || len(*d.CommitSHA) < 8 {
+		return ""
+	}
+	return (*d.CommitSHA)[:8]
+}
+
+// HostingDeploymentLog is a single log line emitted while deploying.
+type HostingDeploymentLog struct {
+	ID           uuid.UUID `json:"id"`
+	DeploymentID uuid.UUID `json:"deployment_id"`
+	LoggedAt     time.Time `json:"logged_at"`
+	Level        LogLevel  `json:"level"`
+	Message      string    `json:"message"`
 }
 
 // TrafficAllocation defines how traffic is split for a hop.
@@ -565,9 +601,7 @@ type ProjectDeploymentChannel struct {
 	ProdValidatingAt     *time.Time `json:"prod_validating_at,omitempty"`
 	ProdValidationError  *string    `json:"prod_validation_error,omitempty"`
 
-	// Production state
-	ProdURL        *string    `json:"prod_url,omitempty"`
-	ProdDeployedAt *time.Time `json:"prod_deployed_at,omitempty"`
+	// Production state lives in hosting_deployments (kind = "prod").
 
 	// History: nil = current active channel
 	DisabledAt *time.Time `json:"disabled_at,omitempty"`
