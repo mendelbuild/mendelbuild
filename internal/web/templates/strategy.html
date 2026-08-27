@@ -29,6 +29,12 @@
                 {{else}}
                 <span style="color: #6c757d;">Not validated yet</span>
                 {{end}}
+                {{/* Say why the card is amber. Without this, a fully configured
+                     channel that simply has not shipped yet reads as unfinished
+                     setup. */}}
+                {{if .IsProdValidated}}
+                <div style="color: #856404; margin-top: 4px;">Not yet deployed to production.</div>
+                {{end}}
             </div>
             {{end}}
         </div>
@@ -38,8 +44,11 @@
                 View
             </a>
             {{end}}
+            {{/* A channel exists in this branch, so this always manages an
+                 existing one. Labelling it "Set Up" because nothing has
+                 deployed yet reads as though the channel were unconfigured. */}}
             <a href="/p/{{$.ProjectID}}/deployment" style="padding: 8px 16px; background: #007bff; color: white; text-decoration: none; border-radius: 4px;">
-                {{if $.ProdDeployment}}Manage{{else}}Set Up{{end}}
+                Manage
             </a>
         </div>
     </div>

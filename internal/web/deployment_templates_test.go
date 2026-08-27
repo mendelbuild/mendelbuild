@@ -159,13 +159,26 @@ func TestStrategyRendersProdDeployment(t *testing.T) {
 		}
 	})
 
-	t.Run("channel but never deployed shows validation state", func(t *testing.T) {
+	// A configured, validated channel that has simply never shipped must not be
+	// presented as unconfigured. The button used to key off the production URL
+	// rather than the channel, so this state rendered as "Set Up" and read as
+	// though the deployment channel still needed creating.
+	t.Run("channel but never deployed offers management, not setup", func(t *testing.T) {
 		body := renderPageForTest(t, "strategy.html", map[string]interface{}{
 			"ProjectID": projectID.String(), "Strategy": strategyView,
 			"DeploymentChannel": validatedChannel(),
 		})
 		if !strings.Contains(body, "Prod validated") {
 			t.Error("a validated-but-undeployed channel should say so")
+		}
+		if !strings.Contains(body, "Not yet deployed to production") {
+			t.Error("the undeployed state should be stated, not just implied by colour")
+		}
+		if strings.Contains(body, "Set Up") {
+			t.Error(`an existing channel must not offer "Set Up"; it is already set up`)
+		}
+		if !strings.Contains(body, "Manage") {
+			t.Error("an existing channel should offer management")
 		}
 		if strings.Contains(body, "pong-prod.fly.dev") {
 			t.Error("a project that never deployed must not show a production URL")
