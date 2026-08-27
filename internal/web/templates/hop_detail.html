@@ -30,6 +30,12 @@
                     <th>Created</th>
                     <td>{{.Hop.CreatedAt.Format "2006-01-02 15:04"}}</td>
                 </tr>
+                {{if or .TotalInputTokens .TotalOutputTokens}}
+                <tr>
+                    <th>Tokens Used</th>
+                    <td>{{printf "%dk" (div .TotalInputTokens 1000)}} in / {{printf "%dk" (div .TotalOutputTokens 1000)}} out</td>
+                </tr>
+                {{end}}
             </table>
         </div>
 

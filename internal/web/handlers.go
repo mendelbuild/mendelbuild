@@ -250,6 +250,9 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 	// Get supported combos for channel setup
 	supportedCombos, _ := s.db.ListSupportedDeploymentCombos(ctx)
 
+	// Get project-level token totals
+	projectTokens, _ := s.db.GetProjectTokenTotals(ctx, projectID)
+
 	data := map[string]interface{}{
 		"Title":                "Strategy: " + view.Strategy.Name,
 		"ProjectID":            projectID.String(),
@@ -260,6 +263,8 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 		"ProductionDeployedAt": productionDeployedAt,
 		"DeploymentChannel":    deploymentChannel,
 		"SupportedCombos":      supportedCombos,
+		"TotalInputTokens":     projectTokens.InputTokens,
+		"TotalOutputTokens":    projectTokens.OutputTokens,
 	}
 	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)

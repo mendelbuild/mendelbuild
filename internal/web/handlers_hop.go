@@ -81,6 +81,8 @@ type HopDetailView struct {
 	HasPendingVariations     bool
 	IsStuck                  bool // No pending variations and no unresolved decisions
 	NeedsProductionCredentials bool // requires_production but no credentials configured
+	TotalInputTokens         int
+	TotalOutputTokens        int
 }
 
 func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
@@ -192,6 +194,9 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Get token totals for this hop
+	tokenTotals, _ := s.db.GetHopTokenTotals(ctx, hopID)
+
 	view := &HopDetailView{
 		Hop:                        hop,
 		Strategy:                   strategy,
@@ -205,6 +210,8 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 		HasPendingVariations:       hasPendingVariations,
 		IsStuck:                    isStuck,
 		NeedsProductionCredentials: needsProductionCredentials,
+		TotalInputTokens:           tokenTotals.InputTokens,
+		TotalOutputTokens:          tokenTotals.OutputTokens,
 	}
 
 	data := map[string]interface{}{

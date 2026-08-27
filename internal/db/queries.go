@@ -711,6 +711,36 @@ func (db *DB) AddVariationTokens(ctx context.Context, variationID uuid.UUID, inp
 	return err
 }
 
+// TokenTotals holds aggregated token counts.
+type TokenTotals struct {
+	InputTokens  int
+	OutputTokens int
+}
+
+// GetHopTokenTotals returns the sum of tokens across all variations for a hop.
+func (db *DB) GetHopTokenTotals(ctx context.Context, hopID uuid.UUID) (TokenTotals, error) {
+	var totals TokenTotals
+	err := db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
+		FROM variations
+		WHERE hop_id = $1
+	`, hopID).Scan(&totals.InputTokens, &totals.OutputTokens)
+	return totals, err
+}
+
+// GetProjectTokenTotals returns the sum of tokens across all variations for a project.
+func (db *DB) GetProjectTokenTotals(ctx context.Context, projectID uuid.UUID) (TokenTotals, error) {
+	var totals TokenTotals
+	err := db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(v.input_tokens), 0), COALESCE(SUM(v.output_tokens), 0)
+		FROM variations v
+		JOIN hops h ON v.hop_id = h.id
+		JOIN strategies s ON h.strategy_id = s.id
+		WHERE s.project_id = $1
+	`, projectID).Scan(&totals.InputTokens, &totals.OutputTokens)
+	return totals, err
+}
+
 // GetVariationsByHop retrieves all variations for a hop.
 func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain.Variation, error) {
 	rows, err := db.Pool.Query(ctx, `

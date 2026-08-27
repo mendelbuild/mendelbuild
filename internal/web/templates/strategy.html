@@ -104,6 +104,15 @@
             {{end}}
         </div>
 
+        {{if or $.TotalInputTokens $.TotalOutputTokens}}
+        <div class="card">
+            <h2>Token Usage</h2>
+            <div style="font-size: 1.1em;">
+                {{printf "%dk" (div $.TotalInputTokens 1000)}} in / {{printf "%dk" (div $.TotalOutputTokens 1000)}} out
+            </div>
+        </div>
+        {{end}}
+
         <div class="card">
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <h2 style="margin: 0;">Objectives &amp; Key Results</h2>
