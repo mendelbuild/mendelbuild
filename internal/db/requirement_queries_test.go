@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/bhs/mendelbuild/internal/testdb"
+
 	"github.com/bhs/mendelbuild/internal/domain"
 )
 
@@ -20,10 +22,7 @@ import (
 func testDB(t *testing.T) (*DB, uuid.UUID) {
 	t.Helper()
 
-	connString := os.Getenv("MENDEL_TEST_DB_URL")
-	if connString == "" {
-		t.Fatal("MENDEL_TEST_DB_URL not set; these tests exercise real SQL")
-	}
+	connString := testdb.ConnString()
 
 	ctx := context.Background()
 	schemaName := "test_req_" + uuid.New().String()[:8]

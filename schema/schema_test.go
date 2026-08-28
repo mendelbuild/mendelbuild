@@ -10,31 +10,33 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/bhs/mendelbuild/internal/testdb"
 )
 
 // TestMigrationsMatchFullSchema verifies that applying all migrations produces
 // the same schema as running full.sql directly.
 //
-// This test requires a PostgreSQL server. Set MENDEL_TEST_DB_URL to run it.
-// The test will create the database if it doesn't exist.
-// Example: MENDEL_TEST_DB_URL="postgres://localhost/mendel_test?sslmode=disable" go test ./schema
+// The test needs a reachable PostgreSQL server and creates the database if it
+// is missing. It fails rather than skips when it cannot connect: a schema
+// change that silently goes unverified is worse than a noisy failure.
+// Override the target with MENDEL_TEST_DB_URL.
 func TestMigrationsMatchFullSchema(t *testing.T) {
-	connString := os.Getenv("MENDEL_TEST_DB_URL")
-	if connString == "" {
-		t.Fatal("MENDEL_TEST_DB_URL not set; this test is required for schema changes")
-	}
+	connString := testdb.ConnString()
 
 	ctx := context.Background()
 
 	// Ensure the test database exists
 	if err := ensureDatabase(ctx, connString); err != nil {
-		t.Fatalf("could not ensure database exists: %v", err)
+		t.Fatalf("could not ensure database %s exists: %v\n"+
+			"Set MENDEL_TEST_DB_URL if Postgres is somewhere else.", connString, err)
 	}
 
 	// Connect to the database
 	pool, err := pgxpool.New(ctx, connString)
 	if err != nil {
-		t.Fatalf("could not connect to database: %v", err)
+		t.Fatalf("could not connect to %s: %v\n"+
+			"Set MENDEL_TEST_DB_URL if Postgres is somewhere else.", connString, err)
 	}
 	defer pool.Close()
 
