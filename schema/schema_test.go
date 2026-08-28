@@ -419,3 +419,56 @@ func intersection(s1, s2 []string) []string {
 	}
 	return result
 }
+
+// TestMigrationNumbersAreUnique verifies that no two migrations share a
+// sequence number. Migrations are applied in lexicographic filename order, so a
+// duplicate number leaves the order between the colliding pair decided by the
+// rest of the filename — fine while they are independent, silently wrong the
+// moment one depends on the other.
+func TestMigrationNumbersAreUnique(t *testing.T) {
+	entries, err := os.ReadDir("migrations")
+	if err != nil {
+		t.Fatalf("read migrations dir: %v", err)
+	}
+
+	seen := make(map[string]string)
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+
+		num, _, ok := strings.Cut(name, "_")
+		if !ok {
+			t.Errorf("migration %s has no NNN_ sequence prefix", name)
+			continue
+		}
+
+		if prev, dup := seen[num]; dup {
+			t.Errorf("migrations %s and %s share sequence number %s", prev, name, num)
+			continue
+		}
+		seen[num] = name
+	}
+}
+
+// TestMigrationsHaveDownFiles verifies every .up.sql has a matching .down.sql,
+// without which MigrateDown fails partway through a revert.
+func TestMigrationsHaveDownFiles(t *testing.T) {
+	entries, err := os.ReadDir("migrations")
+	if err != nil {
+		t.Fatalf("read migrations dir: %v", err)
+	}
+
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+
+		down := strings.TrimSuffix(name, ".up.sql") + ".down.sql"
+		if _, err := os.Stat(filepath.Join("migrations", down)); err != nil {
+			t.Errorf("migration %s has no %s", name, down)
+		}
+	}
+}
