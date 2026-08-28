@@ -10,6 +10,40 @@ Mendel is currently in **prototype stage** — it's not yet running continuously
 
 This guidance will change once Mendel is deployed to production with real users.
 
+## Working Alongside Other Sessions
+
+Several Claude sessions often work on this repo at once, in separate git
+worktrees, and `main` moves underneath you without warning.
+
+**Sync before starting anything substantial, not at the end.** Discovering
+mid-merge that `main` has moved means rebasing and re-running the whole suite —
+work you already did, done again. One command up front avoids it:
+
+```bash
+git fetch origin && git status -sb && git log --oneline HEAD..origin/main
+```
+
+If that last command prints anything, rebase onto it *before* writing code. Do
+it again before a long verification run if the session has been going a while.
+
+Three things that have actually bitten:
+
+- **The primary checkout is sometimes on `main` itself.** Commits then land on
+  `main` directly, and `git branch -f main` fails with "used by worktree".
+  Check `git rev-parse --abbrev-ref HEAD` rather than assuming a feature branch.
+  Moving the ref only works when `main` is not checked out anywhere; otherwise
+  run `git merge --ff-only` from inside the worktree that holds it.
+
+- **Uncommitted files in the shared checkout may belong to another session.**
+  Stage explicit paths. Never `git add -A` without first reading what it caught,
+  or you will commit someone else's half-finished work — and a committed
+  migration is immutable, which forces them into a follow-up migration to fix
+  something they had not finished writing.
+
+- **`schema/full.sql` is a collision point**, because every migration touches
+  it. If it is already modified when you arrive, that is someone else's
+  in-flight migration; stage only your own hunks.
+
 ## Template Data Conventions
 
 When passing JSON data to HTML templates for use in JavaScript:
