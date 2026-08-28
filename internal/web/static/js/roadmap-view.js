@@ -58,6 +58,11 @@ const RoadmapView = (function() {
     // focused Variation's fill so the two read as one selection.
     const FOCUS_ACCENT = '#0D4D2D';
 
+    // Left gutter on every Variation row, holding a tick on the one that was
+    // merged to main. Reserved whether or not the row has a tick, so labels
+    // line up down the node.
+    const MERGED_GUTTER = 11;
+
     const NODE_WIDTH = 200;
     const NODE_PADDING = 15;
     const VARIATION_HEIGHT = 24;
@@ -175,10 +180,22 @@ const RoadmapView = (function() {
                     ink = INK[v.Status] || '#666';
                 }
 
+                // The winner is marked in a gutter every row reserves, so the
+                // names stay aligned and the ticks read as a column rather
+                // than as ragged punctuation in front of the labels.
+                const tick = isMerged
+                    ? `<span style="
+                        flex: 0 0 ${MERGED_GUTTER}px;
+                        font-size: 9px;
+                        line-height: 1;
+                       " aria-hidden="true">&#10003;</span>`
+                    : `<span style="flex: 0 0 ${MERGED_GUTTER}px;" aria-hidden="true"></span>`;
+
                 html += `
                     <${tag} ${href} style="
-                        display: block;
-                        padding: 3px 6px;
+                        display: flex;
+                        align-items: center;
+                        padding: 3px 6px 3px 4px;
                         margin: 2px 0;
                         background: ${fill};
                         border-radius: 4px;
@@ -187,11 +204,15 @@ const RoadmapView = (function() {
                         font-size: 11px;
                         font-style: ${isProposed ? 'italic' : 'normal'};
                         font-weight: ${isFocus || (isMerged && !view.dim) ? 'bold' : 'normal'};
-                        white-space: nowrap;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
-                    " title="${escapeHTML(v.Name)} (${escapeHTML(v.Status)})">
-                        ${escapeHTML(v.Name)}${isProposed ? ' (proposed)' : ''}
+                    " title="${escapeHTML(v.Name)} (${escapeHTML(v.Status)})${isMerged ? ' — merged to main' : ''}">
+                        ${tick}
+                        <span style="
+                            flex: 1 1 auto;
+                            min-width: 0;
+                            white-space: nowrap;
+                            overflow: hidden;
+                            text-overflow: ellipsis;
+                        ">${escapeHTML(v.Name)}${isProposed ? ' (proposed)' : ''}</span>
                     </${tag}>
                 `;
             });
