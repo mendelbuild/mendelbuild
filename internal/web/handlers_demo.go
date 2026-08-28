@@ -407,6 +407,34 @@ func (s *Server) runChannelDemoDeployment(
 	}
 }
 
+// flyTomlFor builds the fly.toml Mendel writes over whatever the repository
+// had, so the app name is one Mendel controls.
+//
+// PORT is set alongside internal_port, and both come from the same constant.
+// Declaring the port Fly routes to says nothing to the app about where to
+// listen: an app that defaults to 3000 goes on listening on 3000, and Fly
+// reports "instance refused connection" for a container that started perfectly
+// well. Announcing the port through PORT is the convention every platform uses
+// — Cloud Run injects exactly this variable — so it asks nothing of the user's
+// repository that it was not already going to do.
+func flyTomlFor(appName string) string {
+	return fmt.Sprintf(`app = "%s"
+primary_region = "iad"
+
+[build]
+
+[env]
+  PORT = "%d"
+
+[http_service]
+  internal_port = %d
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+`, appName, hosting.ContainerPort, hosting.ContainerPort)
+}
+
 // deployToFlyIO deploys a working directory to Fly.io under the given app name.
 func (s *Server) deployToFlyIO(
 	ctx context.Context,
@@ -423,22 +451,9 @@ func (s *Server) deployToFlyIO(
 		return "", fmt.Errorf("no Dockerfile found in repository")
 	}
 
-	// Always write our fly.toml (ensures correct app name)
-	// We use a Mendel-controlled app name to avoid conflicts
+	// Always write our fly.toml, so the app name is one Mendel controls.
 	flyTomlPath := filepath.Join(workDir, "fly.toml")
-	flyToml := fmt.Sprintf(`app = "%s"
-primary_region = "iad"
-
-[build]
-
-[http_service]
-  internal_port = 8080
-  force_https = true
-  auto_stop_machines = "stop"
-  auto_start_machines = true
-  min_machines_running = 0
-`, appName)
-	if err := os.WriteFile(flyTomlPath, []byte(flyToml), 0644); err != nil {
+	if err := os.WriteFile(flyTomlPath, []byte(flyTomlFor(appName)), 0644); err != nil {
 		return "", fmt.Errorf("failed to write fly.toml: %w", err)
 	}
 
@@ -611,6 +626,52 @@ func (s *Server) deployToCloudRun(
 	return strings.TrimSpace(string(urlOutput)), nil
 }
 
+// k8sManifestFor builds the Deployment and Service applied to GKE. envFrom is
+// the optional block wiring in the app's required values.
+//
+// The container port, the Service's target, and PORT all come from the same
+// constant: routing to a port the app was never told to listen on produces a
+// pod that runs and a LoadBalancer that never answers.
+func k8sManifestFor(deploymentName, imageName, envFrom string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: %s
+  template:
+    metadata:
+      labels:
+        app: %s
+    spec:
+      containers:
+      - name: app
+        image: %s
+        ports:
+        - containerPort: %d
+        env:
+        - name: PORT
+          value: "%d"%s
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: %s
+spec:
+  type: LoadBalancer
+  selector:
+    app: %s
+  ports:
+  - port: 80
+    targetPort: %d
+`, deploymentName, deploymentName, deploymentName, imageName,
+		hosting.ContainerPort, hosting.ContainerPort, envFrom, deploymentName, deploymentName,
+		hosting.ContainerPort)
+}
+
 // deployToGKE deploys a working directory to Google Kubernetes Engine under the given deployment name.
 func (s *Server) deployToGKE(
 	ctx context.Context,
@@ -699,39 +760,7 @@ func (s *Server) deployToGKE(
 		envFrom = fmt.Sprintf("\n        envFrom:\n        - secretRef:\n            name: %s", secretName)
 	}
 
-	// Create k8s deployment manifest
-	manifest := fmt.Sprintf(`apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: %s
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: %s
-  template:
-    metadata:
-      labels:
-        app: %s
-    spec:
-      containers:
-      - name: app
-        image: %s
-        ports:
-        - containerPort: 8080%s
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: %s
-spec:
-  type: LoadBalancer
-  selector:
-    app: %s
-  ports:
-  - port: 80
-    targetPort: 8080
-`, deploymentName, deploymentName, deploymentName, imageName, envFrom, deploymentName, deploymentName)
+	manifest := k8sManifestFor(deploymentName, imageName, envFrom)
 
 	manifestPath := filepath.Join(workDir, "k8s-deploy.yaml")
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0644); err != nil {

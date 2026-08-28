@@ -3,6 +3,8 @@ package codegen
 import (
 	"fmt"
 	"strings"
+
+	"github.com/bhs/mendelbuild/internal/hosting"
 )
 
 // shortenPath removes common prefixes to make paths more readable.
@@ -42,8 +44,14 @@ func BuildImplementationPrompt(hopName, variationName, approach, artifactKind st
 			prompt.WriteString("If one exists, update it if your changes require new dependencies or build steps.\n\n")
 			prompt.WriteString("The Dockerfile should:\n")
 			prompt.WriteString("- Build and run the application\n")
-			prompt.WriteString("- Expose a port (typically 8080 or 3000)\n")
-			prompt.WriteString("- Support a health check endpoint (/ or /health returning 200)\n")
+			prompt.WriteString("- Support a health check endpoint (/ or /health returning 200)\n\n")
+			prompt.WriteString(fmt.Sprintf("**The app must listen on the port in the `PORT` environment variable**, "+
+				"binding `0.0.0.0` rather than `127.0.0.1`. Every platform this deploys to sets `PORT` and routes "+
+				"to it; an app that ignores it starts cleanly and is then unreachable, which the platform reports "+
+				"as a refused connection rather than as a misconfiguration. Falling back to a default when `PORT` "+
+				"is unset is fine and keeps local development working. Deployments set it to %d, so `EXPOSE` and "+
+				"any Dockerfile `HEALTHCHECK` should use that same default to stay consistent.\n",
+				hosting.ContainerPort))
 		case "kubernetes":
 			prompt.WriteString("This project deploys to **Kubernetes**. Ensure k8s manifests exist.\n\n")
 			prompt.WriteString("Required files (in `k8s/` or repo root):\n")

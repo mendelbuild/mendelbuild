@@ -7,6 +7,18 @@ import (
 	"github.com/bhs/mendelbuild/internal/domain"
 )
 
+// ContainerPort is the port Mendel routes to inside a deployed container, and
+// the value it puts in PORT so the app knows where to listen.
+//
+// The two must agree. Declaring a route to 8080 while the app defaults to 3000
+// produces a container that starts cleanly and is unreachable, which the
+// platform reports as a refused connection rather than as a misconfiguration.
+//
+// This is not a platform option in the sense the no-hardcoding rule covers: it
+// is one number Mendel chooses and then announces, not a list of choices that
+// drifts with the market.
+const ContainerPort = 8080
+
 // DefaultPlatforms returns the default hosting platforms to seed on startup.
 // These can be refreshed via CLI to stay current with popular platforms.
 func DefaultPlatforms() []domain.HostingPlatform {
