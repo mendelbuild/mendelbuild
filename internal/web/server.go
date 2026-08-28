@@ -692,6 +692,14 @@ func (s *Server) setupRoutes() {
 		r.Post("/variations/{variationID}/requirements/{requirementID}/acknowledge", s.handleAcknowledgeRequirement)
 		r.Post("/variations/{variationID}/requirements/{requirementID}/retract", s.handleRetractAcknowledgement)
 
+		// The same forms, served from the production deployment page. A
+		// production deploy is gated on the merged variations' requirements,
+		// and production's redirect URI is a different string from any demo's,
+		// so it has to be answerable somewhere that is not a variation page.
+		r.Post("/requirements/{requirementID}/value", s.handleSetRequirementValue)
+		r.Post("/requirements/{requirementID}/acknowledge", s.handleAcknowledgeRequirement)
+		r.Post("/requirements/{requirementID}/retract", s.handleRetractAcknowledgement)
+
 		// Debug route (prototype only)
 		r.Get("/debug", s.handleDebug)
 

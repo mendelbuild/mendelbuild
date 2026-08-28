@@ -113,15 +113,23 @@ func (s *Server) appSecretsFor(
 	return secrets, nil
 }
 
+// requirementReturnTo is the page the reader was on. The same forms are served
+// from the variation page and the production deployment page, and each must
+// come back to itself rather than to a fixed destination.
+func requirementReturnTo(r *http.Request) string {
+	projectID := chi.URLParam(r, "projectID")
+	if variationID := chi.URLParam(r, "variationID"); variationID != "" {
+		return fmt.Sprintf("/p/%s/variations/%s", projectID, variationID)
+	}
+	return fmt.Sprintf("/p/%s/deployment", projectID)
+}
+
 // handleSetRequirementValue stores the value behind a 'secret' requirement.
 // Values are project-scoped, so entering one here serves every variation that
 // needs it and production too.
 func (s *Server) handleSetRequirementValue(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	projectID := chi.URLParam(r, "projectID")
-	variationID := chi.URLParam(r, "variationID")
-
-	projectUUID, err := uuid.Parse(projectID)
+	projectUUID, err := uuid.Parse(chi.URLParam(r, "projectID"))
 	if err != nil {
 		http.Error(w, "invalid project ID", http.StatusBadRequest)
 		return
@@ -159,7 +167,7 @@ func (s *Server) handleSetRequirementValue(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
+	http.Redirect(w, r, requirementReturnTo(r), http.StatusSeeOther)
 }
 
 // handleAcknowledgeRequirement records that the user carried out an
@@ -176,10 +184,7 @@ func (s *Server) handleRetractAcknowledgement(w http.ResponseWriter, r *http.Req
 
 func (s *Server) recordAcknowledgement(w http.ResponseWriter, r *http.Request, done bool) {
 	ctx := r.Context()
-	projectID := chi.URLParam(r, "projectID")
-	variationID := chi.URLParam(r, "variationID")
-
-	projectUUID, err := uuid.Parse(projectID)
+	projectUUID, err := uuid.Parse(chi.URLParam(r, "projectID"))
 	if err != nil {
 		http.Error(w, "invalid project ID", http.StatusBadRequest)
 		return
@@ -218,7 +223,7 @@ func (s *Server) recordAcknowledgement(w http.ResponseWriter, r *http.Request, d
 		return
 	}
 
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
+	http.Redirect(w, r, requirementReturnTo(r), http.StatusSeeOther)
 }
 
 // requirementForProject looks up a requirement and confirms it belongs to this
@@ -240,4 +245,79 @@ func (s *Server) requirementForProject(ctx context.Context, projectID uuid.UUID,
 		return nil, fmt.Errorf("requirement not found")
 	}
 	return req, nil
+}
+
+// RequirementsPanel is the shared UI for satisfying requirements, rendered by
+// the "requirements-panel" partial.
+//
+// The variation page and the production deployment page ask the same question
+// of the same data — what does this code need before it can run here — and
+// differ only in which deployment they are asking about. One panel, two
+// callers: a second copy of this markup would drift from the first.
+type RequirementsPanel struct {
+	// Title names the deployment being gated.
+	Title string
+
+	// Intro explains, in a sentence, what the reader is looking at.
+	Intro string
+
+	// ActionBase is the URL prefix the forms post to. The panel appends
+	// "/<requirement-id>/value", "/acknowledge" or "/retract".
+	ActionBase string
+
+	// DeferredNote explains why an acknowledgement cannot be answered yet,
+	// which depends on what has to exist before the URL is known.
+	DeferredNote string
+
+	Statuses []domain.RequirementStatus
+}
+
+// HasAny reports whether there is anything to show.
+func (p *RequirementsPanel) HasAny() bool { return p != nil && len(p.Statuses) > 0 }
+
+// Blocked reports whether some requirement is unmet and actionable.
+func (p *RequirementsPanel) Blocked() bool {
+	return p != nil && len(domain.BlockingRequirements(p.Statuses)) > 0
+}
+
+// prodRequirementsPanel builds the panel for a production deployment, or nil if
+// the merged code needs nothing.
+//
+// The deployment's own URL is preferred over a predicted one: once production
+// exists, where it actually lives settles the question, and on the platforms
+// that assign a hostname at deploy time it is the only answer there is.
+func (s *Server) prodRequirementsPanel(
+	ctx context.Context,
+	projectID uuid.UUID,
+	project *domain.Project,
+	channel *domain.ProjectDeploymentChannel,
+	current *domain.HostingDeployment,
+) (*RequirementsPanel, error) {
+	if channel == nil || channel.HostingPlatform == nil {
+		return nil, nil
+	}
+
+	deployURL := ""
+	if current != nil && current.URL != nil && *current.URL != "" {
+		deployURL = *current.URL
+	} else {
+		deployURL = predictedDeployURL(channel.HostingPlatform.Slug, prodAppName(sanitizeAppName(project.Name)))
+	}
+
+	statuses, err := s.prodRequirementStatus(ctx, projectID, deployURL)
+	if err != nil {
+		return nil, err
+	}
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+
+	return &RequirementsPanel{
+		Title:      "What Production Needs to Run",
+		Intro:      "The code merged to main cannot run in production without the following.",
+		ActionBase: fmt.Sprintf("/p/%s/requirements", projectID),
+		DeferredNote: "This step names production's URL, which " + channel.HostingPlatform.Name +
+			" only assigns once the app exists. Deploy once, then come back to confirm it.",
+		Statuses: statuses,
+	}, nil
 }

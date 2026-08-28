@@ -293,8 +293,7 @@ type VariationDetailView struct {
 	// What this variation's code needs in order to run, judged against the
 	// demo deployment. Requirements block the demo the same way a missing
 	// platform credential does, but the user resolves them here.
-	Requirements        []domain.RequirementStatus
-	RequirementsBlocked bool // True if some requirement is unmet and actionable
+	Requirements *RequirementsPanel
 
 	Revisions []domain.VariationRevision // User-requested changes; drives the Refine track
 	Ribbon    domain.Ribbon              // Plain-English lifecycle position and next action
@@ -429,13 +428,27 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 				demoAppName(sanitizeAppName(project.Name), variationID))
 		}
 	}
-	requirements, err := s.variationRequirementStatus(ctx, projectID, variationID, demoURL)
+	statuses, err := s.variationRequirementStatus(ctx, projectID, variationID, demoURL)
 	if err != nil {
 		http.Error(w, "failed to check requirements: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	requirementsBlocked := len(domain.BlockingRequirements(requirements)) > 0
-	if requirementsBlocked {
+	var requirements *RequirementsPanel
+	if len(statuses) > 0 {
+		platformName := "this platform"
+		if channel != nil && channel.HostingPlatform != nil {
+			platformName = channel.HostingPlatform.Name
+		}
+		requirements = &RequirementsPanel{
+			Title:      "What This Needs to Run",
+			Intro:      "This variation's code cannot function without the following.",
+			ActionBase: fmt.Sprintf("/p/%s/variations/%s/requirements", projectID, variationID),
+			DeferredNote: "This step names the demo's URL, which " + platformName +
+				" only assigns once the app exists. Start the demo, then come back to confirm it.",
+			Statuses: statuses,
+		}
+	}
+	if requirements.Blocked() {
 		demoReady = false
 	}
 
@@ -491,7 +504,6 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		MissingCredentials:    missingCredentials,
 		DemoReady:             demoReady,
 		Requirements:          requirements,
-		RequirementsBlocked:   requirementsBlocked,
 	}
 
 	data := map[string]interface{}{

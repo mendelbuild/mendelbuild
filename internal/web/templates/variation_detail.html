@@ -184,69 +184,7 @@
         </div>
         {{end}}
 
-        {{/* What this variation's code needs before it can run anywhere */}}
-        {{if .Requirements}}
-        <div class="card">
-            <h2>What This Needs to Run</h2>
-            <p style="color: #666; font-size: 0.9em; margin-top: 0;">
-                This variation's code cannot function without the following. Values are
-                stored once per project and reused by demos and production.
-            </p>
-
-            {{range .Requirements}}
-            <div style="padding: 12px; margin-bottom: 10px; border-radius: 4px; border: 1px solid {{if .Met}}#c3e6cb{{else if .Deferred}}#b8daff{{else}}#ffc107{{end}}; background: {{if .Met}}#f4fbf6{{else if .Deferred}}#e7f1ff{{else}}#fff3cd{{end}};">
-                <div style="display: flex; align-items: baseline; gap: 8px;">
-                    <code style="font-weight: 600;">{{.Requirement.Name}}</code>
-                    <span style="font-size: 0.8em; color: #666;">
-                        {{if .Met}}provided{{else if .Deferred}}waiting for the demo URL{{else}}needed{{end}}
-                    </span>
-                </div>
-
-                {{if .Requirement.Description}}
-                <p style="margin: 6px 0 0 0; font-size: 0.9em; color: #444;">{{derefString .Requirement.Description}}</p>
-                {{end}}
-
-                {{if eq .Requirement.Kind "secret"}}
-                    {{if .Requirement.ConsoleURL}}
-                    <p style="margin: 6px 0 0 0; font-size: 0.85em;">
-                        <a href="{{derefString .Requirement.ConsoleURL}}" target="_blank">Where to find this</a>
-                    </p>
-                    {{end}}
-                    <form method="POST" action="/p/{{$.ProjectID}}/variations/{{$.View.Variation.ID}}/requirements/{{.Requirement.ID}}/value" style="margin-top: 8px; display: flex; gap: 8px;">
-                        <input type="password" name="value" autocomplete="off"
-                               placeholder="{{if .Met}}Replace stored value{{else}}Paste the value{{end}}"
-                               style="flex: 1; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-family: monospace;">
-                        <button type="submit" style="padding: 6px 14px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                            Save
-                        </button>
-                    </form>
-
-                {{else}}
-                    {{if .Deferred}}
-                    <p style="margin: 6px 0 0 0; font-size: 0.9em; color: #004085;">
-                        This step names the deployment's URL, which this platform only
-                        assigns once the app exists. Start the demo, then come back to
-                        confirm it.
-                    </p>
-                    {{else}}
-                    <p style="margin: 8px 0 0 0; font-size: 0.9em; white-space: pre-wrap;">{{.ResolvedValue}}</p>
-                    {{if .Requirement.ConsoleURL}}
-                    <p style="margin: 6px 0 0 0; font-size: 0.85em;">
-                        <a href="{{derefString .Requirement.ConsoleURL}}" target="_blank">Open the console</a>
-                    </p>
-                    {{end}}
-                    <form method="POST" action="/p/{{$.ProjectID}}/variations/{{$.View.Variation.ID}}/requirements/{{.Requirement.ID}}/{{if .Met}}retract{{else}}acknowledge{{end}}" style="margin-top: 8px;">
-                        <input type="hidden" name="resolved_value" value="{{.ResolvedValue}}">
-                        <button type="submit" style="padding: 6px 14px; background: {{if .Met}}#6c757d{{else}}#28a745{{end}}; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                            {{if .Met}}I have not done this{{else}}I've done this{{end}}
-                        </button>
-                    </form>
-                    {{end}}
-                {{end}}
-            </div>
-            {{end}}
-        </div>
-        {{end}}
+        {{template "requirements-panel" .Requirements}}
 
         {{/* Demo Panel - shown when variation is ready for demo */}}
         {{if or .DemoInstance (eq .Variation.Status "pending")}}
@@ -335,7 +273,7 @@
                 Deploy this variation to {{.DeploymentChannelName}}.
             </p>
             {{else if .HasDeploymentChannel}}
-                {{if .RequirementsBlocked}}
+                {{if .Requirements.Blocked}}
                 {{/* The code itself cannot run yet; see the section above. */}}
                 <div style="padding: 15px; background: #fff3cd; border-radius: 4px; border: 1px solid #ffc107;">
                     <strong style="color: #856404;">Not Ready to Run</strong>

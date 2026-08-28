@@ -670,6 +670,16 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// What the merged code needs before production can run it. Gating happens
+	// in runChannelProdDeployment; this is where the reader answers it, since
+	// production's redirect URI is a different string from the demo's and the
+	// variation page has no way to know about it.
+	prodRequirements, err := s.prodRequirementsPanel(ctx, projectID, project, channel, prodDeployment)
+	if err != nil {
+		http.Error(w, "failed to check requirements: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	data := map[string]interface{}{
 		"Title":                "Deployment: " + project.Name,
 		"ProjectID":            projectID.String(),
@@ -681,6 +691,7 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 		"LatestProdDeployment": latestProdDeployment,
 		"ProdLogPanel":         prodLogPanel,
 		"ProdHistory":          prodHistory,
+		"ProdRequirements":     prodRequirements,
 		"Success":              r.URL.Query().Get("success") == "1",
 	}
 	s.addUserToData(r, data)

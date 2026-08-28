@@ -129,6 +129,10 @@
             </div>
             {{end}}
 
+            {{/* Rendered inside the Production card, above the button, so the
+                 unmet requirement and the deploy it blocks are read together. */}}
+            {{template "requirements-panel" $.ProdRequirements}}
+
             <form method="POST" action="/p/{{.ProjectID}}/redeploy" style="margin: 0 0 12px 0;">
                 <button type="submit" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;"
                     {{if .LatestProdDeployment}}{{if eq .LatestProdDeployment.Status "deploying"}}disabled{{end}}{{end}}>
