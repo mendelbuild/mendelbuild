@@ -72,6 +72,13 @@ roadmap-panel   expects a *web.MiniRoadmap.
             edges: {{.EdgesJSON}} || [],
             projectID: "{{.ProjectID}}",
             focusHopID: "{{.FocusHopID}}",
+            focusVariationID: "{{.FocusVariationID}}",
+            // On a panel the reader is looking for one thing. The status
+            // palette is what the full roadmap page is for.
+            dimOthers: true,
+            // A Hop with many Variations is taller than the panel, so start
+            // zoomed out far enough to see the one being viewed.
+            fitFocus: true,
             // The panel sits in a scrolling page, so a plain wheel must scroll
             // the page rather than pan the graph.
             wheelPan: false,
@@ -83,11 +90,20 @@ roadmap-panel   expects a *web.MiniRoadmap.
             toggle.textContent = expanded ? 'Collapse' : 'Expand';
             toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
         });
-        // Re-center once the canvas has finished growing, not when the class
-        // flips: mid-transition its height is still the old one.
-        canvas.addEventListener('transitionend', function(e) {
-            if (e.propertyName === 'height' && ctl) ctl.center();
-        });
+        // Re-fit whenever the canvas actually changes size — expanding,
+        // collapsing, or the window being resized. Watching for the height
+        // transition to end does not cover the last of those, and misses the
+        // first two outright wherever transitions are disabled.
+        if (ctl && typeof ResizeObserver !== 'undefined') {
+            let queued = false;
+            new ResizeObserver(function() {
+                // Centering changes a transform, not the box, so this cannot
+                // feed back into the observer.
+                if (queued) return;
+                queued = true;
+                requestAnimationFrame(function() { queued = false; ctl.center(); });
+            }).observe(canvas);
+        }
     }
 
     if (document.readyState === 'loading') {

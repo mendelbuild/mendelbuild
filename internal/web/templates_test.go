@@ -229,19 +229,29 @@ func TestRoadmapPanelExecutes(t *testing.T) {
 
 	projectID := uuid.New()
 	focusID := uuid.New()
+	focusVariationID := uuid.New()
 	populated := &MiniRoadmap{
-		ProjectID:  projectID.String(),
-		FocusHopID: focusID.String(),
-		HopCount:   3,
-		HopsJSON:   template.JS(`[{"ID":"a","Name":"auth-refactor","Status":"completed"}]`),
-		EdgesJSON:  template.JS(`[{"from":"a","to":"b"}]`),
+		ProjectID:        projectID.String(),
+		FocusHopID:       focusID.String(),
+		FocusVariationID: focusVariationID.String(),
+		HopCount:         3,
+		HopsJSON:         template.JS(`[{"ID":"a","Name":"auth-refactor","Status":"completed"}]`),
+		EdgesJSON:        template.JS(`[{"from":"a","to":"b"}]`),
 	}
 	buf.Reset()
 	if err := tmpl.ExecuteTemplate(&buf, "roadmap-panel", populated); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	for _, want := range []string{focusID.String(), "auth-refactor", "Open full roadmap", "roadmap-view.js"} {
+	for _, want := range []string{
+		focusID.String(),
+		// The Variation being viewed drives both the accent fill and the
+		// scroll target, so it has to reach the renderer.
+		focusVariationID.String(),
+		"dimOthers: true",
+		"fitFocus: true",
+		"auth-refactor", "Open full roadmap", "roadmap-view.js",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("panel output missing %q", want)
 		}

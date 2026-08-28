@@ -21,19 +21,26 @@ import (
 type MiniRoadmap struct {
 	ProjectID  string
 	FocusHopID string
-	HopCount   int
-	HopsJSON   template.JS
-	EdgesJSON  template.JS
+
+	// FocusVariationID is set on a Variation page and empty on a Hop page. It
+	// is what the panel fills with the accent colour, and what it scrolls to
+	// when the Hop has more Variations than fit.
+	FocusVariationID string
+
+	HopCount  int
+	HopsJSON  template.JS
+	EdgesJSON template.JS
 }
 
 // HasContext reports whether the panel is worth drawing. A roadmap of one Hop
 // tells the reader nothing they cannot see from the page they are already on.
 func (m *MiniRoadmap) HasContext() bool { return m != nil && m.HopCount > 1 }
 
-// buildMiniRoadmap assembles the roadmap payload focused on hop. It returns nil
-// if the graph cannot be loaded; the panel is contextual, so failing to build it
-// must never fail the page.
-func (s *Server) buildMiniRoadmap(ctx context.Context, projectID uuid.UUID, hop *domain.Hop) *MiniRoadmap {
+// buildMiniRoadmap assembles the roadmap payload focused on hop, and on one of
+// its Variations when the reader is looking at one (pass uuid.Nil otherwise).
+// It returns nil if the graph cannot be loaded; the panel is contextual, so
+// failing to build it must never fail the page.
+func (s *Server) buildMiniRoadmap(ctx context.Context, projectID uuid.UUID, hop *domain.Hop, focusVariationID uuid.UUID) *MiniRoadmap {
 	if hop == nil {
 		return nil
 	}
@@ -52,10 +59,16 @@ func (s *Server) buildMiniRoadmap(ctx context.Context, projectID uuid.UUID, hop 
 		return nil
 	}
 
+	focusVariation := ""
+	if focusVariationID != uuid.Nil {
+		focusVariation = focusVariationID.String()
+	}
+
 	return &MiniRoadmap{
-		ProjectID:  projectID.String(),
-		FocusHopID: hop.ID.String(),
-		HopCount:   len(hops),
+		ProjectID:        projectID.String(),
+		FocusHopID:       hop.ID.String(),
+		FocusVariationID: focusVariation,
+		HopCount:         len(hops),
 		// template.JS, not string: html/template escapes strings in a script
 		// context and would corrupt the JSON. See CLAUDE.md.
 		HopsJSON:  template.JS(hopsJSON),

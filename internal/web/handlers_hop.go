@@ -211,7 +211,7 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 		NeedsProductionCredentials: needsProductionCredentials,
 		Cost:                       costView,
 		Ribbon:                     domain.HopLifecycle(hop, rawVariations),
-		Roadmap:                      s.buildMiniRoadmap(ctx, projectID, hop),
+		Roadmap:                      s.buildMiniRoadmap(ctx, projectID, hop, uuid.Nil),
 	}
 
 	data := map[string]interface{}{
@@ -478,7 +478,7 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		DemoPanel:             demoPanel,
 		Revisions:             revisions,
 		Ribbon:                domain.VariationLifecycle(variation, revisions, hop),
-		Roadmap:                 s.buildMiniRoadmap(ctx, projectID, hop),
+		Roadmap:                 s.buildMiniRoadmap(ctx, projectID, hop, variationID),
 		DemoInstance:          demoInstance,
 		DemoLogs:              demoLogs,
 		GitHubURL:             githubURL,

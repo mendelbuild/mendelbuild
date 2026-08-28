@@ -42,10 +42,35 @@ const RoadmapView = (function() {
         merged: '#155724',
     };
 
+    // Greys for the embedded panel, which dims everything except the Hop and
+    // Variation being viewed. The full roadmap page is where the status
+    // palette earns its keep; on a panel the reader is looking for one thing,
+    // and six competing tones make that thing harder to find, not easier.
+    const DIM = {
+        fill: '#f8f9fa',
+        border: '#e0e2e5',
+        ink: '#9aa0a6',
+        variationFill: '#eceef0',
+        variationInk: '#8b9096',
+    };
+
+    // The "you are here" accent, shared by the focused Hop's ring and the
+    // focused Variation's fill so the two read as one selection.
+    const FOCUS_ACCENT = '#0D4D2D';
+
     const NODE_WIDTH = 200;
     const NODE_PADDING = 15;
     const VARIATION_HEIGHT = 24;
     const HEADER_HEIGHT = 40;
+
+    // Vertical offset of the first Variation row inside a Hop node, and the
+    // step between rows. Used to scroll to a Variation rather than to the
+    // middle of a Hop that is taller than the panel.
+    const VARIATION_TOP = HEADER_HEIGHT + 5;
+
+    // Below this the labels stop being readable, so a Hop taller than the
+    // panel is centred on the Variation of interest instead of shrunk further.
+    const MIN_FIT_SCALE = 0.5;
 
     function nodeHeight(hop) {
         const count = hop.Variations ? hop.Variations.length : 0;
@@ -62,15 +87,28 @@ const RoadmapView = (function() {
             .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
-    function hopNodeHTML(hop, height, projectID, focused) {
-        const bg = FILL[hop.Status] || '#fff';
+    /**
+     * @param {Object} view
+     *   projectID         {string}
+     *   focused           {bool}    this is the Hop being viewed
+     *   dim               {bool}    grey everything that is not focused
+     *   focusVariationID  {string?} the Variation being viewed, if any
+     */
+    function hopNodeHTML(hop, height, view) {
+        const projectID = view.projectID;
+        const focused = view.focused;
+
+        // Dimmed Hops lose their status colour entirely. The focused Hop keeps
+        // it, which is what makes it the only coloured card on the panel.
+        const dimmed = view.dim && !focused;
+        const bg = dimmed ? DIM.fill : (FILL[hop.Status] || '#fff');
         const name = escapeHTML(hop.Name);
 
         // The focused hop has to be findable at a glance in a panel showing a
         // dozen nodes, so it gets a ring rather than a subtly different border.
         const border = focused
-            ? 'border: 2px solid #0D4D2D; box-shadow: 0 0 0 3px rgba(13, 77, 45, 0.25);'
-            : 'border: 2px solid #ccc;';
+            ? `border: 2px solid ${FOCUS_ACCENT}; box-shadow: 0 0 0 3px rgba(13, 77, 45, 0.25);`
+            : `border: 2px solid ${dimmed ? DIM.border : '#ccc'};`;
 
         let html = `
             <div xmlns="http://www.w3.org/1999/xhtml" style="
@@ -87,7 +125,7 @@ const RoadmapView = (function() {
                     display: block;
                     padding: 10px;
                     font-weight: bold;
-                    color: #333;
+                    color: ${dimmed ? DIM.ink : '#333'};
                     text-decoration: none;
                     border-bottom: 1px solid rgba(0,0,0,0.1);
                     white-space: nowrap;
@@ -98,7 +136,7 @@ const RoadmapView = (function() {
                     ${hop.Status !== 'pending' ? `<span style="
                         font-size: 10px;
                         font-weight: normal;
-                        color: ${INK[hop.Status] || '#666'};
+                        color: ${dimmed ? DIM.ink : (INK[hop.Status] || '#666')};
                         margin-left: 5px;
                     ">${escapeHTML(hop.Status)}</span>` : ''}
                 </a>
@@ -115,10 +153,21 @@ const RoadmapView = (function() {
                 const tag = isProposed ? 'span' : 'a';
                 const href = isProposed ? '' : `href="/p/${projectID}/variations/${v.ID}"`;
 
+                const isFocus = view.focusVariationID && v.ID === view.focusVariationID;
+
                 // Merged and rejected share the green fill; rejected fades its
                 // text, because it lost to a sibling rather than failing.
                 let fill, ink;
-                if (isMerged || isRejected) {
+                if (isFocus) {
+                    // The Variation being viewed is filled with the accent
+                    // rather than tinted with it: on a panel of greys it must
+                    // be unmistakable, not merely different.
+                    fill = FOCUS_ACCENT;
+                    ink = '#fff';
+                } else if (view.dim) {
+                    fill = DIM.variationFill;
+                    ink = DIM.variationInk;
+                } else if (isMerged || isRejected) {
                     fill = FILL.merged;
                     ink = isRejected ? 'rgba(21, 87, 36, 0.5)' : INK.merged;
                 } else {
@@ -137,7 +186,7 @@ const RoadmapView = (function() {
                         text-decoration: none;
                         font-size: 11px;
                         font-style: ${isProposed ? 'italic' : 'normal'};
-                        font-weight: ${isMerged ? 'bold' : 'normal'};
+                        font-weight: ${isFocus || (isMerged && !view.dim) ? 'bold' : 'normal'};
                         white-space: nowrap;
                         overflow: hidden;
                         text-overflow: ellipsis;
@@ -161,7 +210,13 @@ const RoadmapView = (function() {
      *   edges        {Array}   {from, to} hop-ID pairs
      *   projectID    {string}
      *   focusHopID   {string=} hop to ring and center on
+     *   focusVariationID {string=} variation to fill with the accent and, when
+     *                          the hop is taller than the container, scroll to
+     *   dimOthers    {bool=}   grey everything that is not focused, so the one
+     *                          thing being viewed carries the only colour
      *   scale        {number=} initial zoom (default 1)
+     *   fitFocus     {bool=}   shrink to fit the focused hop in the container
+     *                          before centering (default false)
      *   wheelPan     {bool=}   swallow plain wheel events to pan (default true).
      *                          Must be false when embedded in a scrolling page,
      *                          or the panel traps the page's scroll.
@@ -174,6 +229,7 @@ const RoadmapView = (function() {
         const edges = opts.edges || [];
         const projectID = opts.projectID;
         const focusHopID = opts.focusHopID || null;
+        const focusVariationID = opts.focusVariationID || null;
 
         container.innerHTML = '';
         if (hops.length === 0) {
@@ -238,7 +294,12 @@ const RoadmapView = (function() {
             // The ring is drawn outside the node box, so the foreignObject needs
             // room for it or it gets clipped.
             fo.setAttribute('height', node.height + 8);
-            fo.innerHTML = hopNodeHTML(hop, node.height, projectID, focused);
+            fo.innerHTML = hopNodeHTML(hop, node.height, {
+                projectID: projectID,
+                focused: focused,
+                dim: !!opts.dimOthers,
+                focusVariationID: focusVariationID,
+            });
             svg.appendChild(fo);
         });
 
@@ -251,11 +312,54 @@ const RoadmapView = (function() {
             graphHeight: graphHeight,
         });
 
+        const FIT_PADDING = 16;
+
+        // Where the focused Variation sits inside its Hop node.
+        function variationY() {
+            if (!focusVariationID || !focusNode.hop.Variations) return null;
+            const i = focusNode.hop.Variations.findIndex(v => v.ID === focusVariationID);
+            if (i < 0) return null;
+            return focusNode.y - focusNode.height / 2
+                + VARIATION_TOP + i * VARIATION_HEIGHT + VARIATION_HEIGHT / 2;
+        }
+
+        // Shrink until the focused hop fits, but never enlarge and never past
+        // the point where the labels stop being readable.
+        function fitScale() {
+            const s = Math.min(
+                1,
+                (container.clientHeight - FIT_PADDING) / focusNode.height,
+                (container.clientWidth - FIT_PADDING) / focusNode.width
+            );
+            return Math.max(s, MIN_FIT_SCALE);
+        }
+
         const controller = {
-            /** Put the focused hop in the middle of the container. */
+            /**
+             * Put the focused hop in view: shrink until it fits, then centre
+             * it. A hop with more variations than the panel can show even at
+             * the minimum readable scale is centred on the variation being
+             * viewed instead, so the row the reader came for is never the part
+             * that falls off the edge.
+             *
+             * A reader who has zoomed by hand has said what they want to see,
+             * so expanding the panel afterwards re-centres without overriding
+             * their zoom.
+             */
             center: function() {
                 if (!focusNode) { view.reset(); return; }
-                view.centerOn(focusNode.x, focusNode.y);
+
+                let scale = null;
+                if (opts.fitFocus && !view.userZoomed()) {
+                    scale = fitScale();
+                    view.setScale(scale);
+                }
+
+                let y = focusNode.y;
+                if (scale !== null && focusNode.height * scale > container.clientHeight) {
+                    y = variationY() || y;
+                }
+                view.centerOn(focusNode.x, y);
             },
             hasFocus: function() { return focusNode !== null; },
         };
@@ -270,6 +374,9 @@ const RoadmapView = (function() {
         let panY = 0;
         let isPanning = false;
         let startX, startY;
+        // Set once the reader zooms by hand, so automatic fitting stops
+        // overriding a zoom they chose deliberately.
+        let zoomedByHand = false;
 
         function apply() {
             svg.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
@@ -290,6 +397,7 @@ const RoadmapView = (function() {
                 panX = x - (x - panX) * (newScale / scale);
                 panY = y - (y - panY) * (newScale / scale);
                 scale = newScale;
+                zoomedByHand = true;
                 apply();
             } else if (wheelPan) {
                 e.preventDefault();
@@ -340,6 +448,7 @@ const RoadmapView = (function() {
             },
             reset: function() { panX = 0; panY = 0; apply(); },
             setScale: function(s) { scale = s; apply(); },
+            userZoomed: function() { return zoomedByHand; },
         };
     }
 
