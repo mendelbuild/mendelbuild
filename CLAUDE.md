@@ -45,6 +45,7 @@ User repositories have a `.mendel/` directory for Mendel configuration. **Only t
   docker-compose.test.yml   # Test infrastructure (optional)
   test-config.yml           # Test settings (optional)
   migration.json            # Migration instructions (optional)
+  requirements.json         # What the code needs in order to run (optional)
 ```
 
 **DO NOT create any other files in `.mendel/`** - no documentation. Docs belong in repo root or `docs/`.
@@ -61,6 +62,40 @@ startup_timeout: 60       # Seconds to wait for test services
 ```
 
 Flow: `docker-compose.test.yml up` → `exec <service> <test_command>` → check exit code → `down`
+
+### `requirements.json` Spec
+
+Parsed in `internal/codegen/generator.go` (`saveRequirements`), stored in
+`variation_requirements`. Written by code generation, because what the code
+needs is a property of the code it just wrote:
+
+```json
+{
+  "requirements": [
+    {
+      "kind": "secret",
+      "name": "GOOGLE_CLIENT_SECRET",
+      "description": "OAuth client secret for Google sign-in",
+      "console_url": "https://console.cloud.google.com/apis/credentials"
+    },
+    {
+      "kind": "acknowledgement",
+      "name": "google-redirect-uri",
+      "instructions": "Add {{deploy_url}}/auth/callback to Authorized redirect URIs.",
+      "console_url": "https://console.cloud.google.com/apis/credentials"
+    }
+  ]
+}
+```
+
+A `secret` is a value Mendel holds encrypted (project-scoped, in
+`project_env_vars`) and injects as an environment variable at deploy time. An
+`acknowledgement` is an action taken elsewhere that Mendel cannot perform and
+only records; `{{deploy_url}}` resolves per deployment, so the demo and
+production yield separate acknowledgements.
+
+Requirements gate both `handleStartDemo` and `runChannelProdDeployment`. The
+file is optional and most variations will not have one.
 
 ### Deployment Channels
 

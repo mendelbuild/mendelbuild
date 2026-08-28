@@ -138,6 +138,22 @@ func (s *Server) runChannelProdDeployment(
 		return fail(err)
 	}
 
+	// Production runs the merged code, so it needs whatever the merged
+	// variations needed. Checking before the clone keeps a doomed deploy from
+	// consuming a build.
+	statuses, err := s.prodRequirementStatus(ctx, projectID,
+		predictedDeployURL(channel.HostingPlatform.Slug, appName))
+	if err != nil {
+		return fail(err)
+	}
+	if blocking := domain.BlockingRequirements(statuses); len(blocking) > 0 {
+		return fail(fmt.Errorf("production cannot run yet: %s", domain.UnmetSummary(statuses)))
+	}
+	appSecrets, err := s.appSecretsFor(ctx, projectID, statuses)
+	if err != nil {
+		return fail(err)
+	}
+
 	logMilestone("Cloning main branch...")
 	tmpDir, commitSHA, err := s.cloneMainForDeploy(ctx, projectID)
 	if err != nil {
@@ -156,11 +172,11 @@ func (s *Server) runChannelProdDeployment(
 	var url string
 	switch channel.HostingPlatform.Slug {
 	case "fly-io":
-		url, err = s.deployToFlyIO(ctx, appName, workDir, env, logMilestone, logInfo)
+		url, err = s.deployToFlyIO(ctx, appName, workDir, env, appSecrets, logMilestone, logInfo)
 	case "cloud-run":
-		url, err = s.deployToCloudRun(ctx, appName, workDir, env, logMilestone, logInfo)
+		url, err = s.deployToCloudRun(ctx, appName, workDir, env, appSecrets, logMilestone, logInfo)
 	case "gke":
-		url, err = s.deployToGKE(ctx, appName, workDir, env, logMilestone, logInfo)
+		url, err = s.deployToGKE(ctx, appName, workDir, env, appSecrets, logMilestone, logInfo)
 	default:
 		return fail(fmt.Errorf("unsupported platform: %s", channel.HostingPlatform.Slug))
 	}

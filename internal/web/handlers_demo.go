@@ -115,6 +115,28 @@ func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "Demo deployment channel not validated. Go to Deployment settings to validate.", http.StatusBadRequest)
 				return
 			}
+
+			// The variation's own requirements gate the deploy. Starting a
+			// demo that cannot possibly work burns a deploy and produces a
+			// failure whose cause is a missing value, not the code.
+			deployURL := ""
+			if channel.HostingPlatform != nil {
+				project, err := s.db.GetProject(ctx, projectUUID)
+				if err == nil {
+					appName := demoAppName(sanitizeAppName(project.Name), variationID)
+					deployURL = predictedDeployURL(channel.HostingPlatform.Slug, appName)
+				}
+			}
+			statuses, err := s.variationRequirementStatus(ctx, projectUUID, variationID, deployURL)
+			if err != nil {
+				http.Error(w, "failed to check requirements: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if blocking := domain.BlockingRequirements(statuses); len(blocking) > 0 {
+				http.Error(w, "This variation cannot run yet: "+domain.UnmetSummary(statuses)+
+					". Provide them on the variation page.", http.StatusBadRequest)
+				return
+			}
 		}
 	}
 
@@ -326,16 +348,40 @@ func (s *Server) runChannelDemoDeployment(
 
 	// Dispatch to platform-specific deployment
 	appName := demoAppName(projectName, variationID)
+
+	// The variation's requirements, checked here rather than only in
+	// handleStartDemo so that restart and retry-with-fix are gated by the same
+	// rule as a first start.
+	statuses, err := s.variationRequirementStatus(ctx, projectID, variationID,
+		predictedDeployURL(channel.HostingPlatform.Slug, appName))
+	if err != nil {
+		failDemo("Failed to read requirements: " + err.Error())
+		return
+	}
+	if blocking := domain.BlockingRequirements(statuses); len(blocking) > 0 {
+		failDemo("This variation cannot run yet: " + domain.UnmetSummary(statuses) +
+			". Provide them on the variation page.")
+		return
+	}
+	appSecrets, err := s.appSecretsFor(ctx, projectID, statuses)
+	if err != nil {
+		failDemo("Failed to read requirement values: " + err.Error())
+		return
+	}
+	if len(appSecrets) > 0 {
+		logInfo(fmt.Sprintf("Injecting %d required value(s) into the deployment", len(appSecrets)))
+	}
+
 	var url string
 	var deployErr error
 
 	switch channel.HostingPlatform.Slug {
 	case "fly-io":
-		url, deployErr = s.deployToFlyIO(ctx, appName, workDir, env, logMilestone, logInfo)
+		url, deployErr = s.deployToFlyIO(ctx, appName, workDir, env, appSecrets, logMilestone, logInfo)
 	case "cloud-run":
-		url, deployErr = s.deployToCloudRun(ctx, appName, workDir, env, logMilestone, logInfo)
+		url, deployErr = s.deployToCloudRun(ctx, appName, workDir, env, appSecrets, logMilestone, logInfo)
 	case "gke":
-		url, deployErr = s.deployToGKE(ctx, appName, workDir, env, logMilestone, logInfo)
+		url, deployErr = s.deployToGKE(ctx, appName, workDir, env, appSecrets, logMilestone, logInfo)
 	default:
 		failDemo("Unsupported platform: " + channel.HostingPlatform.Slug)
 		return
@@ -367,6 +413,7 @@ func (s *Server) deployToFlyIO(
 	appName string,
 	workDir string,
 	env map[string]string,
+	appSecrets map[string]string,
 	logMilestone func(string),
 	logInfo func(string),
 ) (string, error) {
@@ -414,6 +461,24 @@ primary_region = "iad"
 		createCmd.Env = cmdEnv
 		if output, err := createCmd.CombinedOutput(); err != nil {
 			return "", fmt.Errorf("failed to create app: %s: %w", string(output), err)
+		}
+	}
+
+	// Set the app's required values as Fly secrets before deploying, so the
+	// first machine to start already has them. --stage holds them for the
+	// deploy that follows rather than triggering one of its own.
+	if len(appSecrets) > 0 {
+		logInfo("Setting required values as Fly.io secrets...")
+		args := []string{"secrets", "set", "--stage", "--app", appName}
+		for name, value := range appSecrets {
+			args = append(args, fmt.Sprintf("%s=%s", name, value))
+		}
+		secretsCmd := exec.CommandContext(ctx, "flyctl", args...)
+		secretsCmd.Dir = workDir
+		secretsCmd.Env = cmdEnv
+		// Output may echo the names that were set; the values are not printed.
+		if output, err := secretsCmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("failed to set secrets: %s: %w", string(output), err)
 		}
 	}
 
@@ -472,6 +537,7 @@ func (s *Server) deployToCloudRun(
 	serviceName string,
 	workDir string,
 	env map[string]string,
+	appSecrets map[string]string,
 	logMilestone func(string),
 	logInfo func(string),
 ) (string, error) {
@@ -509,11 +575,23 @@ func (s *Server) deployToCloudRun(
 
 	// Build and deploy with Cloud Build
 	logMilestone("Building and deploying to Cloud Run...")
-	deployCmd := exec.CommandContext(ctx, "gcloud", "run", "deploy", serviceName,
+	deployArgs := []string{"run", "deploy", serviceName,
 		"--source", ".",
 		"--region", region,
 		"--allow-unauthenticated",
-		"--quiet")
+		"--quiet"}
+	if len(appSecrets) > 0 {
+		logInfo(fmt.Sprintf("Setting %d required value(s) on the service...", len(appSecrets)))
+		// ^ names and values are joined with commas, so a value containing one
+		// would be read as another assignment. The delimiter override tells
+		// gcloud to split on a character no env var value realistically holds.
+		pairs := "^|^"
+		for name, value := range appSecrets {
+			pairs += fmt.Sprintf("%s=%s|", name, value)
+		}
+		deployArgs = append(deployArgs, "--set-env-vars", strings.TrimSuffix(pairs, "|"))
+	}
+	deployCmd := exec.CommandContext(ctx, "gcloud", deployArgs...)
 	deployCmd.Dir = workDir
 	deployCmd.Env = cmdEnv
 	output, err := deployCmd.CombinedOutput()
@@ -539,6 +617,7 @@ func (s *Server) deployToGKE(
 	deploymentName string,
 	workDir string,
 	env map[string]string,
+	appSecrets map[string]string,
 	logMilestone func(string),
 	logInfo func(string),
 ) (string, error) {
@@ -584,6 +663,42 @@ func (s *Server) deployToGKE(
 		return "", fmt.Errorf("build failed: %s: %w", string(output), err)
 	}
 
+	// Put the app's required values in a Secret the Deployment reads from.
+	// The manifest holding them is written outside workDir and deleted once
+	// applied, so the values never sit in the checked-out repository.
+	envFrom := ""
+	if len(appSecrets) > 0 {
+		secretName := deploymentName + "-env"
+		logInfo(fmt.Sprintf("Creating Secret %s with %d required value(s)...", secretName, len(appSecrets)))
+
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\ntype: Opaque\nstringData:\n", secretName)
+		for name, value := range appSecrets {
+			// Block scalar: the value is copied verbatim, whatever it contains.
+			fmt.Fprintf(&sb, "  %s: |-\n    %s\n", name, strings.ReplaceAll(value, "\n", "\n    "))
+		}
+
+		secretFile, err := os.CreateTemp("", "mendel-secret-*.yaml")
+		if err != nil {
+			return "", fmt.Errorf("failed to create secret manifest: %w", err)
+		}
+		secretPath := secretFile.Name()
+		defer os.Remove(secretPath)
+		if _, err := secretFile.WriteString(sb.String()); err != nil {
+			secretFile.Close()
+			return "", fmt.Errorf("failed to write secret manifest: %w", err)
+		}
+		secretFile.Close()
+
+		secretCmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", secretPath)
+		secretCmd.Env = cmdEnv
+		if output, err := secretCmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("failed to apply secret: %s: %w", string(output), err)
+		}
+
+		envFrom = fmt.Sprintf("\n        envFrom:\n        - secretRef:\n            name: %s", secretName)
+	}
+
 	// Create k8s deployment manifest
 	manifest := fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
@@ -603,7 +718,7 @@ spec:
       - name: app
         image: %s
         ports:
-        - containerPort: 8080
+        - containerPort: 8080%s
 ---
 apiVersion: v1
 kind: Service
@@ -616,7 +731,7 @@ spec:
   ports:
   - port: 80
     targetPort: 8080
-`, deploymentName, deploymentName, deploymentName, imageName, deploymentName, deploymentName)
+`, deploymentName, deploymentName, deploymentName, imageName, envFrom, deploymentName, deploymentName)
 
 	manifestPath := filepath.Join(workDir, "k8s-deploy.yaml")
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0644); err != nil {

@@ -290,6 +290,12 @@ type VariationDetailView struct {
 	MissingCredentials      []string // Credentials required but not configured
 	DemoReady               bool     // True if channel is validated AND all credentials present
 
+	// What this variation's code needs in order to run, judged against the
+	// demo deployment. Requirements block the demo the same way a missing
+	// platform credential does, but the user resolves them here.
+	Requirements        []domain.RequirementStatus
+	RequirementsBlocked bool // True if some requirement is unmet and actionable
+
 	Revisions []domain.VariationRevision // User-requested changes; drives the Refine track
 	Ribbon    domain.Ribbon              // Plain-English lifecycle position and next action
 	Roadmap   *MiniRoadmap               // The project roadmap, scrolled to the parent Hop
@@ -410,6 +416,29 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		demoReady = isDemoValidated && len(missingCredentials) == 0
 	}
 
+	// Judge the variation's requirements against where the demo will run. A
+	// running demo settles the URL outright; otherwise it is predicted, which
+	// only Fly.io permits. On the other platforms a URL-dependent
+	// acknowledgement stays deferred until the first deploy produces one.
+	demoURL := ""
+	if demoInstance != nil && demoInstance.URL != "" {
+		demoURL = demoInstance.URL
+	} else if channel != nil && channel.HostingPlatform != nil {
+		if project, err := s.db.GetProject(ctx, projectID); err == nil {
+			demoURL = predictedDeployURL(channel.HostingPlatform.Slug,
+				demoAppName(sanitizeAppName(project.Name), variationID))
+		}
+	}
+	requirements, err := s.variationRequirementStatus(ctx, projectID, variationID, demoURL)
+	if err != nil {
+		http.Error(w, "failed to check requirements: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	requirementsBlocked := len(domain.BlockingRequirements(requirements)) > 0
+	if requirementsBlocked {
+		demoReady = false
+	}
+
 	// Revisions are required for an accurate Refine track: handleRequestChange
 	// sets the Variation back to "creating", so status alone cannot distinguish
 	// a first build from a revision in flight.
@@ -461,6 +490,8 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		IsDemoValidated:       isDemoValidated,
 		MissingCredentials:    missingCredentials,
 		DemoReady:             demoReady,
+		Requirements:          requirements,
+		RequirementsBlocked:   requirementsBlocked,
 	}
 
 	data := map[string]interface{}{
