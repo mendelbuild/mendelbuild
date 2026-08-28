@@ -676,10 +676,12 @@ func (db *DB) GetVariation(ctx context.Context, id uuid.UUID) (*domain.Variation
 	err := db.Pool.QueryRow(ctx, `
 		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref,
 		       diff_files_changed, diff_additions, diff_deletions, evaluation_scores,
+		       budget_paused_usd, budget_ceiling_usd,
 		       status, created_at, updated_at
 		FROM variations WHERE id = $1
 	`, id).Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef,
 		&v.DiffFilesChanged, &v.DiffAdditions, &v.DiffDeletions, &v.EvaluationScores,
+		&v.BudgetPausedUSD, &v.BudgetCeilingUSD,
 		&v.Status, &v.CreatedAt, &v.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -734,6 +736,7 @@ func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain
 	rows, err := db.Pool.Query(ctx, `
 		SELECT id, hop_id, name, approach, repository_id, commit_ref, ecosystem_id, deployment_ref,
 		       diff_files_changed, diff_additions, diff_deletions, evaluation_scores,
+		       budget_paused_usd, budget_ceiling_usd,
 		       status, created_at, updated_at
 		FROM variations
 		WHERE hop_id = $1
@@ -749,6 +752,7 @@ func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain
 		var v domain.Variation
 		if err := rows.Scan(&v.ID, &v.HopID, &v.Name, &v.Approach, &v.RepositoryID, &v.CommitRef, &v.EcosystemID, &v.DeploymentRef,
 			&v.DiffFilesChanged, &v.DiffAdditions, &v.DiffDeletions, &v.EvaluationScores,
+			&v.BudgetPausedUSD, &v.BudgetCeilingUSD,
 			&v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}

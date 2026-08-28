@@ -403,6 +403,15 @@ CREATE TABLE variations (
     -- live here counted only codegen input/output, dropping cache tokens and
     -- every non-codegen agent call, so they undercounted real spend.
 
+    -- Spend pause [033]. budget_paused_usd being set marks a run stopped at its
+    -- cost ceiling -- work directory kept, awaiting a human decision -- as
+    -- distinct from being blocked on credentials.
+    budget_paused_usd REAL CHECK (budget_paused_usd >= 0),
+    budget_ceiling_usd REAL CHECK (budget_ceiling_usd >= 0),
+    CONSTRAINT variations_budget_pause_complete CHECK (
+        (budget_paused_usd IS NULL) = (budget_ceiling_usd IS NULL)
+    ),
+
     status TEXT NOT NULL DEFAULT 'creating'
         CHECK (status IN ('creating', 'pending', 'blocked', 'migrating', 'active', 'draining',
                           'error', 'terminated', 'pruned', 'selected', 'merged', 'rejected')),
@@ -987,6 +996,8 @@ CREATE INDEX idx_hops_strategy ON hops(strategy_id);
 CREATE INDEX idx_hops_status ON hops(status);
 CREATE INDEX idx_variations_hop ON variations(hop_id);
 CREATE INDEX idx_variations_status ON variations(status);
+CREATE INDEX idx_variations_budget_paused ON variations(budget_paused_usd)
+    WHERE budget_paused_usd IS NOT NULL;  -- [033]
 
 --------------------------------------------------------------------------------
 -- RATE CARDS [030]

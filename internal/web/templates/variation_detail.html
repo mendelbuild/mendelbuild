@@ -89,15 +89,37 @@
                 </form>
             </div>
             {{else if or (eq .Variation.Status "error") (eq .Variation.Status "terminated") (eq .Variation.Status "blocked")}}
+            {{if .Variation.PausedForBudget}}
+            {{/* Paused on cost, not failed. The work is intact, so the choice is
+                 whether finishing it is worth more money -- which is why this
+                 says what it spent rather than just offering a retry. */}}
+            <div style="margin-top: 15px; padding: 12px; background: #fff3cd; border-left: 3px solid #b8860b; border-radius: 4px;">
+                <strong>Paused at its spend ceiling</strong>
+                <p style="margin: 6px 0 0;">
+                    This run cost <strong>{{usd .Variation.BudgetSpentUSD}}</strong>
+                    against a ceiling of <strong>{{usd .Variation.BudgetLimitUSD}}</strong>.
+                    Nothing went wrong &mdash; it ran out of budget before finishing, and the code it
+                    wrote is still here. Read the log below, then continue it if the remaining work
+                    is worth another {{usd .Variation.BudgetLimitUSD}}.
+                </p>
+                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry" style="margin-top: 10px;">
+                    <button type="submit" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Continue where it left off
+                    </button>
+                </form>
+            </div>
+            {{end}}
             <div style="margin-top: 15px;">
                 <button type="button" onclick="document.getElementById('request-change-modal').style.display='flex'" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
                     Request change
                 </button>
+                {{if not .Variation.PausedForBudget}}
                 <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry" style="display: inline; margin-left: 10px;">
                     <button type="submit" style="padding: 8px 16px; background: #ffc107; color: #212529; border: none; border-radius: 4px; cursor: pointer;">
                         Retry from Scratch
                     </button>
                 </form>
+                {{end}}
                 {{if .CanRetryFix}}
                 <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry-fix" style="display: inline; margin-left: 10px;">
                     <button type="submit" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">

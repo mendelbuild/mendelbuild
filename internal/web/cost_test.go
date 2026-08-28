@@ -430,3 +430,82 @@ func TestStrategyPageWarnsAboutUnpricedModels(t *testing.T) {
 		t.Error("warning should be absent when every model is priced")
 	}
 }
+
+// A run paused on cost is not a failure, and the page has to say so: the work
+// is intact and the only question is whether finishing it is worth more money.
+func TestVariationPageOffersToContinueAPausedRun(t *testing.T) {
+	projectID := uuid.New()
+	now := time.Now()
+	hop := &domain.Hop{
+		ID: uuid.New(), StrategyID: uuid.New(),
+		Name: "google-oauth", Commentary: "Add Google sign-in.",
+		Status: domain.HopStatusActive, CreatedAt: now, UpdatedAt: now,
+	}
+	paused := &domain.Variation{
+		ID: uuid.New(), HopID: hop.ID, Name: "oauth-a", Approach: "x",
+		Status:           domain.VariationStatusBlocked,
+		BudgetPausedUSD:  f64(5.02),
+		BudgetCeilingUSD: f64(5.00),
+		CreatedAt:        now, UpdatedAt: now,
+	}
+
+	body := renderForTest(t, "variation_detail.html", projectID, &VariationDetailView{
+		Variation: paused,
+		Hop:       hop,
+		Ribbon:    domain.VariationLifecycle(paused, nil, hop),
+	})
+
+	for _, want := range []string{
+		"Paused at its spend ceiling",
+		"$5.02", "$5.00",
+		"Nothing went wrong",
+		"Continue where it left off",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("paused-run panel missing %q", want)
+		}
+	}
+	// "Retry from Scratch" would throw the work away, which is the opposite of
+	// what this state calls for.
+	if strings.Contains(body, "Retry from Scratch") {
+		t.Error("a budget-paused run must not offer a from-scratch retry")
+	}
+}
+
+// A variation blocked for another reason (credentials) keeps the ordinary
+// retry affordance and shows no spend panel.
+func TestVariationBlockedForOtherReasonsIsUnchanged(t *testing.T) {
+	projectID := uuid.New()
+	now := time.Now()
+	hop := &domain.Hop{
+		ID: uuid.New(), StrategyID: uuid.New(), Name: "h", Commentary: "c",
+		Status: domain.HopStatusActive, CreatedAt: now, UpdatedAt: now,
+	}
+	blocked := &domain.Variation{
+		ID: uuid.New(), HopID: hop.ID, Name: "v", Approach: "x",
+		Status: domain.VariationStatusBlocked, CreatedAt: now, UpdatedAt: now,
+	}
+
+	body := renderForTest(t, "variation_detail.html", projectID, &VariationDetailView{
+		Variation: blocked,
+		Hop:       hop,
+		Ribbon:    domain.VariationLifecycle(blocked, nil, hop),
+	})
+
+	if strings.Contains(body, "Paused at its spend ceiling") {
+		t.Error("a variation blocked on credentials must not claim a spend pause")
+	}
+	if !strings.Contains(body, "Retry from Scratch") {
+		t.Error("ordinary blocked variations should keep the from-scratch retry")
+	}
+}
+
+func TestVariationBudgetAccessorsAreSafeWhenNotPaused(t *testing.T) {
+	v := &domain.Variation{Status: domain.VariationStatusCreating}
+	if v.PausedForBudget() {
+		t.Error("a running variation is not paused for budget")
+	}
+	if v.BudgetSpentUSD() != 0 || v.BudgetLimitUSD() != 0 {
+		t.Error("accessors must return zero rather than dereferencing nil")
+	}
+}

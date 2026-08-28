@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/bhs/mendelbuild/internal/domain"
 )
 
 // DefaultModel is the model code generation runs on. Exported because cost
@@ -19,7 +21,13 @@ const (
 	anthropicAPIURL = "https://api.anthropic.com/v1/messages"
 	defaultModel    = DefaultModel
 	maxTokens       = 16384
-	maxRounds       = 50
+
+	// maxRounds is a backstop against a loop that never terminates, not a
+	// budget. Spend is the real bound (see WithSpendLimit): rounds correlate
+	// poorly with cost, since a round that reads a large file costs many times
+	// one that runs `ls`. It sat at 50 and was cutting off runs that were
+	// making progress and simply had not finished.
+	maxRounds = 250
 )
 
 // Executor runs a tool loop with the Anthropic API.
@@ -30,6 +38,28 @@ type Executor struct {
 	tools        *ToolExecutor
 	eventHandler EventHandler
 	stats        Stats
+
+	// spendLimitUSD bounds a run by what it costs rather than how many rounds
+	// it takes. Zero means unbounded.
+	spendLimitUSD float64
+
+	// priceUSD converts accumulated usage to dollars. Injected so the executor
+	// need not know about rate cards or the database.
+	priceUSD func(domain.TokenCounts) float64
+
+	// maxRounds is the infinite-loop backstop. Callers that cannot price a run
+	// lower it, so an unpriceable run is bounded by something.
+	maxRounds int
+}
+
+// WithMaxRounds lowers the infinite-loop backstop. Used when the run cannot be
+// priced -- with no spend ceiling, rounds are the only bound left, and the
+// default is deliberately too generous to serve as one.
+func (e *Executor) WithMaxRounds(n int) *Executor {
+	if n > 0 {
+		e.maxRounds = n
+	}
+	return e
 }
 
 // New creates a new executor.
@@ -49,6 +79,33 @@ func (e *Executor) WithModel(model string) *Executor {
 }
 
 // WithEventHandler sets the event handler for progress events.
+// WithSpendLimit bounds the run by cost. The executor stops before the round
+// that would take it past limitUSD, so the limit is a ceiling on what a run can
+// cost rather than a figure it overshoots.
+//
+// Stopping is not failing: Result.StoppedForBudget distinguishes "this needs a
+// decision about money" from "this went wrong", because the work so far is
+// intact and may well be worth finishing.
+func (e *Executor) WithSpendLimit(limitUSD float64, priceUSD func(domain.TokenCounts) float64) *Executor {
+	e.spendLimitUSD = limitUSD
+	e.priceUSD = priceUSD
+	return e
+}
+
+// SpendUSD is what the run has cost so far, or zero when no pricing function
+// was supplied.
+func (e *Executor) SpendUSD() float64 {
+	if e.priceUSD == nil {
+		return 0
+	}
+	return e.priceUSD(e.stats.Tokens())
+}
+
+// overSpendLimit reports whether the run has reached its ceiling.
+func (e *Executor) overSpendLimit() bool {
+	return e.spendLimitUSD > 0 && e.priceUSD != nil && e.SpendUSD() >= e.spendLimitUSD
+}
+
 func (e *Executor) WithEventHandler(handler EventHandler) *Executor {
 	e.eventHandler = handler
 	return e
@@ -69,6 +126,12 @@ func (e *Executor) Stats() Stats {
 
 // Result holds the final result of an execution.
 type Result struct {
+	// StoppedForBudget marks a run halted at its spend ceiling rather than
+	// failed. The work directory is intact and the run can be continued if a
+	// human decides it is worth the money.
+	StoppedForBudget bool
+	SpendUSD         float64
+
 	Success bool
 	Output  string
 	Stats   Stats
@@ -86,7 +149,27 @@ func (e *Executor) Run(ctx context.Context, systemPrompt, userPrompt string) (*R
 
 	var lastText string
 
-	for round := 0; round < maxRounds; round++ {
+	rounds := e.maxRounds
+	if rounds <= 0 {
+		rounds = maxRounds
+	}
+
+	for round := 0; round < rounds; round++ {
+		// Checked before the request rather than after, so the ceiling bounds
+		// what a run can cost instead of being the point it has already passed.
+		if e.overSpendLimit() {
+			e.stats.EndTime = time.Now()
+			return &Result{
+				Success:          false,
+				StoppedForBudget: true,
+				SpendUSD:         e.SpendUSD(),
+				Output:           lastText,
+				Stats:            e.stats,
+				Error: fmt.Errorf("reached the $%.2f spend ceiling after %d rounds",
+					e.spendLimitUSD, e.stats.APIRounds),
+			}, nil
+		}
+
 		e.stats.APIRounds++
 		e.emit(Event{Type: EventAPICall})
 
@@ -94,7 +177,7 @@ func (e *Executor) Run(ctx context.Context, systemPrompt, userPrompt string) (*R
 		if err != nil {
 			e.stats.EndTime = time.Now()
 			e.emit(Event{Type: EventError, Error: err})
-			return &Result{Success: false, Stats: e.stats, Error: err}, err
+			return &Result{Success: false, Stats: e.stats, SpendUSD: e.SpendUSD(), Error: err}, err
 		}
 
 		// Update stats
@@ -139,9 +222,10 @@ func (e *Executor) Run(ctx context.Context, systemPrompt, userPrompt string) (*R
 			e.stats.EndTime = time.Now()
 			e.emit(Event{Type: EventComplete})
 			return &Result{
-				Success: true,
-				Output:  lastText,
-				Stats:   e.stats,
+				Success:  true,
+				Output:   lastText,
+				Stats:    e.stats,
+				SpendUSD: e.SpendUSD(),
 			}, nil
 		}
 
@@ -181,9 +265,9 @@ func (e *Executor) Run(ctx context.Context, systemPrompt, userPrompt string) (*R
 	}
 
 	e.stats.EndTime = time.Now()
-	err := fmt.Errorf("exceeded maximum rounds (%d)", maxRounds)
+	err := fmt.Errorf("exceeded maximum rounds (%d)", rounds)
 	e.emit(Event{Type: EventError, Error: err})
-	return &Result{Success: false, Output: lastText, Stats: e.stats, Error: err}, err
+	return &Result{Success: false, Output: lastText, Stats: e.stats, SpendUSD: e.SpendUSD(), Error: err}, err
 }
 
 // API types

@@ -287,6 +287,15 @@ type Variation struct {
 	DiffAdditions      *int            `json:"diff_additions,omitempty"`       // Lines added vs main
 	DiffDeletions      *int            `json:"diff_deletions,omitempty"`       // Lines deleted vs main
 	EvaluationScores   json.RawMessage `json:"evaluation_scores,omitempty"`    // Cached evaluation scores
+
+	// BudgetPausedUSD is set when a generation run stopped at its spend
+	// ceiling rather than failing. The work directory is intact and the run
+	// can be continued once a human decides it is worth more money. Its
+	// presence is what distinguishes a spend pause from being blocked on
+	// credentials, since both use the "blocked" status.
+	BudgetPausedUSD  *float64 `json:"budget_paused_usd,omitempty"`
+	BudgetCeilingUSD *float64 `json:"budget_ceiling_usd,omitempty"`
+
 	Status             VariationStatus `json:"status"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
@@ -814,4 +823,27 @@ func (c *ProjectDeploymentChannel) IsDemoValidating() bool {
 // IsProdValidating returns true if prod validation is in progress.
 func (c *ProjectDeploymentChannel) IsProdValidating() bool {
 	return c.ProdValidatingAt != nil
+}
+
+// PausedForBudget reports whether this Variation stopped at its spend ceiling
+// and is waiting on a decision, as opposed to being blocked on something else.
+func (v *Variation) PausedForBudget() bool {
+	return v != nil && v.BudgetPausedUSD != nil
+}
+
+// BudgetSpentUSD is what the paused run had cost, or zero if not paused.
+// Single-return so html/template can call it; guard with PausedForBudget.
+func (v *Variation) BudgetSpentUSD() float64 {
+	if !v.PausedForBudget() {
+		return 0
+	}
+	return *v.BudgetPausedUSD
+}
+
+// BudgetLimitUSD is the ceiling that was in force, or zero if not paused.
+func (v *Variation) BudgetLimitUSD() float64 {
+	if !v.PausedForBudget() || v.BudgetCeilingUSD == nil {
+		return 0
+	}
+	return *v.BudgetCeilingUSD
 }

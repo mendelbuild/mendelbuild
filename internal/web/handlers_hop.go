@@ -522,11 +522,16 @@ func (s *Server) handleRetryVariation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Allow retry for error, terminated, or pending status
+	// Allow retry for error, terminated, pending, or a run paused at its spend
+	// ceiling. The last is not a retry so much as an approval to spend more:
+	// the work directory is intact, so generation continues from the
+	// half-finished code rather than starting over.
 	if variation.Status != domain.VariationStatusError &&
 		variation.Status != domain.VariationStatusTerminated &&
-		variation.Status != domain.VariationStatusPending {
-		http.Error(w, "can only retry variations in error, terminated, or pending status", http.StatusBadRequest)
+		variation.Status != domain.VariationStatusPending &&
+		!(variation.Status == domain.VariationStatusBlocked && variation.PausedForBudget()) {
+		http.Error(w, "can only retry variations in error, terminated, or pending status, "+
+			"or continue one paused at its spend ceiling", http.StatusBadRequest)
 		return
 	}
 
@@ -544,7 +549,11 @@ func (s *Server) handleRetryVariation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record state transition
-	s.db.CreateVariationStateTransition(ctx, variationID, string(oldStatus), string(domain.VariationStatusCreating), "manual retry")
+	reason := "manual retry"
+	if oldStatus == domain.VariationStatusBlocked && variation.PausedForBudget() {
+		reason = fmt.Sprintf("approved to continue past the $%.2f spend ceiling", *variation.BudgetCeilingUSD)
+	}
+	s.db.CreateVariationStateTransition(ctx, variationID, string(oldStatus), string(domain.VariationStatusCreating), reason)
 
 	// Redirect back to variation detail to watch progress
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)

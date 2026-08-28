@@ -172,3 +172,45 @@ func BuildRevisionPrompt(hopName, variationName, approach, feedback string) stri
 
 	return prompt.String()
 }
+
+// BuildResumePrompt continues a run that was paused at its spend ceiling.
+//
+// The conversation from the paused run is gone -- for a coding agent the
+// durable state is the files on disk, not the transcript -- so this asks the
+// model to re-orient by reading its own half-finished work. That is a task it
+// is good at, and it costs one pass rather than the whole run again.
+//
+// The prompt says the work was interrupted for cost rather than because
+// anything was wrong, so the model finishes what it started instead of second
+// guessing it, and it names the budget so the model prioritises rather than
+// starting something new it cannot complete.
+func BuildResumePrompt(hopName, variationName, approach, artifactKind string) string {
+	var prompt strings.Builder
+
+	prompt.WriteString(fmt.Sprintf("# Task: Finish the '%s' variation for hop '%s'\n\n", variationName, hopName))
+
+	prompt.WriteString("## Intended Approach\n\n")
+	prompt.WriteString(approach)
+	prompt.WriteString("\n\n")
+
+	prompt.WriteString("## What happened\n\n")
+	prompt.WriteString("A previous run started this work and was interrupted partway through ")
+	prompt.WriteString("because it reached its cost budget. Nothing was found to be wrong with it. ")
+	prompt.WriteString("The code it wrote is still in the working directory, and you are continuing it.\n\n")
+
+	prompt.WriteString("## Instructions\n\n")
+	prompt.WriteString("1. Start by reading the existing code to work out what has already been done\n")
+	prompt.WriteString("2. Continue from there - do not restart the work or rewrite what is already correct\n")
+	prompt.WriteString("3. Prioritise finishing the approach above over polishing what exists\n")
+	prompt.WriteString("4. Follow existing code style and patterns\n")
+	prompt.WriteString("5. Stop when the approach is fully implemented - do NOT run tests yourself\n\n")
+
+	if artifactKind != "" {
+		prompt.WriteString(fmt.Sprintf("Target artifact kind: %s\n\n", artifactKind))
+	}
+
+	prompt.WriteString("This run has its own budget. Finish the most important remaining work first, ")
+	prompt.WriteString("so that if you are interrupted again the variation is as close to complete as possible.\n")
+
+	return prompt.String()
+}

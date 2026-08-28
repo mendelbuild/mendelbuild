@@ -820,3 +820,43 @@ func (db *DB) GetUnpricedModels(ctx context.Context) ([]string, error) {
 	}
 	return out, rows.Err()
 }
+
+//------------------------------------------------------------------------------
+// Spend pause
+//------------------------------------------------------------------------------
+
+// PauseVariationForBudget records that a generation run stopped at its ceiling.
+//
+// Deliberately does not touch status: the caller transitions to 'blocked'
+// through the same state-history path as every other transition, so the pause
+// shows up in the variation's timeline rather than appearing out of nowhere.
+func (db *DB) PauseVariationForBudget(ctx context.Context, variationID uuid.UUID, spentUSD, ceilingUSD float64) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE variations
+		SET budget_paused_usd = $2, budget_ceiling_usd = $3, updated_at = NOW()
+		WHERE id = $1
+	`, variationID, spentUSD, ceilingUSD)
+	return err
+}
+
+// ClearVariationBudgetPause lifts a spend pause, on resume or abandonment.
+func (db *DB) ClearVariationBudgetPause(ctx context.Context, variationID uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE variations
+		SET budget_paused_usd = NULL, budget_ceiling_usd = NULL, updated_at = NOW()
+		WHERE id = $1
+	`, variationID)
+	return err
+}
+
+// GetLatestHopEstimateUSD returns what a Hop was predicted to cost, for sizing
+// its run ceiling. Returns 0 when the Hop has never been estimated -- which is
+// every Hop with no history on the current model -- so the caller falls back to
+// a flat cap rather than multiplying a number that does not exist.
+func (db *DB) GetLatestHopEstimateUSD(ctx context.Context, hopID uuid.UUID) (float64, error) {
+	est, err := db.GetLatestHopCostEstimate(ctx, hopID)
+	if err != nil || est == nil {
+		return 0, err
+	}
+	return est.AmountUSD, nil
+}

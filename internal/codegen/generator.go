@@ -108,6 +108,12 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 	var pendingRevision *domain.VariationRevision
 	pendingRevision, _ = g.db.GetPendingVariationRevision(ctx, variation.ID)
 
+	// A run paused at its spend ceiling keeps its work directory, so continuing
+	// means carrying on against the half-finished code rather than starting
+	// over from a clean clone. If that directory has since gone, there is
+	// nothing to continue and this falls back to a fresh generation.
+	resuming := variation.PausedForBudget()
+
 	isRevision := pendingRevision != nil
 	if isRevision {
 		g.db.UpdateVariationRevisionStatus(ctx, pendingRevision.ID, domain.VariationRevisionStatusInProgress, nil)
@@ -119,6 +125,22 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 	gitClient := git.NewClient(workDir)
 	branchName := fmt.Sprintf("mendel/%s/%s", hopName, variation.Name)
 	result.BranchName = branchName
+
+	if resuming {
+		// Nothing to continue if the working directory has gone -- a machine
+		// restart, or a cleanup between runs -- so fall back to a fresh start
+		// rather than resuming against code that is not there.
+		if _, err := os.Stat(workDir); err != nil {
+			logger(domain.LogLevelInfo,
+				"The paused run's work directory is gone, so this starts fresh instead of continuing")
+			resuming = false
+		}
+		// Lift the pause now: this run supersedes it either way, and leaving
+		// the marker set would make a later run think it too was a resume.
+		if err := g.db.ClearVariationBudgetPause(ctx, variation.ID); err != nil {
+			logger(domain.LogLevelError, fmt.Sprintf("could not clear the spend pause: %v", err))
+		}
+	}
 
 	// Infrastructure failures use "error" status (retryable)
 	// Code/test failures use "terminated" status (not retryable)
@@ -140,6 +162,10 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 				return result, nil
 			}
 		}
+	} else if resuming {
+		logger(domain.LogLevelMilestone, fmt.Sprintf(
+			"Continuing the run paused at $%.2f; the work directory is intact",
+			*variation.BudgetPausedUSD))
 	} else {
 		// For fresh generation: clean up and clone from main
 		if _, err := os.Stat(workDir); err == nil {
@@ -171,14 +197,22 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 		}
 	}
 
-	// 4. Run code generation via API tool loop
-	exec := executor.New(g.config.APIKey, workDir).
-		WithEventHandler(g.createEventHandler(ctx, variation.ID, logger))
+	// 4. Run code generation via API tool loop, bounded by spend rather than by
+	// a fixed number of rounds. Rounds correlate poorly with cost, and the old
+	// fixed cap was cutting off runs that were making progress.
+	budget := budgetForRun(ctx, g.db, variation.HopID, executor.DefaultModel)
+	logger(domain.LogLevelInfo, "Budget: "+budget.Describe())
+
+	exec := budget.Apply(executor.New(g.config.APIKey, workDir).
+		WithEventHandler(g.createEventHandler(ctx, variation.ID, logger)))
 
 	var prompt string
-	if pendingRevision != nil {
+	switch {
+	case pendingRevision != nil:
 		prompt = BuildRevisionPrompt(hopName, variation.Name, variation.Approach, pendingRevision.Feedback)
-	} else {
+	case resuming:
+		prompt = BuildResumePrompt(hopName, variation.Name, variation.Approach, g.config.ArtifactKind)
+	default:
 		prompt = BuildImplementationPrompt(hopName, variation.Name, variation.Approach, g.config.ArtifactKind)
 	}
 	execResult, err := exec.Run(ctx, executor.SystemPrompt(), prompt)
@@ -189,6 +223,13 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 			g.db.UpdateVariationRevisionStatus(ctx, pendingRevision.ID, domain.VariationRevisionStatusFailed, &result.Error)
 		}
 		g.transitionState(ctx, variation.ID, domain.VariationStatusCreating, domain.VariationStatusError, result.Error)
+		return result, nil
+	}
+
+	if execResult.StoppedForBudget {
+		g.recordSpend(ctx, variation, execResult.Stats, logger)
+		g.pauseForBudget(ctx, variation, execResult, budget, logger)
+		result.Error = execResult.Error.Error()
 		return result, nil
 	}
 
@@ -590,4 +631,31 @@ func (g *Generator) recordSpend(ctx context.Context, variation *domain.Variation
 	if entry != nil {
 		logger(domain.LogLevelInfo, fmt.Sprintf("Cost: $%.4f (%s)", entry.AmountUSD, stats.Model))
 	}
+}
+
+// pauseForBudget parks a run that reached its spend ceiling.
+//
+// The variation goes to 'blocked' rather than 'error' because nothing went
+// wrong: the code written so far is intact in the work directory, and the only
+// open question is whether finishing it is worth more money. That decision
+// belongs to a person, so the run stops and says what it would take.
+func (g *Generator) pauseForBudget(
+	ctx context.Context,
+	variation *domain.Variation,
+	execResult *executor.Result,
+	budget runBudget,
+	logger func(domain.LogLevel, string),
+) {
+	if err := g.db.PauseVariationForBudget(ctx, variation.ID, execResult.SpendUSD, budget.LimitUSD); err != nil {
+		logger(domain.LogLevelError, fmt.Sprintf("could not record the spend pause: %v", err))
+	}
+
+	logger(domain.LogLevelMilestone, fmt.Sprintf(
+		"Paused at its spend ceiling: $%.2f of $%.2f after %d rounds and %d tool calls. "+
+			"The work so far is kept. Review the log and continue it if the remaining work is worth more.",
+		execResult.SpendUSD, budget.LimitUSD,
+		execResult.Stats.APIRounds, execResult.Stats.ToolCalls))
+
+	g.transitionState(ctx, variation.ID, domain.VariationStatusCreating,
+		domain.VariationStatusBlocked, "reached its spend ceiling")
 }
