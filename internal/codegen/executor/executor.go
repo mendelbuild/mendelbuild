@@ -203,6 +203,24 @@ type contentBlock struct {
 	Content   string                 `json:"content,omitempty"`
 	IsError   bool                   `json:"is_error,omitempty"`
 
+	// Thinking blocks arrive on models that reason before answering, and must
+	// be echoed back unchanged on the next round or the API rejects the whole
+	// conversation. The executor does not read them; it only has to not lose
+	// them.
+	//
+	// Thinking is a pointer because the field is required on a thinking block
+	// and is routinely the empty string: these models omit the reasoning text
+	// by default and return only the signature. A plain string with omitempty
+	// would drop it again and reproduce the original failure --
+	// "messages.1.content.0.thinking.thinking: Field required" -- so the
+	// pointer is what distinguishes "absent" from "present and empty".
+	Thinking  *string `json:"thinking,omitempty"`
+	Signature string  `json:"signature,omitempty"`
+
+	// Data carries a redacted_thinking block's payload, which likewise has to
+	// survive the round trip.
+	Data string `json:"data,omitempty"`
+
 	CacheControl *cacheControl `json:"cache_control,omitempty"`
 }
 
