@@ -197,7 +197,7 @@ resp, err := client.SendMessageWithSchema(ctx, systemPrompt, messages, maxTokens
 The API request includes:
 ```json
 {
-    "model": "claude-sonnet-4-6",
+    "model": "claude-sonnet-5",
     "messages": [...],
     "output_config": {
         "format": {
@@ -254,10 +254,18 @@ type ProposedHop struct {
 
 **IMPORTANT:** Always verify model names from up-to-date online sources before using them. Model names in training data become outdated quickly.
 
-Current models (as of June 2026):
-- `claude-opus-4-5` - Most capable, highest quality
-- `claude-sonnet-4-6` - Balanced speed and intelligence (default)
-- `claude-haiku-4-5` - Fastest, most cost-effective
+Current models and list prices, USD per million tokens (verified 2026-08-27
+against the same source seeded into `model_rate_cards`):
+
+| Model | Input | Output | Use |
+|---|---|---|---|
+| `claude-opus-5` | $5 | $25 | Hardest reasoning |
+| `claude-sonnet-5` | $2 | $10 | **Default** for codegen and agents |
+| `claude-haiku-4-5` | $1 | $5 | Cheap bulk work (OKR tuning, conflict audit) |
+
+`claude-sonnet-4-6` ($3/$15) is superseded: Sonnet 5 is newer *and* a third
+cheaper, so nothing should be left on 4.6. Cache reads cost 0.1x the input rate
+and cache writes 1.25x; batch requests are half price.
 
 To verify current model names, check:
 - https://docs.anthropic.com/en/docs/about-claude/models

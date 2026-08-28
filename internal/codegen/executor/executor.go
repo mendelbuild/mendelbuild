@@ -10,9 +10,14 @@ import (
 	"time"
 )
 
+// DefaultModel is the model code generation runs on. Exported because cost
+// calibration must know which model its history describes: a figure from a
+// different model, or from before prompt caching, does not predict this one.
+const DefaultModel = "claude-sonnet-5"
+
 const (
 	anthropicAPIURL = "https://api.anthropic.com/v1/messages"
-	defaultModel    = "claude-sonnet-4-6"
+	defaultModel    = DefaultModel
 	maxTokens       = 16384
 	maxRounds       = 50
 )
@@ -197,6 +202,26 @@ type contentBlock struct {
 	ToolUseID string                 `json:"tool_use_id,omitempty"`
 	Content   string                 `json:"content,omitempty"`
 	IsError   bool                   `json:"is_error,omitempty"`
+
+	CacheControl *cacheControl `json:"cache_control,omitempty"`
+}
+
+// cacheControl marks a prompt prefix as cacheable up to and including the block
+// it sits on. Default TTL is five minutes, which suits an agentic loop whose
+// rounds are seconds apart; the one-hour TTL costs twice as much to write and
+// would buy nothing here.
+type cacheControl struct {
+	Type string `json:"type"`
+}
+
+func ephemeral() *cacheControl { return &cacheControl{Type: "ephemeral"} }
+
+// systemBlock is the system prompt in block form, which is what allows a cache
+// breakpoint to be placed after it.
+type systemBlock struct {
+	Type         string        `json:"type"`
+	Text         string        `json:"text"`
+	CacheControl *cacheControl `json:"cache_control,omitempty"`
 }
 
 type toolUse struct {
@@ -206,11 +231,11 @@ type toolUse struct {
 }
 
 type apiRequest struct {
-	Model     string    `json:"model"`
-	MaxTokens int       `json:"max_tokens"`
-	System    string    `json:"system,omitempty"`
-	Messages  []message `json:"messages"`
-	Tools     []ToolDef `json:"tools,omitempty"`
+	Model     string        `json:"model"`
+	MaxTokens int           `json:"max_tokens"`
+	System    []systemBlock `json:"system,omitempty"`
+	Messages  []message     `json:"messages"`
+	Tools     []ToolDef     `json:"tools,omitempty"`
 }
 
 type apiResponse struct {
@@ -235,14 +260,78 @@ type apiError struct {
 	} `json:"error"`
 }
 
-func (e *Executor) callAPI(ctx context.Context, systemPrompt string, messages []message) (*apiResponse, error) {
+// buildRequest assembles one round's request, placing prompt cache breakpoints.
+//
+// Without these the loop is quadratic: the API only caches where it is told to,
+// so every round re-sent the tools, the system prompt and the entire growing
+// conversation at full input price. On a 50-round run that is most of the bill.
+//
+// Two kinds of breakpoint, three in total against a limit of four:
+//
+//   - One after the system prompt. Render order is tools -> system -> messages,
+//     so a breakpoint there covers the tool definitions too. That prefix never
+//     changes within a run, so it is written once and read thereafter.
+//
+//   - Two rolling ones, on the last two user turns. The older is what this
+//     round reads from; the newer extends the cache for the next round. Keeping
+//     the pair means each round hits a cache written one round earlier rather
+//     than racing its own write.
+func (e *Executor) buildRequest(systemPrompt string, messages []message) apiRequest {
+	tools := Tools()
+
 	req := apiRequest{
 		Model:     e.model,
 		MaxTokens: maxTokens,
-		System:    systemPrompt,
 		Messages:  messages,
-		Tools:     Tools(),
+		Tools:     tools,
 	}
+
+	if systemPrompt != "" {
+		req.System = []systemBlock{{
+			Type:         "text",
+			Text:         systemPrompt,
+			CacheControl: ephemeral(),
+		}}
+	}
+
+	markRollingCachePoints(req.Messages)
+	return req
+}
+
+// rollingCacheBreakpoints is how many of the most recent user turns carry a
+// cache breakpoint. Two, so a round reads a cache written on the previous round
+// while writing the one the next round will read.
+const rollingCacheBreakpoints = 2
+
+// markRollingCachePoints puts a breakpoint on the final block of each of the
+// last few user turns, and clears any left on older ones.
+//
+// Breakpoints go on user turns because those are what end a round: the prefix
+// they close covers the assistant turn and tool results before them. Marking
+// assistant turns instead would leave each round's tool output outside the
+// cached prefix, which is the bulk of what grows.
+func markRollingCachePoints(messages []message) {
+	marked := 0
+	for i := len(messages) - 1; i >= 0; i-- {
+		blocks := messages[i].Content
+		if len(blocks) == 0 {
+			continue
+		}
+		last := &blocks[len(blocks)-1]
+
+		if messages[i].Role == "user" && marked < rollingCacheBreakpoints {
+			last.CacheControl = ephemeral()
+			marked++
+			continue
+		}
+		// Older breakpoints are cleared: leaving them would blow the
+		// four-breakpoint limit as the conversation grows.
+		last.CacheControl = nil
+	}
+}
+
+func (e *Executor) callAPI(ctx context.Context, systemPrompt string, messages []message) (*apiResponse, error) {
+	req := e.buildRequest(systemPrompt, messages)
 
 	body, err := json.Marshal(req)
 	if err != nil {
