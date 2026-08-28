@@ -1,0 +1,83 @@
+{{define "page-content"}}
+<h1>Start a project</h1>
+<p class="setup-lede">
+    Tell Mendel what you want built, roughly when you need it, and what you are
+    willing to spend. It drafts a set of objectives from that and shows them to
+    you before anything else happens.
+</p>
+
+{{template "lifecycle-ribbon" .Ribbon}}
+
+{{if .Error}}
+<div class="form-error">{{.Error}}</div>
+{{end}}
+
+<form method="POST" action="/new" data-setup-form>
+    <div class="card">
+        <div class="field">
+            <label for="name">Project name</label>
+            <span class="hint">Short and yours &mdash; this is how the project is listed.</span>
+            <input type="text" id="name" name="name" value="{{.Form.Name}}"
+                   placeholder="adulting-101" autofocus required>
+        </div>
+
+        <div class="field">
+            <label for="brief">What do you want to build?</label>
+            <span class="hint">
+                Plain English, a few sentences. Who is it for, what should it do,
+                and what would make it a success? Anything you leave out, Mendel
+                fills in and tells you what it assumed &mdash; so it is worth
+                saying the parts you actually care about.
+            </span>
+            <textarea id="brief" name="brief" required
+                      placeholder="A web app that helps people in their first job figure out a monthly budget. They enter their income and fixed costs and it shows what is left and where it goes. Should work on a phone. Success is people finishing the calculator instead of bouncing off it.">{{.Form.Brief}}</textarea>
+        </div>
+
+        <div class="field-row">
+            <div class="field">
+                <label for="deadline">Target date</label>
+                <span class="hint">When you want this done. Key result dates land on or before it.</span>
+                <input type="date" id="deadline" name="deadline" value="{{.Form.Deadline}}">
+            </div>
+
+            <div class="field">
+                <label for="budget_usd">Budget (USD)</label>
+                <span class="hint">
+                    What you are willing to spend on model and hosting costs.
+                    Mendel tracks real spend against this and tells you when a
+                    plan does not fit.
+                </span>
+                <input type="number" id="budget_usd" name="budget_usd" min="0" step="1"
+                       value="{{.Form.Budget}}" placeholder="250">
+            </div>
+        </div>
+
+        <div style="display: flex; gap: 12px; align-items: center;">
+            <button type="submit" class="btn btn-primary" data-submit>Draft my objectives</button>
+            <a href="/" class="btn btn-secondary">Cancel</a>
+            <span data-working style="display: none; color: #666; font-size: 0.92em;">
+                Reading your brief and drafting objectives &mdash; this takes up to a minute.
+            </span>
+        </div>
+    </div>
+</form>
+
+<script>
+// The draft is a live model call, so the submit sits for tens of seconds with
+// nothing to show. Say what is happening rather than leaving a dead button, and
+// block the double-submit that would otherwise create a second project.
+(function() {
+    const form = document.querySelector('[data-setup-form]');
+    if (!form) return;
+    form.addEventListener('submit', function() {
+        const button = form.querySelector('[data-submit]');
+        const working = form.querySelector('[data-working]');
+        if (button) {
+            button.disabled = true;
+            button.textContent = 'Drafting…';
+        }
+        if (working) working.style.display = 'inline';
+    });
+})();
+</script>
+{{end}}

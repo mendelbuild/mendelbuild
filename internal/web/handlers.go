@@ -315,6 +315,7 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 	}
 	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)
+	s.addOnboardingRibbon(ctx, data)
 	s.addUserToData(r, data)
 
 	if err := renderPage(w, "strategy.html", data); err != nil {
@@ -371,6 +372,7 @@ func (s *Server) handleInputRequests(w http.ResponseWriter, r *http.Request) {
 	}
 	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)
+	s.addOnboardingRibbon(ctx, data)
 	s.addUserToData(r, data)
 
 	if err := renderPage(w, "input_requests.html", data); err != nil {
@@ -487,7 +489,7 @@ func (s *Server) apiGetStrategy(w http.ResponseWriter, r *http.Request) {
 // listProjects returns all projects.
 func (s *Server) listProjects(ctx context.Context) ([]domain.Project, error) {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, name, created_at, updated_at FROM projects ORDER BY name
+		SELECT id, name, brief, created_at, updated_at FROM projects ORDER BY name
 	`)
 	if err != nil {
 		return nil, err
@@ -497,7 +499,7 @@ func (s *Server) listProjects(ctx context.Context) ([]domain.Project, error) {
 	var projects []domain.Project
 	for rows.Next() {
 		var p domain.Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Brief, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)

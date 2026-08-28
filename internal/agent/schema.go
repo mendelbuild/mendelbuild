@@ -113,3 +113,8 @@ func VariationEvaluationResponseSchema() json.RawMessage {
 func OKRTuneResponseSchema() json.RawMessage {
 	return SchemaFromType(reflect.TypeOf(OKRTuneResponse{}))
 }
+
+// StrategistResponseSchema returns the JSON schema for StrategistResponse.
+func StrategistResponseSchema() json.RawMessage {
+	return SchemaFromType(reflect.TypeOf(StrategistResponse{}))
+}

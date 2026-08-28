@@ -1,5 +1,11 @@
 {{define "page-content"}}
 <h1>Input Needed</h1>
+<p class="setup-lede">
+    Everything Mendel needs a person for lands here. Nothing gets built, spent,
+    or deployed off the back of a decision you have not made.
+</p>
+
+{{if .OnboardingRibbon}}{{template "lifecycle-ribbon" .OnboardingRibbon}}{{end}}
 
 <div class="card">
     <div class="tabs">
@@ -40,7 +46,24 @@
             </tbody>
         </table>
         {{else}}
+        {{/* An empty queue mid-setup is not "all caught up" -- Mendel is still
+             working, and the ribbon above says on what. Saying the wrong one of
+             these is how a user concludes the page is broken and reloads. */}}
+        {{if .OnboardingRibbon}}
+            {{if .OnboardingRibbon.WaitingOnYou}}
+            {{/* The queue is empty but the project is not moving, because the
+                 thing it is waiting for lives on another screen. Send them
+                 there instead of saying "all caught up". */}}
+            <p class="empty">{{.OnboardingRibbon.NextAction}}</p>
+            {{else}}
+            <p class="empty">
+                Nothing needs you yet &mdash; {{.OnboardingRibbon.Headline}}.
+                This page refreshes on its own.
+            </p>
+            {{end}}
+        {{else}}
         <p class="empty">No input needed. All caught up!</p>
+        {{end}}
         {{end}}
     {{else}}
         {{if .ResolvedInputRequests}}
@@ -81,4 +104,13 @@
         {{end}}
     {{end}}
 </div>
+
+{{if and .OnboardingRibbon (not .OpenInputRequests)}}{{if not .OnboardingRibbon.WaitingOnYou}}
+<script>
+// While setup is still running, the thing this page is waiting for arrives from
+// a background job with no way to push. Poll rather than leave someone staring
+// at an empty queue wondering whether it is stuck.
+setTimeout(function() { window.location.reload(); }, 8000);
+</script>
+{{end}}{{end}}
 {{end}}

@@ -9,11 +9,16 @@ import (
 
 // Project is the top-level container for a MendelBuild project.
 type Project struct {
-	ID        uuid.UUID       `json:"id"`
-	Name      string          `json:"name"`
-	Config    json.RawMessage `json:"config,omitempty"` // Project-wide credentials (anthropic_api_key, etc.)
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	ID     uuid.UUID       `json:"id"`
+	Name   string          `json:"name"`
+	Config json.RawMessage `json:"config,omitempty"` // Project-wide credentials (anthropic_api_key, etc.)
+
+	// Brief is what the user said they wanted built, in their own words. Nil
+	// for projects loaded from a strategy JSON file, which never asked.
+	Brief *string `json:"brief,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ProjectConfig holds project-wide credentials and settings.
@@ -88,8 +93,45 @@ type Strategy struct {
 	ProjectID uuid.UUID  `json:"project_id"`
 	ParentID  *uuid.UUID `json:"parent_id,omitempty"`
 	Name      string     `json:"name"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+
+	// OKRsApprovedAt is when a human validated these OKRs. Nil means the
+	// objectives are still an unreviewed draft, and no roadmap should be built
+	// against them yet.
+	OKRsApprovedAt *time.Time `json:"okrs_approved_at,omitempty"`
+
+	// DraftNotes is what the drafting agent said about its own draft. Nil for
+	// strategies that were never drafted, such as those loaded from JSON.
+	DraftNotes json.RawMessage `json:"draft_notes,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// OKRsApproved reports whether a human has signed off on this Strategy's OKRs.
+func (s *Strategy) OKRsApproved() bool { return s.OKRsApprovedAt != nil }
+
+// StrategyDraftNotes is the drafting agent's commentary on a drafted strategy.
+//
+// It is shown next to the draft so the user validating it can see what was
+// assumed on their behalf, and kept afterwards as the record of what the plan
+// was built on.
+type StrategyDraftNotes struct {
+	Summary       string   `json:"summary"`
+	Assumptions   []string `json:"assumptions"`
+	OpenQuestions []string `json:"open_questions"`
+	BudgetNote    string   `json:"budget_note"`
+}
+
+// Notes decodes DraftNotes, or returns nil when there are none to show.
+func (s *Strategy) Notes() *StrategyDraftNotes {
+	if len(s.DraftNotes) == 0 {
+		return nil
+	}
+	var n StrategyDraftNotes
+	if err := json.Unmarshal(s.DraftNotes, &n); err != nil {
+		return nil
+	}
+	return &n
 }
 
 // Objective is the "O" in OKR. Objectives can be hierarchical via ParentID.

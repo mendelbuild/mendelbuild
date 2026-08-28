@@ -3,6 +3,10 @@
 <h1>{{.Project.Name}}</h1>
 <h2>Strategy: {{.Strategy.Name}}</h2>
 
+{{/* The setup ribbon, until the first Variation exists. After that the per-Hop
+     ribbons say more about where the project stands than this one does. */}}
+{{if $.OnboardingRibbon}}{{template "lifecycle-ribbon" $.OnboardingRibbon}}{{end}}
+
 {{if $.DeploymentChannel}}
 {{with $.DeploymentChannel}}
 <div class="card" style="margin-bottom: 20px; {{if $.ProdDeployment}}background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); border: 1px solid #28a745;{{else if .IsDemoValidated}}background: linear-gradient(135deg, #fff3cd 0%, #ffeeba 100%); border: 1px solid #ffc107;{{else}}background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border: 1px solid #6c757d;{{end}}">

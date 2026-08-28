@@ -628,6 +628,10 @@ func (s *Server) setupRoutes() {
 		// Global pages
 		r.Get("/", s.handleDashboard)
 
+		// Guided project creation (see handlers_onboarding.go)
+		r.Get("/new", s.handleNewProject)
+		r.Post("/new", s.handleCreateProject)
+
 		// Project-scoped pages
 		r.Route("/p/{projectID}", func(r chi.Router) {
 			if s.authEnabled {
@@ -650,6 +654,11 @@ func (s *Server) setupRoutes() {
 		r.Post("/deployment/channel", s.handleSetDeploymentChannel)
 		r.Post("/deployment/validate-demo", s.handleValidateDemoPath)
 		r.Post("/deployment/validate-prod", s.handleValidateProdPath)
+
+		// Guided setup: validating the drafted OKRs before anything is built
+		r.Get("/setup/okrs", s.handleSetupOKRs)
+		r.Post("/setup/okrs/approve", s.handleApproveSetupOKRs)
+		r.Post("/setup/okrs/revise", s.handleReviseSetupOKRs)
 
 		// OKR Editor routes
 		r.Get("/okr", s.handleOKREditor)

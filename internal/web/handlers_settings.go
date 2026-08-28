@@ -276,6 +276,11 @@ func (s *Server) handleSaveProjectSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Close the setup flow's "connect a repository" ask, if that is what just
+	// happened. Leaving it open once the repository works teaches people that
+	// the queue is full of things they can ignore.
+	s.resolveRepositoryRequest(ctx, projectID)
+
 	// Redirect back with success message
 	http.Redirect(w, r, "/p/"+projectID.String()+"/settings?success=1", http.StatusSeeOther)
 }

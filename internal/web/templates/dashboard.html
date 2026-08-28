@@ -1,5 +1,8 @@
 {{define "page-content"}}
-<h1>Your Projects</h1>
+<div style="display: flex; align-items: baseline; gap: 16px;">
+    <h1 style="margin-right: auto;">Your Projects</h1>
+    <a href="/new" class="btn btn-primary">Start a project</a>
+</div>
 
 <div class="card">
     {{if .Projects}}
@@ -26,7 +29,11 @@
         </tbody>
     </table>
     {{else}}
-    <p class="empty">No projects yet. Use <code>mendel load-strategy &lt;file.json&gt;</code> to create one.</p>
+    <p class="empty" style="margin-bottom: 16px;">
+        No projects yet. Describe what you want built and Mendel drafts the
+        objectives with you.
+    </p>
+    <a href="/new" class="btn btn-primary">Start a project</a>
     {{end}}
 </div>
 {{end}}

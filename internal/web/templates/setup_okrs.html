@@ -1,0 +1,156 @@
+{{define "page-content"}}
+{{with .View}}
+<h1>{{.Strategy.Name}}</h1>
+<p class="setup-lede">
+    Here is what Mendel understood you to be asking for. Edit anything that is
+    wrong, then approve it &mdash; nothing gets planned or built until you do.
+</p>
+
+{{template "lifecycle-ribbon" .Ribbon}}
+
+{{if .Error}}
+<div class="form-error">{{.Error}}</div>
+{{end}}
+
+{{if .Notes}}
+<div class="draft-notes">
+    {{if .Notes.Summary}}
+    <h3>What Mendel understood</h3>
+    <p>{{.Notes.Summary}}</p>
+    {{end}}
+
+    {{if .Notes.Assumptions}}
+    <h3>Filled in for you</h3>
+    <ul>{{range .Notes.Assumptions}}<li>{{.}}</li>{{end}}</ul>
+    {{end}}
+
+    {{if .Notes.OpenQuestions}}
+    <h3>Worth answering</h3>
+    <ul>{{range .Notes.OpenQuestions}}<li>{{.}}</li>{{end}}</ul>
+    {{end}}
+
+    {{if .Notes.BudgetNote}}
+    <h3>On the budget</h3>
+    <p>{{.Notes.BudgetNote}}</p>
+    {{end}}
+</div>
+{{end}}
+
+{{if .Funding}}
+<div class="card" style="padding: 14px 20px; margin-bottom: 20px;">
+    <strong>{{usd .Funding.AmountUSD}}</strong> budgeted as &ldquo;{{.Funding.Name}}&rdquo;
+    {{if .Funding.PeriodEnd}}through {{.Funding.PeriodEnd.Format "Jan 2, 2006"}}{{end}}.
+    Every key result below is what that money is meant to buy.
+</div>
+{{end}}
+
+<form method="POST" action="/p/{{$.ProjectID}}/setup/okrs/approve" data-approve-form>
+    <div class="card">
+        <h2 style="margin-top: 0;">Objectives</h2>
+
+        {{if .Objectives}}
+        {{range .Objectives}}
+        <div class="draft-objective">
+            <div class="field" style="margin-bottom: 10px;">
+                <label for="obj_{{.Objective.ID}}">Objective</label>
+                <span class="hint">Clear this box to drop this objective and its key results.</span>
+                <input type="text" id="obj_{{.Objective.ID}}" name="obj_{{.Objective.ID}}"
+                       value="{{.Objective.Description}}">
+                {{if .Objective.TuneFeedback}}
+                <p class="tune">
+                    <span class="tune-badge tune-{{tuneScoreClass .Objective.TuneScore}}">{{printf "%.0f" (mul100 .Objective.TuneScore)}}</span>
+                    {{derefString .Objective.TuneFeedback}}
+                </p>
+                {{end}}
+            </div>
+
+            {{range .KeyResults}}
+            <div class="draft-kr">
+                <div class="field">
+                    <label for="kr_{{.ID}}_desc">Key result</label>
+                    <span class="hint">Clear this box to drop this key result.</span>
+                    <input type="text" id="kr_{{.ID}}_desc" name="kr_{{.ID}}_desc" value="{{.Description}}">
+                </div>
+                <div class="field-row">
+                    <div class="field">
+                        <label for="kr_{{.ID}}_units">Target</label>
+                        <span class="hint">Include the number, the unit and the comparison.</span>
+                        <input type="text" id="kr_{{.ID}}_units" name="kr_{{.ID}}_units"
+                               value="{{.TargetUnits}}" placeholder="&gt;= 100 completions">
+                    </div>
+                    <div class="field">
+                        <label for="kr_{{.ID}}_date">By</label>
+                        <span class="hint">When this should be true.</span>
+                        <input type="date" id="kr_{{.ID}}_date" name="kr_{{.ID}}_date"
+                               value="{{if .TargetDate}}{{.TargetDate.Format "2006-01-02"}}{{end}}">
+                    </div>
+                </div>
+                {{if .TuneFeedback}}
+                <p class="tune">
+                    <span class="tune-badge tune-{{tuneScoreClass .TuneScore}}">{{printf "%.0f" (mul100 .TuneScore)}}</span>
+                    {{derefString .TuneFeedback}}
+                </p>
+                {{end}}
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+
+        <div style="display: flex; gap: 12px; align-items: center; margin-top: 24px;">
+            <button type="submit" class="btn btn-primary" data-submit>Approve and plan the work</button>
+            <a href="/p/{{$.ProjectID}}/okr" class="btn btn-secondary">Open the full OKR editor</a>
+        </div>
+        <p style="color: #777; font-size: 0.88em; margin-top: 12px; max-width: 62ch;">
+            Approving draws up a roadmap &mdash; a sequence of Hops that advance
+            these objectives &mdash; and puts it in your Input Needed queue for
+            review. You can still change objectives afterwards in the OKR editor.
+        </p>
+
+        {{else}}
+        <p class="empty">
+            No objectives were drafted. Ask Mendel to try again below, or write
+            them yourself in the <a href="/p/{{$.ProjectID}}/okr">OKR editor</a>.
+        </p>
+        {{end}}
+    </div>
+</form>
+
+<form method="POST" action="/p/{{$.ProjectID}}/setup/okrs/revise" data-revise-form>
+    <div class="card">
+        <h2 style="margin-top: 0;">Not quite right?</h2>
+        <div class="field">
+            <label for="feedback">Tell Mendel what to change</label>
+            <span class="hint">
+                Say what is off and it redrafts from your brief. Anything you
+                typed above is discarded, so approve those edits first if you
+                want to keep them.
+            </span>
+            <textarea id="feedback" name="feedback" style="min-height: 90px;"
+                      placeholder="These are aimed at growth, but there are no users yet. Focus on shipping something that works on a phone, and drop the retention targets."></textarea>
+        </div>
+        <button type="submit" class="btn btn-secondary" data-submit>Redraft objectives</button>
+        <span data-working style="display: none; color: #666; font-size: 0.92em; margin-left: 10px;">
+            Redrafting &mdash; this takes up to a minute.
+        </span>
+    </div>
+</form>
+
+<script>
+// Both submits here wait on a model call. Disable the button and say so rather
+// than leaving a dead page the user re-submits.
+(function() {
+    document.querySelectorAll('[data-approve-form], [data-revise-form]').forEach(function(form) {
+        form.addEventListener('submit', function() {
+            const button = form.querySelector('[data-submit]');
+            const working = form.querySelector('[data-working]');
+            if (button) {
+                button.disabled = true;
+                button.textContent = form.hasAttribute('data-revise-form') ? 'Redrafting…' : 'Approving…';
+            }
+            if (working) working.style.display = 'inline';
+        });
+    });
+})();
+</script>
+{{end}}
+{{end}}

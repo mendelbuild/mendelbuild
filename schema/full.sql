@@ -18,6 +18,12 @@ CREATE TABLE projects (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL,
     config JSONB,  -- Project-wide credentials (anthropic_api_key, etc.) [added in 004]
+
+    -- What the user said they wanted built, in their own words [added in 032].
+    -- The drafting agent works from this, and it stays as the record of what
+    -- was actually asked for.
+    brief TEXT,
+
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -96,6 +102,18 @@ CREATE TABLE strategies (
     parent_id UUID REFERENCES strategies(id),  -- NULL for top-level strategy
 
     name TEXT NOT NULL,
+
+    -- When a human validated these OKRs [added in 032]. NULL means the
+    -- objectives below are still an unreviewed agent draft. An agent-written
+    -- objective and a human-approved one are indistinguishable in the
+    -- objectives table, so this cannot be derived.
+    okrs_approved_at TIMESTAMP,
+
+    -- What the drafting agent said about its own draft [added in 032]:
+    -- how it read the brief, what it filled in, what it could not tell.
+    -- Kept after approval -- when a hop overruns, the assumptions the plan
+    -- was built on are the first thing worth re-reading.
+    draft_notes JSONB,
 
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()

@@ -343,3 +343,117 @@ func renderForTest(t *testing.T, page string, projectID uuid.UUID, view interfac
 	}
 	return rec.Body.String()
 }
+
+// TestSetupPagesRender renders the two guided-setup screens end to end. These
+// are the first pages a new user ever sees, so a nil dereference here is a dead
+// end with no way around it — there is no other route into a project.
+func TestSetupPagesRender(t *testing.T) {
+	projectID := uuid.New()
+	now := time.Now()
+
+	t.Run("new_project.html", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		data := map[string]interface{}{
+			"Title":  "New Project",
+			"Form":   newProjectForm{Deadline: "2026-12-31", Budget: "250"},
+			"Error":  "",
+			"Ribbon": domain.OnboardingLifecycle(domain.OnboardingState{}),
+		}
+		if err := renderPage(rec, "new_project.html", data); err != nil {
+			t.Fatalf("rendering: %v", err)
+		}
+		body := rec.Body.String()
+		for _, want := range []string{"Tell Mendel what you want to build", `name="brief"`, `name="budget_usd"`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("new project form missing %q", want)
+			}
+		}
+	})
+
+	t.Run("setup_okrs.html", func(t *testing.T) {
+		strategyID := uuid.New()
+		score := 0.55
+		feedback := "Say how many completions counts as success."
+		target := now.AddDate(0, 2, 0)
+
+		objective := domain.Objective{
+			ID: uuid.New(), StrategyID: strategyID,
+			Description: "Someone in their first job can build a budget without help",
+			CreatedAt:   now, UpdatedAt: now,
+		}
+		kr := domain.KeyResult{
+			ID: uuid.New(), StrategyID: strategyID,
+			Description: "People finish the calculator", TargetUnits: ">= 100 completions",
+			TargetDate: &target, TuneScore: &score, TuneFeedback: &feedback,
+			CreatedAt: now, UpdatedAt: now,
+		}
+
+		state := domain.OnboardingState{HasStrategy: true, HasDraftOKRs: true}
+		view := SetupOKRView{
+			Project:  &domain.Project{ID: projectID, Name: "adulting-101"},
+			Strategy: &domain.Strategy{ID: strategyID, Name: "MVP Launch"},
+			Notes: &domain.StrategyDraftNotes{
+				Summary:       "A budgeting tool for people in their first job.",
+				Assumptions:   []string{"Web, mobile-first, no native app."},
+				OpenQuestions: []string{"Is there an existing audience to launch to?"},
+				BudgetNote:    "250 dollars is enough for an MVP of this shape.",
+			},
+			Objectives: []SetupObjectiveView{{Objective: objective, KeyResults: []domain.KeyResult{kr}}},
+			Funding: &domain.FundingSource{
+				ID: uuid.New(), StrategyID: strategyID, Name: "MVP build",
+				AmountUSD: 250, PeriodEnd: &target,
+			},
+			Ribbon: domain.OnboardingLifecycle(state),
+		}
+
+		body := renderForTest(t, "setup_okrs.html", projectID, view)
+		want := []string{
+			view.Ribbon.Headline,
+			"A budgeting tool for people in their first job.",
+			"Is there an existing audience to launch to?",
+			objective.Description,
+			"&gt;= 100 completions", // html/template escapes the comparison in the value attribute
+			feedback,
+			"obj_" + objective.ID.String(),
+			"kr_" + kr.ID.String() + "_units",
+			"$250",
+		}
+		for _, w := range want {
+			if !strings.Contains(body, w) {
+				t.Errorf("setup screen missing %q", w)
+			}
+		}
+	})
+}
+
+// TestSetupScreenEditsRoundTrip guards the contract between the review screen's
+// field names and the handler that reads them. They are built from UUIDs in two
+// different files, so a rename in either one silently drops the user's edits
+// rather than failing.
+func TestSetupScreenEditsRoundTrip(t *testing.T) {
+	projectID := uuid.New()
+	objID, krID := uuid.New(), uuid.New()
+
+	view := SetupOKRView{
+		Project:  &domain.Project{ID: projectID, Name: "p"},
+		Strategy: &domain.Strategy{ID: uuid.New(), Name: "s"},
+		Objectives: []SetupObjectiveView{{
+			Objective:  domain.Objective{ID: objID, Description: "o"},
+			KeyResults: []domain.KeyResult{{ID: krID, Description: "k", TargetUnits: ">= 1"}},
+		}},
+		Ribbon: domain.OnboardingLifecycle(domain.OnboardingState{HasStrategy: true, HasDraftOKRs: true}),
+	}
+	body := renderForTest(t, "setup_okrs.html", projectID, view)
+
+	// The names saveOKREdits reads back out of the form.
+	for _, name := range []string{
+		`name="obj_` + objID.String() + `"`,
+		`name="kr_` + krID.String() + `_desc"`,
+		`name="kr_` + krID.String() + `_units"`,
+		`name="kr_` + krID.String() + `_date"`,
+	} {
+		if !strings.Contains(body, name) {
+			t.Errorf("review form is missing the field %s, so those edits would be dropped on approval", name)
+		}
+	}
+}

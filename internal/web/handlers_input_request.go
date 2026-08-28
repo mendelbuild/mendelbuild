@@ -1423,12 +1423,29 @@ func (s *Server) handleProposeRoadmap(w http.ResponseWriter, r *http.Request) {
 	}
 	strategy := strategies[0]
 
+	inputRequestID, err := s.proposeRoadmapForStrategy(ctx, &strategy)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, inputRequestID), http.StatusSeeOther)
+}
+
+// proposeRoadmapForStrategy runs the roadmap proposer against a strategy and
+// files the result as a roadmap_review input request, returning its ID.
+//
+// Separate from the handler because the project-creation flow calls it from a
+// background goroutine after the user approves their OKRs, with no response to
+// write to.
+func (s *Server) proposeRoadmapForStrategy(ctx context.Context, strategyArg *domain.Strategy) (uuid.UUID, error) {
+	strategy := *strategyArg
+
 	// Includes the budget, spend to date, and this project's observed cost
 	// history, so the proposer's estimates are anchored rather than invented.
 	strategyContext, err := cost.BuildStrategyContext(ctx, s.db, &strategy)
 	if err != nil {
-		http.Error(w, "error loading strategy context: "+err.Error(), http.StatusInternalServerError)
-		return
+		return uuid.Nil, fmt.Errorf("error loading strategy context: %w", err)
 	}
 
 	// Check for existing hops
@@ -1436,8 +1453,7 @@ func (s *Server) handleProposeRoadmap(w http.ResponseWriter, r *http.Request) {
 
 	client, err := agent.NewClient("")
 	if err != nil {
-		http.Error(w, "error creating agent client: "+err.Error(), http.StatusInternalServerError)
-		return
+		return uuid.Nil, fmt.Errorf("error creating agent client: %w", err)
 	}
 
 	proposer := agent.NewProposer(client)
@@ -1477,15 +1493,13 @@ func (s *Server) handleProposeRoadmap(w http.ResponseWriter, r *http.Request) {
 
 		roadmap, spend, err = proposer.ReviseRoadmap(ctx, revReq)
 		if err != nil {
-			http.Error(w, "error revising roadmap: "+err.Error(), http.StatusInternalServerError)
-			return
+			return uuid.Nil, fmt.Errorf("error revising roadmap: %w", err)
 		}
 	} else {
 		// No existing hops - generate from scratch
 		roadmap, spend, err = proposer.ProposeRoadmap(ctx, strategyContext)
 		if err != nil {
-			http.Error(w, "error generating roadmap: "+err.Error(), http.StatusInternalServerError)
-			return
+			return uuid.Nil, fmt.Errorf("error generating roadmap: %w", err)
 		}
 	}
 
@@ -1510,8 +1524,7 @@ func (s *Server) handleProposeRoadmap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.db.CreateInputRequest(ctx, inputRequest); err != nil {
-		http.Error(w, "error creating input request: "+err.Error(), http.StatusInternalServerError)
-		return
+		return uuid.Nil, fmt.Errorf("error creating input request: %w", err)
 	}
 	s.recordStrategySpend(ctx, strategy.ID, "roadmap_proposer", spend)
 	s.auditRoadmapCosts(ctx, client, inputRequest.ID, strategy.ID, strategyContext, roadmap)
@@ -1540,8 +1553,7 @@ func (s *Server) handleProposeRoadmap(w http.ResponseWriter, r *http.Request) {
 	}
 	s.db.CreateInputRequestMessage(ctx, agentMsg)
 
-	// Redirect to input request page
-	http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs/%s", projectID, inputRequest.ID), http.StatusSeeOther)
+	return inputRequest.ID, nil
 }
 
 func strPtr(s string) *string {

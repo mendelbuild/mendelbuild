@@ -234,9 +234,9 @@ func (db *DB) LoadStrategy(ctx context.Context, input *domain.StrategyInput) (uu
 func (db *DB) GetProject(ctx context.Context, id uuid.UUID) (*domain.Project, error) {
 	var p domain.Project
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, name, config, created_at, updated_at
+		SELECT id, name, config, brief, created_at, updated_at
 		FROM projects WHERE id = $1
-	`, id).Scan(&p.ID, &p.Name, &p.Config, &p.CreatedAt, &p.UpdatedAt)
+	`, id).Scan(&p.ID, &p.Name, &p.Config, &p.Brief, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -247,9 +247,9 @@ func (db *DB) GetProject(ctx context.Context, id uuid.UUID) (*domain.Project, er
 func (db *DB) GetProjectByName(ctx context.Context, name string) (*domain.Project, error) {
 	var p domain.Project
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, name, config, created_at, updated_at
+		SELECT id, name, config, brief, created_at, updated_at
 		FROM projects WHERE name = $1
-	`, name).Scan(&p.ID, &p.Name, &p.Config, &p.CreatedAt, &p.UpdatedAt)
+	`, name).Scan(&p.ID, &p.Name, &p.Config, &p.Brief, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +279,7 @@ func (db *DB) GetProjectReadiness(ctx context.Context, projectID uuid.UUID) (dom
 // GetStrategiesByProject retrieves all strategies for a project.
 func (db *DB) GetStrategiesByProject(ctx context.Context, projectID uuid.UUID) ([]domain.Strategy, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, project_id, parent_id, name, created_at, updated_at
+		SELECT id, project_id, parent_id, name, okrs_approved_at, draft_notes, created_at, updated_at
 		FROM strategies WHERE project_id = $1
 		ORDER BY name
 	`, projectID)
@@ -291,7 +291,8 @@ func (db *DB) GetStrategiesByProject(ctx context.Context, projectID uuid.UUID) (
 	var strategies []domain.Strategy
 	for rows.Next() {
 		var s domain.Strategy
-		if err := rows.Scan(&s.ID, &s.ProjectID, &s.ParentID, &s.Name, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.ProjectID, &s.ParentID, &s.Name, &s.OKRsApprovedAt,
+			&s.DraftNotes, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, err
 		}
 		strategies = append(strategies, s)
@@ -377,9 +378,10 @@ func (db *DB) GetFundingSourcesByStrategy(ctx context.Context, strategyID uuid.U
 func (db *DB) GetStrategy(ctx context.Context, id uuid.UUID) (*domain.Strategy, error) {
 	var s domain.Strategy
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, project_id, parent_id, name, created_at, updated_at
+		SELECT id, project_id, parent_id, name, okrs_approved_at, draft_notes, created_at, updated_at
 		FROM strategies WHERE id = $1
-	`, id).Scan(&s.ID, &s.ProjectID, &s.ParentID, &s.Name, &s.CreatedAt, &s.UpdatedAt)
+	`, id).Scan(&s.ID, &s.ProjectID, &s.ParentID, &s.Name, &s.OKRsApprovedAt,
+		&s.DraftNotes, &s.CreatedAt, &s.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -2771,7 +2773,7 @@ func (db *DB) GetUserProjects(ctx context.Context, userID uuid.UUID) ([]struct {
 	Role    domain.ProjectMemberRole
 }, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT p.id, p.name, p.config, p.created_at, p.updated_at, pm.role
+		SELECT p.id, p.name, p.config, p.brief, p.created_at, p.updated_at, pm.role
 		FROM project_members pm
 		JOIN projects p ON pm.project_id = p.id
 		WHERE pm.user_id = $1
@@ -2791,7 +2793,8 @@ func (db *DB) GetUserProjects(ctx context.Context, userID uuid.UUID) ([]struct {
 			Project domain.Project
 			Role    domain.ProjectMemberRole
 		}
-		if err := rows.Scan(&p.Project.ID, &p.Project.Name, &p.Project.Config, &p.Project.CreatedAt, &p.Project.UpdatedAt, &p.Role); err != nil {
+		if err := rows.Scan(&p.Project.ID, &p.Project.Name, &p.Project.Config, &p.Project.Brief,
+			&p.Project.CreatedAt, &p.Project.UpdatedAt, &p.Role); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)

@@ -321,3 +321,53 @@ func (v *HopCostVerdict) Disputed() bool {
 func (r *CostAuditResponse) BudgetExceeded() bool {
 	return r != nil && r.BudgetVerdict == "exceeds"
 }
+
+//------------------------------------------------------------------------------
+// Strategist: drafting OKRs from a plain-English brief
+//------------------------------------------------------------------------------
+
+// StrategyBrief is what a person types on the "new project" screen: what they
+// want built, by when, and for how much. It is the entire input to the first
+// draft, so the drafting agent has to be explicit about what it assumed.
+type StrategyBrief struct {
+	ProjectName string  `json:"project_name" desc:"The name the user gave this project."`
+	Brief       string  `json:"brief" desc:"The user's own description of what they want built, verbatim. Do not assume it is complete or precise."`
+	DeadlineISO string  `json:"deadline" desc:"The date the user wants this done by, YYYY-MM-DD. Empty if they did not give one."`
+	BudgetUSD   float64 `json:"budget_usd" desc:"Total US dollars the user is willing to spend. Zero if they did not give a figure."`
+	TodayISO    string  `json:"today" desc:"Today's date, YYYY-MM-DD. Every target date must fall between this and the deadline."`
+}
+
+// DraftedKeyResult is one measurable target in a drafted strategy.
+type DraftedKeyResult struct {
+	Description string `json:"description" desc:"What is being measured, in plain English. One sentence, no target figure in it."`
+	TargetUnits string `json:"target_units" desc:"The target with its unit and comparison, e.g. '>= 100 signups', '< 200ms p99', '>= 80%'. This is the whole point of a key result: a reader must be able to tell whether it was hit."`
+	TargetDate  string `json:"target_date" desc:"When this should be hit, YYYY-MM-DD. Must fall on or before the deadline and on or after today. Empty only if the user gave no deadline."`
+}
+
+// DraftedObjective is one objective and the key results that measure it.
+type DraftedObjective struct {
+	Description string             `json:"description" desc:"The objective in plain English: what will be true when this succeeds. One or two sentences. Written for the person who wrote the brief, not for a strategy consultant -- no jargon."`
+	KeyResults  []DraftedKeyResult `json:"key_results" desc:"2 to 3 key results that together tell you whether this objective was met."`
+}
+
+// DraftedStrategy is the drafting agent's first pass at a strategy: what the
+// brief means in terms Mendel can plan against.
+//
+// Assumptions and OpenQuestions exist because a brief is almost never complete.
+// The agent is asked to say what it filled in rather than to present invented
+// specifics as though the user had supplied them -- the user is about to
+// validate this, and can only correct what they can see.
+type DraftedStrategy struct {
+	StrategyName  string             `json:"strategy_name" desc:"A short name for this phase of work, e.g. 'MVP Launch' or 'Private Beta'. Two to four words."`
+	Summary       string             `json:"summary" desc:"What you understood the user to be asking for, in two or three sentences of plain English. This is shown back to them as a check on your reading, so restate their intent rather than praising it."`
+	Objectives    []DraftedObjective `json:"objectives" desc:"2 to 4 objectives covering the work. Fewer is better than padding: every objective here becomes work someone pays for."`
+	BudgetName    string             `json:"budget_name" desc:"A short label for the budget covering this work, e.g. 'MVP build' or 'Q3 build'. Two or three words."`
+	Assumptions   []string           `json:"assumptions" desc:"Specifics you filled in that the brief did not state -- platform, audience, scale, tech choices. One short sentence each. Empty array only if the brief genuinely left nothing open."`
+	OpenQuestions []string           `json:"open_questions" desc:"Questions whose answers would change these objectives, phrased for the user to answer. One sentence each. Empty array if there are none worth asking."`
+	BudgetNote    string             `json:"budget_note" desc:"Whether the stated budget and deadline look like enough for this scope, and what you would cut first if they are not. Say plainly when you cannot tell. Do not invent dollar figures for individual pieces of work -- you have no cost history to base them on. 1-3 sentences."`
+}
+
+// StrategistResponse is the drafting agent's structured output.
+type StrategistResponse struct {
+	Strategy DraftedStrategy `json:"strategy" desc:"The drafted strategy."`
+}
