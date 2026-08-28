@@ -300,7 +300,7 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 
 	// Budget, spend to date, pace against the schedule, and the Key Results the
 	// money is meant to buy.
-	costView := s.strategyCostView(ctx, view.Strategy.ID)
+	costView := s.strategyCostView(ctx, projectID, view.Strategy.ID)
 
 	data := map[string]interface{}{
 		"Title":                "Strategy: " + view.Strategy.Name,

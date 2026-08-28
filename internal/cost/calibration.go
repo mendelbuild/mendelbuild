@@ -17,17 +17,25 @@ const calibrationSampleSize = 25
 
 // CalibrationDB is the persistence surface calibration needs.
 type CalibrationDB interface {
-	GetCompletedHopOutcomes(ctx context.Context, projectID uuid.UUID, limit int) ([]db.HopOutcome, error)
+	GetCompletedHopOutcomes(ctx context.Context, projectID uuid.UUID, model string, limit int) ([]db.HopOutcome, error)
 }
 
 // BuildCalibration summarises a project's completed Hops into the evidence an
-// estimating agent needs.
+// estimating agent needs, restricted to Hops built by the given model.
 //
-// Returns nil when the project has no completed Hops. That nil is meaningful:
-// it tells the agents there is no history, which should make them say so and
-// keep their confidence low, rather than inventing precision.
-func BuildCalibration(ctx context.Context, database CalibrationDB, projectID uuid.UUID) (*agent.CostCalibration, error) {
-	outcomes, err := database.GetCompletedHopOutcomes(ctx, projectID, calibrationSampleSize)
+// The model filter is not a refinement, it is the point. What a Hop costs is a
+// fact about the model that built it -- prices differ several-fold across
+// models, and turning on prompt caching moved the figure again by roughly a
+// factor of six. Averaging across that would anchor every new estimate to a
+// setup that has been retired.
+//
+// Returns nil when the model has no completed Hops here. That nil is
+// meaningful: it tells the agents there is no history, which should make them
+// say so and keep their confidence low rather than inventing precision. A
+// model switch therefore resets calibration to an honest "we do not know yet"
+// instead of quietly carrying the old model's numbers forward.
+func BuildCalibration(ctx context.Context, database CalibrationDB, projectID uuid.UUID, model string) (*agent.CostCalibration, error) {
+	outcomes, err := database.GetCompletedHopOutcomes(ctx, projectID, model, calibrationSampleSize)
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +43,7 @@ func BuildCalibration(ctx context.Context, database CalibrationDB, projectID uui
 		return nil, nil
 	}
 
-	cal := &agent.CostCalibration{SampleSize: len(outcomes)}
+	cal := &agent.CostCalibration{Model: model, SampleSize: len(outcomes)}
 
 	var actuals, perVariation, ratios []float64
 	for _, o := range outcomes {

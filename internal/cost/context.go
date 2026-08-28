@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/bhs/mendelbuild/internal/agent"
+	"github.com/bhs/mendelbuild/internal/codegen/executor"
 	"github.com/bhs/mendelbuild/internal/db"
 	"github.com/bhs/mendelbuild/internal/domain"
 )
@@ -90,7 +91,7 @@ func BuildStrategyContext(ctx context.Context, database StrategyContextDB, strat
 
 	// A nil calibration is meaningful: it tells the agent there is no history,
 	// which should lower its confidence rather than be silently ignored.
-	cal, err := BuildCalibration(ctx, database, strategy.ProjectID)
+	cal, err := BuildCalibration(ctx, database, strategy.ProjectID, executor.DefaultModel)
 	if err != nil {
 		return sc, err
 	}

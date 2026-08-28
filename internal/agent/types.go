@@ -17,7 +17,8 @@ type CompletedHopCost struct {
 // is inventing dollar figures from nothing; with it, it has this project's own
 // track record, including how wrong the last estimates were.
 type CostCalibration struct {
-	CompletedHops     []CompletedHopCost `json:"completed_hops" desc:"Recent completed hops with their estimated and actual costs. Treat these as the strongest available evidence for what a new hop will cost."`
+	Model             string             `json:"model" desc:"The model these figures were produced by, and the one the new work will run on. Costs from a different model do not transfer: prices differ several-fold and prompt caching changes them again by roughly a factor of six."`
+	CompletedHops     []CompletedHopCost `json:"completed_hops" desc:"Recent completed hops with their estimated and actual costs, all built by this same model. Treat these as the strongest available evidence for what a new hop will cost."`
 	MedianHopUSD      float64            `json:"median_hop_usd" desc:"Median actual USD cost of a completed hop in this project. Zero when there is no history yet."`
 	MedianVariationUSD float64           `json:"median_variation_usd" desc:"Median actual USD cost of generating one variation. Multiply by the expected number of variations for a first-order estimate."`
 	EstimateBiasRatio float64            `json:"estimate_bias_ratio" desc:"Median of actual/estimated across completed hops. Above 1.0 means past estimates were too low and you should revise new estimates upward by roughly this factor. Zero when there is not enough history."`

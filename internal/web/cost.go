@@ -258,6 +258,16 @@ type StrategyCostView struct {
 	Sources    []FundingSourceView
 	Components []db.ComponentCost
 
+	// Models is spend and outcomes per model. Cost alone cannot say whether a
+	// model is the right choice -- a cheap model that fails half its variations
+	// is the expensive one -- so these carry success rates alongside the money.
+	Models []db.ModelUsage
+
+	// UnpricedModels are models the ledger has seen with no rate card. Their
+	// tokens are recorded but priced at zero, so any total here understates
+	// itself until a card is added.
+	UnpricedModels []string
+
 	// ElapsedFraction is how far through the budget period we are, when any
 	// funding source declares one. Comparing it against the burned fraction is
 	// what turns a spend figure into a judgement about pace.
@@ -314,7 +324,7 @@ func (v *StrategyCostView) Pace() string {
 
 // strategyCostView assembles the money picture for a Strategy, including the
 // Key Results each budget is meant to move.
-func (s *Server) strategyCostView(ctx context.Context, strategyID uuid.UUID) *StrategyCostView {
+func (s *Server) strategyCostView(ctx context.Context, projectID, strategyID uuid.UUID) *StrategyCostView {
 	summary, err := s.db.GetStrategyCostSummary(ctx, strategyID)
 	if err != nil {
 		return nil
@@ -325,6 +335,8 @@ func (s *Server) strategyCostView(ctx context.Context, strategyID uuid.UUID) *St
 		Tokens:   summary.TokenCounts,
 	}
 	view.Components, _ = s.db.GetCostByComponent(ctx, strategyID)
+	view.Models, _ = s.db.GetModelUsage(ctx, projectID)
+	view.UnpricedModels, _ = s.db.GetUnpricedModels(ctx)
 
 	sources, _ := s.db.GetFundingSourcesByStrategy(ctx, strategyID)
 	now := time.Now()

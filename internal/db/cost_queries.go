@@ -443,7 +443,13 @@ func (h HopOutcome) Ratio() (float64, bool) {
 // GetCompletedHopOutcomes returns estimate-vs-actual for every completed Hop in
 // a project, newest first. Hops from all of a project's strategies count: a
 // project's own history is the best available predictor of its next Hop.
-func (db *DB) GetCompletedHopOutcomes(ctx context.Context, projectID uuid.UUID, limit int) ([]HopOutcome, error) {
+//
+// When model is non-empty, only Hops whose spend was mostly on that model are
+// returned. What a Hop cost is a fact about the model that built it: prices
+// differ several-fold across models, and enabling prompt caching moved the
+// figure again by roughly a factor of six. History from a superseded setup
+// would anchor new estimates to a world that no longer exists.
+func (db *DB) GetCompletedHopOutcomes(ctx context.Context, projectID uuid.UUID, model string, limit int) ([]HopOutcome, error) {
 	if limit <= 0 {
 		limit = 25
 	}
@@ -457,9 +463,16 @@ func (db *DB) GetCompletedHopOutcomes(ctx context.Context, projectID uuid.UUID, 
 		FROM hops h
 		JOIN strategies s ON h.strategy_id = s.id
 		WHERE s.project_id = $1 AND h.status = 'completed'
+		  AND ($2 = '' OR $2 = (
+		      SELECT c.model FROM cost_entries c
+		      WHERE c.hop_id = h.id AND c.kind = 'model' AND c.model IS NOT NULL
+		      GROUP BY c.model
+		      ORDER BY SUM(COALESCE(c.reconciled_amount_usd, c.amount_usd)) DESC
+		      LIMIT 1
+		  ))
 		ORDER BY h.updated_at DESC
-		LIMIT $2
-	`, projectID, limit)
+		LIMIT $3
+	`, projectID, model, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -649,4 +662,161 @@ func (db *DB) GetInputRequestCostAudit(ctx context.Context, inputRequestID uuid.
 		return nil, err
 	}
 	return raw, nil
+}
+
+//------------------------------------------------------------------------------
+// Per-model usage
+//------------------------------------------------------------------------------
+
+// ModelUsage is what one model cost and how well it did.
+//
+// Cost alone cannot say whether a model is the right choice: a cheap model that
+// fails half its variations is the expensive one. Pairing spend with outcomes is
+// what makes model choice answerable from evidence.
+type ModelUsage struct {
+	Model  string
+	Tokens domain.TokenCounts
+
+	AmountUSD float64
+	Entries   int
+
+	// Variations this model did the majority of the spend on. A variation
+	// worked on by several models is attributed to whichever spent most, so
+	// each variation counts exactly once across the whole table.
+	Variations int
+	Succeeded  int // selected or merged
+	Failed     int // errored or terminated
+
+	// MedianVariationUSD is the median total spend on the variations attributed
+	// to this model. The median rather than the mean so one runaway variation
+	// does not redefine what the model normally costs.
+	MedianVariationUSD float64
+}
+
+// Finished is the number of variations that reached a terminal outcome.
+func (m ModelUsage) Finished() int { return m.Succeeded + m.Failed }
+
+// HasFinished reports whether any variation has finished, which is when a
+// success rate starts to mean anything.
+//
+// Split from SuccessRate rather than returned alongside it because html/template
+// only accepts a second return value when it is an error.
+func (m ModelUsage) HasFinished() bool { return m.Finished() > 0 }
+
+// SuccessRate is the share of finished variations that produced a winner.
+// Zero when none have finished; guard with HasFinished.
+func (m ModelUsage) SuccessRate() float64 {
+	if !m.HasFinished() {
+		return 0
+	}
+	return float64(m.Succeeded) / float64(m.Finished())
+}
+
+// HasSuccess reports whether this model has landed a winner yet.
+func (m ModelUsage) HasSuccess() bool { return m.Succeeded > 0 }
+
+// USDPerSuccess is spend divided by successful variations -- the figure that
+// actually compares models, since a cheaper model that retries more can cost
+// more per result. Zero with no successes; guard with HasSuccess.
+func (m ModelUsage) USDPerSuccess() float64 {
+	if !m.HasSuccess() {
+		return 0
+	}
+	return m.AmountUSD / float64(m.Succeeded)
+}
+
+// GetModelUsage reports spend and outcomes per model across a project.
+func (db *DB) GetModelUsage(ctx context.Context, projectID uuid.UUID) ([]ModelUsage, error) {
+	rows, err := db.Pool.Query(ctx, `
+		WITH model_spend AS (
+			SELECT c.model, c.variation_id, SUM(COALESCE(c.reconciled_amount_usd, c.amount_usd)) AS spend
+			FROM cost_entries c
+			WHERE c.project_id = $1 AND c.kind = 'model' AND c.variation_id IS NOT NULL
+			GROUP BY c.model, c.variation_id
+		),
+		-- Attribute each variation to the model that spent most on it, so a
+		-- variation fixed on a second model is not counted twice.
+		dominant AS (
+			SELECT DISTINCT ON (variation_id) variation_id, model, spend
+			FROM model_spend
+			ORDER BY variation_id, spend DESC
+		),
+		outcomes AS (
+			SELECT d.model,
+			       COUNT(*) AS variations,
+			       COUNT(*) FILTER (WHERE v.status IN ('selected', 'merged')) AS succeeded,
+			       COUNT(*) FILTER (WHERE v.status IN ('error', 'terminated')) AS failed,
+			       COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY d.spend), 0) AS median_usd
+			FROM dominant d
+			JOIN variations v ON v.id = d.variation_id
+			GROUP BY d.model
+		),
+		totals AS (
+			SELECT model,
+			       COALESCE(SUM(COALESCE(reconciled_amount_usd, amount_usd)), 0) AS amount_usd,
+			       COALESCE(SUM(input_tokens), 0) AS in_tok,
+			       COALESCE(SUM(output_tokens), 0) AS out_tok,
+			       COALESCE(SUM(cache_read_tokens), 0) AS cr_tok,
+			       COALESCE(SUM(cache_write_tokens), 0) AS cw_tok,
+			       COUNT(*) AS entries
+			FROM cost_entries
+			WHERE project_id = $1 AND kind = 'model'
+			GROUP BY model
+		)
+		SELECT t.model, t.amount_usd, t.in_tok, t.out_tok, t.cr_tok, t.cw_tok, t.entries,
+		       COALESCE(o.variations, 0), COALESCE(o.succeeded, 0), COALESCE(o.failed, 0),
+		       COALESCE(o.median_usd, 0)
+		FROM totals t
+		LEFT JOIN outcomes o ON o.model = t.model
+		ORDER BY t.amount_usd DESC
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ModelUsage
+	for rows.Next() {
+		var m ModelUsage
+		if err := rows.Scan(&m.Model, &m.AmountUSD,
+			&m.Tokens.InputTokens, &m.Tokens.OutputTokens,
+			&m.Tokens.CacheReadTokens, &m.Tokens.CacheWriteTokens, &m.Entries,
+			&m.Variations, &m.Succeeded, &m.Failed, &m.MedianVariationUSD); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// GetUnpricedModels returns models that appear in the ledger with no rate card.
+//
+// Such entries record their tokens but price to zero, so a project's cost
+// silently understates itself. That is the right behaviour at write time -- far
+// better than failing a completed run -- but it has to be visible somewhere.
+func (db *DB) GetUnpricedModels(ctx context.Context) ([]string, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT DISTINCT c.model
+		FROM cost_entries c
+		WHERE c.kind = 'model' AND c.model IS NOT NULL
+		  AND NOT EXISTS (
+		      SELECT 1 FROM model_rate_cards r
+		      WHERE r.model = c.model AND r.effective_from <= c.occurred_at
+		  )
+		ORDER BY 1
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var m string
+		if err := rows.Scan(&m); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }

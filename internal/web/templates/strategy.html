@@ -143,6 +143,56 @@
             </div>
             {{end}}
 
+            {{with .UnpricedModels}}
+            <div style="margin-top: 14px; padding: 10px; background: #fff3cd; border-left: 3px solid #b8860b; border-radius: 4px; font-size: 0.9em;">
+                <strong>Spend recorded against unpriced models.</strong>
+                Their tokens are counted but priced at zero, so the totals above understate the real cost.
+                Add a rate card for {{range $i, $m := .}}{{if $i}}, {{end}}<code>{{$m}}</code>{{end}}
+                and run <code>mendel rates refresh</code>.
+            </div>
+            {{end}}
+
+            {{if .Models}}
+            <details style="margin-top: 16px;" open>
+                <summary style="cursor: pointer; color: #007bff; font-size: 0.9em;">Cost by model</summary>
+                <table style="width: 100%; margin-top: 8px; font-size: 0.9em;">
+                    <thead>
+                        <tr>
+                            <th style="text-align: left;">Model</th>
+                            <th style="text-align: right;">Spend</th>
+                            <th style="text-align: right;">Prompt tokens</th>
+                            <th style="text-align: right;">Cached</th>
+                            <th style="text-align: right;">Variations</th>
+                            <th style="text-align: right;">Success</th>
+                            <th style="text-align: right;">Per success</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .Models}}
+                        <tr>
+                            <td style="padding: 3px 0;"><code>{{.Model}}</code></td>
+                            <td style="text-align: right;">{{usd .AmountUSD}}</td>
+                            <td style="text-align: right;">{{toks .Tokens.PromptTokens}}</td>
+                            <td style="text-align: right; color: #666;">{{toks .Tokens.CacheReadTokens}}</td>
+                            <td style="text-align: right;">{{.Variations}}</td>
+                            <td style="text-align: right;">
+                                {{if .HasFinished}}{{pct .SuccessRate}}{{else}}&mdash;{{end}}
+                            </td>
+                            <td style="text-align: right;">
+                                {{if .HasSuccess}}{{usd .USDPerSuccess}}{{else}}&mdash;{{end}}
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+                <p style="margin: 8px 0 0; color: #888; font-size: 0.8em;">
+                    Each variation counts once, against whichever model spent most on it.
+                    &ldquo;Per success&rdquo; is what this model actually costs to land a winner &mdash;
+                    a cheaper model that retries more can come out dearer.
+                </p>
+            </details>
+            {{end}}
+
             {{if .Components}}
             <details style="margin-top: 16px;">
                 <summary style="cursor: pointer; color: #007bff; font-size: 0.9em;">Where the money went</summary>

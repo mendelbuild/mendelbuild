@@ -330,3 +330,103 @@ func TestRoadmapReviewRendersWithoutCostAudit(t *testing.T) {
 		t.Error("the proposer's estimate should still show without an audit")
 	}
 }
+
+// Per-success cost is the figure that actually compares models: a cheaper model
+// that retries more can be the expensive one. These pin that arithmetic and the
+// guards around a model with nothing finished yet.
+func TestModelUsageOutcomeMaths(t *testing.T) {
+	cheapButFlaky := db.ModelUsage{Model: "cheap", AmountUSD: 60, Succeeded: 2, Failed: 6}
+	pricierButSolid := db.ModelUsage{Model: "pricier", AmountUSD: 80, Succeeded: 8, Failed: 0}
+
+	if got := cheapButFlaky.SuccessRate(); got != 0.25 {
+		t.Errorf("cheap success rate = %v, want 0.25", got)
+	}
+	if got := cheapButFlaky.USDPerSuccess(); got != 30 {
+		t.Errorf("cheap $/success = %v, want 30", got)
+	}
+	if got := pricierButSolid.USDPerSuccess(); got != 10 {
+		t.Errorf("pricier $/success = %v, want 10", got)
+	}
+	// The whole point: lower total spend, higher cost per result.
+	if !(cheapButFlaky.AmountUSD < pricierButSolid.AmountUSD &&
+		cheapButFlaky.USDPerSuccess() > pricierButSolid.USDPerSuccess()) {
+		t.Error("expected the cheaper-looking model to cost more per success")
+	}
+
+	fresh := db.ModelUsage{Model: "new", AmountUSD: 5}
+	if fresh.HasFinished() || fresh.HasSuccess() {
+		t.Error("a model with nothing finished must report no rate and no per-success figure")
+	}
+	if fresh.SuccessRate() != 0 || fresh.USDPerSuccess() != 0 {
+		t.Error("guarded accessors should return zero rather than divide by zero")
+	}
+}
+
+func TestStrategyPageRendersPerModelCosts(t *testing.T) {
+	projectID := uuid.New()
+	strategyView := &StrategyView{
+		Project:  &domain.Project{ID: projectID, Name: "pong"},
+		Strategy: &domain.Strategy{ID: uuid.New(), Name: "Q3"},
+	}
+
+	body := renderPageForTest(t, "strategy.html", map[string]interface{}{
+		"ProjectID": projectID.String(), "Strategy": strategyView,
+		"Cost": &StrategyCostView{
+			BudgetUSD: 500, SpentUSD: 140,
+			Models: []db.ModelUsage{
+				{
+					Model: "claude-sonnet-4-6", AmountUSD: 120,
+					Tokens:    domain.TokenCounts{InputTokens: 2_000_000, OutputTokens: 40_000},
+					Variations: 8, Succeeded: 2, Failed: 6,
+				},
+				{
+					Model: "claude-sonnet-5", AmountUSD: 20,
+					Tokens:    domain.TokenCounts{InputTokens: 30_000, OutputTokens: 20_000, CacheReadTokens: 3_400_000},
+					Variations: 8, Succeeded: 7, Failed: 1,
+				},
+			},
+		},
+	})
+
+	for _, want := range []string{
+		"Cost by model",
+		"claude-sonnet-4-6", "$120", "25%", "$60.00", // flaky: 2 of 8, $60/success
+		"claude-sonnet-5", "$20", "88%", "$2.86",     // solid: 7 of 8, $2.86/success
+		"3.4M",                                       // cache reads, visible only since the ledger records them
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("per-model table missing %q", want)
+		}
+	}
+}
+
+// An unpriced model records its tokens but prices to zero, so the totals lie.
+// That has to be visible, since nothing else signals it.
+func TestStrategyPageWarnsAboutUnpricedModels(t *testing.T) {
+	projectID := uuid.New()
+	strategyView := &StrategyView{
+		Project:  &domain.Project{ID: projectID, Name: "pong"},
+		Strategy: &domain.Strategy{ID: uuid.New(), Name: "Q3"},
+	}
+
+	body := renderPageForTest(t, "strategy.html", map[string]interface{}{
+		"ProjectID": projectID.String(), "Strategy": strategyView,
+		"Cost": &StrategyCostView{
+			BudgetUSD: 500, SpentUSD: 140,
+			UnpricedModels: []string{"claude-experimental-9"},
+		},
+	})
+	for _, want := range []string{"unpriced models", "claude-experimental-9", "mendel rates refresh"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("unpriced-model warning missing %q", want)
+		}
+	}
+
+	clean := renderPageForTest(t, "strategy.html", map[string]interface{}{
+		"ProjectID": projectID.String(), "Strategy": strategyView,
+		"Cost": &StrategyCostView{BudgetUSD: 500, SpentUSD: 140},
+	})
+	if strings.Contains(clean, "unpriced models") {
+		t.Error("warning should be absent when every model is priced")
+	}
+}

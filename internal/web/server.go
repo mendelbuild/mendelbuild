@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/agent"
+	"github.com/bhs/mendelbuild/internal/codegen/executor"
 	"github.com/bhs/mendelbuild/internal/cost"
 	"github.com/bhs/mendelbuild/internal/auth"
 	"github.com/bhs/mendelbuild/internal/codegen"
@@ -283,7 +284,7 @@ func (s *Server) proposeVariationsForHop(ctx context.Context, hop *domain.Hop) e
 	// What this Hop has left to spend, and what generation has actually cost on
 	// this project, so the proposed approaches are sized against real money.
 	availableBudget := s.hopCostView(ctx, hop.ID).RemainingUSD()
-	calibration, _ := cost.BuildCalibration(ctx, s.db, strategy.ProjectID)
+	calibration, _ := cost.BuildCalibration(ctx, s.db, strategy.ProjectID, executor.DefaultModel)
 
 	// Build hop context
 	hopContext := agent.HopContext{

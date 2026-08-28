@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/agent"
+	"github.com/bhs/mendelbuild/internal/codegen/executor"
 	"github.com/bhs/mendelbuild/internal/cost"
 	"github.com/bhs/mendelbuild/internal/crypto"
 	"github.com/bhs/mendelbuild/internal/domain"
@@ -171,7 +172,7 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 		// Load strategy and existing hops
 		if inputRequest.SubjectType != nil && *inputRequest.SubjectType == "strategy" && inputRequest.SubjectID != nil {
 			view.Strategy, _ = s.db.GetStrategy(ctx, *inputRequest.SubjectID)
-			view.StrategyCost = s.strategyCostView(ctx, *inputRequest.SubjectID)
+			view.StrategyCost = s.strategyCostView(ctx, inputRequest.ProjectID, *inputRequest.SubjectID)
 
 			// Load existing hops with their statuses for DAG rendering
 			existingHops, _ := s.db.GetHopsByStrategy(ctx, *inputRequest.SubjectID)
@@ -876,7 +877,7 @@ func (s *Server) regenerateVariations(w http.ResponseWriter, r *http.Request, in
 	// What this Hop has left to spend, and what generation has actually cost on
 	// this project, so the proposed approaches are sized against real money.
 	availableBudget := s.hopCostView(ctx, hop.ID).RemainingUSD()
-	calibration, _ := cost.BuildCalibration(ctx, s.db, strategy.ProjectID)
+	calibration, _ := cost.BuildCalibration(ctx, s.db, strategy.ProjectID, executor.DefaultModel)
 
 	// Get completed transitive dependencies for context
 	completedDeps, _ := s.db.GetCompletedTransitiveDependencies(ctx, hop.ID)
