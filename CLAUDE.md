@@ -163,7 +163,7 @@ The goal: Mendel's platform knowledge stays current without code changes.
 All spend is denominated in **USD**. Tokens are telemetry, not currency — prices
 differ ~10x across models, a cache read is 0.1x an input token and a cache write
 1.25x, so a token-denominated budget floats in worth. See
-`dev/claude_plans/phase_08.md` for the full design.
+`dev/claude_plans/08_initial_design_phases.md` for the full design.
 
 ### Recording spend
 
@@ -470,10 +470,12 @@ ALTER TABLE hops ALTER COLUMN commentary DROP NOT NULL;
 Final implementation plans for each phase are stored in `dev/claude_plans/` for future reference. These documents capture architectural decisions and implementation details.
 
 **Every file in `dev/claude_plans/` takes a numbered prefix** — `NN_short_name.md`,
-using the next unused number — so the directory reads in the order the work
-happened. Forward-looking design docs are numbered the same way as retrospective
-phase write-ups; both are plans, and separating them by naming scheme only makes
-the sequence harder to follow.
+using the next unused number. The number is a stable document identifier, not a
+timestamp: the early write-ups keep the phase number they call themselves inside
+(`08_initial_design_phases.md` is "Phase 08"), so renumbering them to force
+chronological order would break that. Forward-looking design docs are numbered
+the same way as retrospective phase write-ups; both are plans, and separating
+them by naming scheme only makes the sequence harder to follow.
 
 **At the end of each development phase**, write the plan up before moving on.
 The plan should include:
