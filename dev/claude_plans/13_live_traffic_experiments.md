@@ -590,15 +590,25 @@ plainly what it is for. A user who declines gets Tier 1 with static analysis
 alone and a clear statement that enforcement is unavailable — not a silent
 downgrade.
 
-**Kubernetes (was O9) — in progress.** The `gke` channel exists in
-`hosting_platforms` and `deployToGKE` is written, but staging has only a
-`fly-io`/`container` channel and no GKE channel has ever been validated, so that
-code has never run against a real cluster. Routing, grants and NetworkPolicy all
-target a platform nothing currently exercises.
+**Kubernetes (was O9) — the deploy path runs; the staging project has not moved
+yet.** `deployToGKE` now builds, applies, rolls out, serves traffic through a
+LoadBalancer and tears down against a real GKE cluster, verified end to end with
+the pong example. Everything that made it fail was found by running it: the
+container had `gke-gcloud-auth-plugin` installed but not on `PATH`, so every
+`kubectl` call failed; Cloud Build exited non-zero on builds that had succeeded,
+because a least-privilege deployer cannot read the default log bucket; teardown
+never authenticated at all and, inside a pod, aimed at the cluster Mendel itself
+runs on; and a fixed `:latest` tag meant a redeployed variation produced an
+identical pod spec, so the cluster kept serving the previous variation's code.
 
-Being handled separately: the pong test project moves from Fly.io to GKE, which
-also exercises changing an existing project's deployment channel — itself an
-untested path. §16 items 3 and 4 are blocked until that lands.
+Deployments now land in a namespace of Mendel's own (`mendel-apps`), which is
+the boundary the per-Arm NetworkPolicy work in §4.1 attaches to.
+
+Still open: pong's channel on staging is still `fly-io`/`container`. Creating the
+`kubernetes`/`gke` channel needs the service-account key entered through the
+settings UI, and the switch itself — retiring the old channel, starting the new
+one unvalidated — is now covered by a test but has not been performed on
+staging. §16 items 3 and 4 are unblocked on the platform, blocked on that move.
 
 ---
 
