@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -324,6 +325,10 @@ func (s *Server) handleAddCloudCredential(w http.ResponseWriter, r *http.Request
 	// Auto-resolve any credential_request InputRequests that were waiting for this credential
 	_ = s.db.ResolveCredentialRequestsByName(ctx, projectID, name)
 
+	// Supplying the last missing value should close the ask, not leave it open
+	// in the queue after the thing it asked for has been done.
+	s.syncDeploymentCredentialRequest(ctx, projectID)
+
 	http.Redirect(w, r, "/p/"+projectID.String()+"/settings?success=1", http.StatusSeeOther)
 }
 
@@ -376,6 +381,10 @@ func (s *Server) handleUpdateCloudCredential(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
+	// Supplying the last missing value should close the ask, not leave it open
+	// in the queue after the thing it asked for has been done.
+	s.syncDeploymentCredentialRequest(ctx, projectID)
+
 	http.Redirect(w, r, "/p/"+projectID.String()+"/settings?success=1", http.StatusSeeOther)
 }
 
@@ -398,6 +407,10 @@ func (s *Server) handleDeleteCloudCredential(w http.ResponseWriter, r *http.Requ
 		s.renderSettingsWithError(w, r, projectID, "Failed to delete credential: "+err.Error())
 		return
 	}
+
+	// Supplying the last missing value should close the ask, not leave it open
+	// in the queue after the thing it asked for has been done.
+	s.syncDeploymentCredentialRequest(ctx, projectID)
 
 	http.Redirect(w, r, "/p/"+projectID.String()+"/settings?success=1", http.StatusSeeOther)
 }
@@ -682,7 +695,95 @@ func (s *Server) handleSetDeploymentChannel(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Choosing a channel is the moment Mendel learns what it will need, so the
+	// ask belongs here rather than at the first deploy, where the same missing
+	// value arrives as a failure instead of a question.
+	if active, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID); err == nil {
+		s.ensureDeploymentCredentialRequest(ctx, projectID, active)
+	}
+
 	http.Redirect(w, r, "/p/"+projectID.String()+"/deployment?success=1", http.StatusSeeOther)
+}
+
+// deploymentCredentialRequestTitle identifies the deployment-credential ask so
+// it is neither duplicated nor left open once the values are in.
+const deploymentCredentialRequestTitle = "Provide deployment credentials"
+
+// ensureDeploymentCredentialRequest keeps the input queue in step with what the
+// chosen channel still needs: it files the ask, updates it when the channel
+// changes under it, and resolves it once nothing is missing.
+//
+// The platform's own instructions ride along, because for something like GKE the
+// hard part is not typing the value in — it is knowing which service account to
+// create and what to grant it.
+func (s *Server) ensureDeploymentCredentialRequest(ctx context.Context, projectID uuid.UUID, channel *domain.ProjectDeploymentChannel) {
+	if channel == nil || channel.HostingPlatform == nil {
+		return
+	}
+
+	missing, err := s.checkRequiredCredentials(ctx, projectID, channel)
+	if err != nil {
+		log.Printf("deployment: could not check required credentials: %v", err)
+		return
+	}
+
+	existing, err := s.db.FindOpenInputRequestByKind(ctx, projectID, domain.InputRequestKindCredentialRequest)
+	if err != nil {
+		log.Printf("deployment: could not check for an existing credential request: %v", err)
+		return
+	}
+	if existing != nil && existing.Title != deploymentCredentialRequestTitle {
+		existing = nil // Someone else's credential ask; leave it alone.
+	}
+
+	if len(missing) == 0 {
+		if existing != nil {
+			existing.Status = domain.InputRequestStatusResolved
+			existing.Resolution = strPtr("approved")
+			resolvedAt := time.Now()
+			existing.ResolvedAt = &resolvedAt
+			if err := s.db.UpdateInputRequest(ctx, existing); err != nil {
+				log.Printf("deployment: could not resolve the credential request: %v", err)
+			}
+		}
+		return
+	}
+
+	details := fmt.Sprintf("Deploying to %s needs %s. Mendel keeps these encrypted and injects them at deploy time; nothing is written to your repository.",
+		channel.HostingPlatform.Name, strings.Join(missing, ", "))
+	instructions := channel.HostingPlatform.Instructions
+	link := fmt.Sprintf("/p/%s/deployment", projectID)
+
+	if existing != nil {
+		// The channel may have changed under an open ask, which changes both
+		// what is missing and how to obtain it.
+		existing.Details = &details
+		existing.Instructions = &instructions
+		existing.Link = &link
+		if err := s.db.UpdateInputRequest(ctx, existing); err != nil {
+			log.Printf("deployment: could not update the credential request: %v", err)
+		}
+		return
+	}
+
+	now := time.Now()
+	req := &domain.InputRequest{
+		ID:               uuid.New(),
+		ProjectID:        projectID,
+		Kind:             domain.InputRequestKindCredentialRequest,
+		Title:            deploymentCredentialRequestTitle,
+		Details:          &details,
+		Instructions:     &instructions,
+		Link:             &link,
+		ObjectivityScore: 1.0, // Nothing to weigh: the values are needed or they are not.
+		ImportanceScore:  0.9, // Blocks every demo and deploy on this channel.
+		Status:           domain.InputRequestStatusNeedsAssignment,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if err := s.db.CreateInputRequest(ctx, req); err != nil {
+		log.Printf("deployment: could not create the credential request: %v", err)
+	}
 }
 
 // handleValidateDemoPath triggers demo path validation (deploy → health → teardown).
@@ -713,7 +814,12 @@ func (s *Server) handleValidateDemoPath(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if len(missing) > 0 {
-		http.Error(w, fmt.Sprintf("missing required credentials: %s", strings.Join(missing, ", ")), http.StatusBadRequest)
+		// Record it where the page already shows validation failures, and file
+		// the ask, rather than answering with a bare error page that leaves the
+		// user on a dead end with no way to supply what was asked for.
+		s.ensureDeploymentCredentialRequest(ctx, projectID, channel)
+		s.db.FailDemoValidation(ctx, channel.ID, missingCredentialsMessage(missing))
+		http.Redirect(w, r, "/p/"+projectID.String()+"/deployment", http.StatusSeeOther)
 		return
 	}
 
@@ -763,7 +869,9 @@ func (s *Server) handleValidateProdPath(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if len(missing) > 0 {
-		http.Error(w, fmt.Sprintf("missing required credentials: %s", strings.Join(missing, ", ")), http.StatusBadRequest)
+		s.ensureDeploymentCredentialRequest(ctx, projectID, channel)
+		s.db.FailProdValidation(ctx, channel.ID, missingCredentialsMessage(missing))
+		http.Redirect(w, r, "/p/"+projectID.String()+"/deployment", http.StatusSeeOther)
 		return
 	}
 
@@ -786,6 +894,23 @@ func (s *Server) handleValidateProdPath(w http.ResponseWriter, r *http.Request) 
 }
 
 // checkRequiredCredentials verifies that all required credentials exist for the channel.
+// missingCredentialsMessage says which values are missing and where to put
+// them, so the message is actionable from the page that shows it.
+func missingCredentialsMessage(missing []string) string {
+	return fmt.Sprintf("Missing %s. Add them under Credentials below, then validate again.",
+		strings.Join(missing, ", "))
+}
+
+// syncDeploymentCredentialRequest refreshes the credential ask after the stored
+// credentials change, so supplying the last one closes it.
+func (s *Server) syncDeploymentCredentialRequest(ctx context.Context, projectID uuid.UUID) {
+	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
+	if err != nil || channel == nil {
+		return
+	}
+	s.ensureDeploymentCredentialRequest(ctx, projectID, channel)
+}
+
 func (s *Server) checkRequiredCredentials(ctx context.Context, projectID uuid.UUID, channel *domain.ProjectDeploymentChannel) ([]string, error) {
 	if channel.HostingPlatform == nil {
 		return nil, fmt.Errorf("channel has no hosting platform")
