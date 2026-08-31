@@ -270,3 +270,14 @@ func (db *DB) FindOpenInputRequestByKind(ctx context.Context, projectID uuid.UUI
 	}
 	return db.GetInputRequest(ctx, id)
 }
+
+// CountKeyResults returns how many live Key Results a strategy has. The budget
+// panel uses it to tell "this funds everything" from "this funds a subset",
+// which is the difference between a line and a list.
+func (db *DB) CountKeyResults(ctx context.Context, strategyID uuid.UUID) (int, error) {
+	var n int
+	err := db.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM key_results WHERE strategy_id = $1 AND deleted_at IS NULL
+	`, strategyID).Scan(&n)
+	return n, err
+}

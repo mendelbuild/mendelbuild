@@ -136,6 +136,58 @@ disagree — a smaller version of the same failure.
 draft tests pass under UTC, US Pacific, Tokyo and Sydney. A unit test over Go
 structs cannot catch it, which is exactly why the logic does not live there.
 
+### Objectives name an outcome, not a mechanism
+
+The first real project drafted objectives like:
+
+> "An elected official can create a poll, send it to a sample drawn from their
+> constituent list, and collect responses without needing technical help."
+
+That is a feature list with a subject in front of it. It passed the guidance in
+place at the time — "states what will be true when it succeeds, not what tasks
+get done" — because it *is* a statement of what will be true. The rule did not
+name the actual failure, which is enumerating the mechanism.
+
+The prompt now names the tell: if an objective reads "the user can do X, then Y,
+then Z", it is the mechanism, and it should be cut back to what X, Y and Z were
+*for*. It carries two worked before/after pairs, and one further test — a good
+objective survives a change of implementation. The mechanism belongs in key
+results, which were already good.
+
+Redrafting the same brief afterwards gave, in three runs out of three,
+objectives of this shape:
+
+> "An elected official can run a poll and read the results themselves, without
+> needing a statistician, developer, or manual to do it."
+
+The `desc` tag on `DraftedObjective.Description` carries the same rule, since
+per CLAUDE.md it is the source of truth the schema is generated from.
+
+### A budget does not restate the OKRs
+
+The strategy page's budget card listed every Key Result a budget funds, with its
+target and date. Read on a real project it looked like a **second roadmap** --
+eight dated bullets under a heading, sitting a few inches from a setup ribbon
+that says the roadmap comes *after* the objectives. The obvious question is how
+the two differ. They do not: it was the same Key Results, restated.
+
+The underlying link is real and worth keeping — `funding_success_criteria` is
+what ties money to OKR milestones, from phase 08. What was wrong was the volume.
+The guided flow links one budget to *every* Key Result, so the panel reproduced
+the whole OKR page.
+
+So the card now distinguishes the two cases:
+
+- funds every Key Result (the guided-flow default) — one line, linking to the
+  OKR page. Nothing is restated.
+- funds a subset — names which ones, since *which subset* is the actual
+  information, but still without targets and dates. Those live on the OKR page.
+
+Mendel's roadmap and a list of dated key results are different things — one is
+Hops, including platform and design decisions; the other is external milestones —
+and the UI should not blur them by rendering the second in a shape that looks
+like the first.
+
 ### The repository is asked for after approval, not before
 
 Mendel cannot write code without somewhere to write it, but it does not need a

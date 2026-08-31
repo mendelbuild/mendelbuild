@@ -247,6 +247,21 @@ func (v *HopCostView) RemainingUSD() float64 {
 type FundingSourceView struct {
 	Source     domain.FundingSource
 	KeyResults []db.FundedKeyResult
+
+	// TotalKeyResults is how many live Key Results the strategy has, so the
+	// budget can say whether it funds all of them or only some.
+	TotalKeyResults int
+}
+
+// FundsEverything reports whether this budget is spent against every Key Result
+// the strategy has. That is the ordinary case for a project set up through the
+// guided flow, and there the per-KR list is pure restatement of the OKR page --
+// eight bullets of description, target and date, which read like a plan and
+// invite the question of how they differ from the roadmap. They do not: they
+// are the same Key Results. Only a budget covering a subset is worth listing,
+// because then which subset is the actual information.
+func (v FundingSourceView) FundsEverything() bool {
+	return v.TotalKeyResults > 0 && len(v.KeyResults) == v.TotalKeyResults
 }
 
 // StrategyCostView is the whole money picture for a Strategy.
@@ -339,12 +354,15 @@ func (s *Server) strategyCostView(ctx context.Context, projectID, strategyID uui
 	view.UnpricedModels, _ = s.db.GetUnpricedModels(ctx)
 
 	sources, _ := s.db.GetFundingSourcesByStrategy(ctx, strategyID)
+	totalKRs, _ := s.db.CountKeyResults(ctx, strategyID)
 	now := time.Now()
 	for _, src := range sources {
 		view.BudgetUSD += src.AmountUSD
 
 		krs, _ := s.db.GetFundedKeyResults(ctx, src.ID)
-		view.Sources = append(view.Sources, FundingSourceView{Source: src, KeyResults: krs})
+		view.Sources = append(view.Sources, FundingSourceView{
+			Source: src, KeyResults: krs, TotalKeyResults: totalKRs,
+		})
 
 		// Where budgets declare different periods, the one furthest along
 		// governs: it is the first deadline the project actually faces.

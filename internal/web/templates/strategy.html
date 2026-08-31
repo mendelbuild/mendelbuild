@@ -131,17 +131,28 @@
                     {{.Source.PeriodStart.Format "2 Jan 2006"}} &ndash; {{.Source.PeriodEnd.Format "2 Jan 2006"}}
                 </div>
                 {{end}}
+                {{/* What the money is meant to buy. When a budget funds every Key
+                     Result -- the ordinary case -- listing them here just restates
+                     the OKR page, and a dated list under a budget reads like a
+                     second roadmap. Say so in a line and link instead. Only a
+                     budget covering a subset gets the list, because there the
+                     subset is the information. */}}
                 {{if .KeyResults}}
                 <div style="margin-top: 6px; font-size: 0.85em; color: #555;">
-                    <div style="color: #888;">Spent to reach:</div>
+                    {{if .FundsEverything}}
+                    <div style="color: #888;">
+                        Spent to reach
+                        <a href="/p/{{$.ProjectID}}/okr">all {{len .KeyResults}} key results</a>.
+                    </div>
+                    {{else}}
+                    <div style="color: #888;">
+                        Spent to reach {{len .KeyResults}} of
+                        <a href="/p/{{$.ProjectID}}/okr">{{.TotalKeyResults}} key results</a>:
+                    </div>
                     <ul style="margin: 4px 0 0; padding-left: 18px;">
-                        {{range .KeyResults}}
-                        <li>
-                            {{.Description}} &mdash; {{.TargetUnits}}
-                            {{if .TargetDate}}<span style="color: #888;">by {{.TargetDate.Format "2 Jan 2006"}}</span>{{end}}
-                        </li>
-                        {{end}}
+                        {{range .KeyResults}}<li>{{.Description}}</li>{{end}}
                     </ul>
+                    {{end}}
                 </div>
                 {{end}}
             </div>

@@ -152,6 +152,8 @@ func TestStrategyBudgetCardRenders(t *testing.T) {
 				TargetUnits: "1000 users",
 				TargetDate:  &target,
 			}},
+			// Funds one Key Result of three, so which ones is real information.
+			TotalKeyResults: 3,
 		}},
 		Components: []db.ComponentCost{
 			{Component: "codegen", Kind: domain.CostKindModel, AmountUSD: 1400},
@@ -166,11 +168,47 @@ func TestStrategyBudgetCardRenders(t *testing.T) {
 		for _, want := range []string{
 			"$1500", "of $2000", "$500 left",
 			"75% of budget spent", "50% of the period elapsed", "faster than the schedule",
-			"Q3 build", "Weekly active users", "1000 users", "15 Sep 2026",
-			"8.4M", "codegen", "Where the money went",
+			"Q3 build", "Weekly active users", "1 of", "8.4M", "codegen", "Where the money went",
 		} {
 			if !strings.Contains(body, want) {
 				t.Errorf("budget card missing %q", want)
+			}
+		}
+		// A partial budget names which Key Results it funds, but not their
+		// targets and dates: those live on the OKR page, and repeating them
+		// under a budget is what made this card read like a second roadmap.
+		for _, unwanted := range []string{"1000 users", "15 Sep 2026"} {
+			if strings.Contains(body, unwanted) {
+				t.Errorf("budget card should not restate %q; that belongs on the OKR page", unwanted)
+			}
+		}
+	})
+
+	// The ordinary case for a project created through the guided flow: one
+	// budget covering every Key Result. Listing them all restates the OKR page
+	// and reads like a plan, so it collapses to a single line.
+	t.Run("budget funding every key result does not list them", func(t *testing.T) {
+		everything := *full
+		everything.Sources = []FundingSourceView{{
+			Source: domain.FundingSource{Name: "MVP build", AmountUSD: 250},
+			KeyResults: []db.FundedKeyResult{
+				{Description: "Weekly active users", TargetUnits: "1000 users", TargetDate: &target},
+				{Description: "Polls published", TargetUnits: ">= 1 poll", TargetDate: &target},
+			},
+			TotalKeyResults: 2,
+		}}
+
+		body := renderPageForTest(t, "strategy.html", map[string]interface{}{
+			"ProjectID": projectID.String(), "Strategy": strategyView, "Cost": &everything,
+		})
+
+		if !strings.Contains(body, "all 2 key results") {
+			t.Error("a budget funding everything should say so in one line")
+		}
+		for _, unwanted := range []string{"Weekly active users", "Polls published", "1000 users"} {
+			if strings.Contains(body, unwanted) {
+				t.Errorf("budget card restated %q; a budget covering every key result "+
+					"should link to the OKR page rather than reproduce it", unwanted)
 			}
 		}
 	})

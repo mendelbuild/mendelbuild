@@ -346,7 +346,7 @@ type DraftedKeyResult struct {
 
 // DraftedObjective is one objective and the key results that measure it.
 type DraftedObjective struct {
-	Description string             `json:"description" desc:"The objective in plain English: what will be true when this succeeds. One or two sentences. Written for the person who wrote the brief, not for a strategy consultant -- no jargon."`
+	Description string             `json:"description" desc:"The outcome, in plain English: who ends up better off and how. Not the mechanism -- an objective that lists actions ('the user can do X, then Y, then Z') is a feature list; say what those actions were for instead. It should still read true if the design changed. One or two sentences, no jargon."`
 	KeyResults  []DraftedKeyResult `json:"key_results" desc:"2 to 3 key results that together tell you whether this objective was met."`
 }
 
