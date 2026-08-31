@@ -82,6 +82,11 @@ code {
 }
 .row-tight { gap: var(--sp-2); }
 .row-top   { align-items: flex-start; }
+/* Fields and the button that submits them, sitting on one line. The field's
+   own bottom margin is for stacked forms and would push the button out of
+   alignment here. */
+.row-end   { align-items: flex-end; }
+.row > .field { margin-bottom: 0; }
 .row-baseline { align-items: baseline; }
 /* Pushes this element and everything after it to the right. */
 .row-spacer { margin-left: auto; }

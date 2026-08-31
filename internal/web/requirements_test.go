@@ -160,7 +160,7 @@ func TestDeploymentPageWithoutRequirements(t *testing.T) {
 	if strings.Contains(body, "What Production Needs to Run") {
 		t.Error("a project with no requirements should render no panel")
 	}
-	if !strings.Contains(body, "Deploy main to Production") {
+	if !strings.Contains(body, "Deploy main to production") {
 		t.Error("the rest of the page should still render")
 	}
 }

@@ -82,7 +82,7 @@ func TestDeploymentChannelRendersDeployStates(t *testing.T) {
 		body := renderPageForTest(t, "deployment_channel.html", map[string]interface{}{
 			"ProjectID": projectID, "Project": project, "Channel": validatedChannel(),
 		})
-		if !strings.Contains(body, "Deploy main to Production") {
+		if !strings.Contains(body, "Deploy main to production") {
 			t.Error("a validated channel should offer a production deploy")
 		}
 	})

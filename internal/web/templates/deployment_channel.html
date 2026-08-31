@@ -1,236 +1,325 @@
 {{define "page-content"}}
-{{/* Validation has no log feed of its own, so it still polls the page. A
-     running deploy does not: its log panel streams and reloads the page
-     itself once the status changes. */}}
+{{/* Validation has no log feed of its own, so it still polls the page. A running
+     deploy does not: its log panel streams and reloads the page itself once the
+     status changes. */}}
 {{if .Channel}}{{if or .Channel.IsDemoValidating .Channel.IsProdValidating}}
 <meta http-equiv="refresh" content="3">
 {{end}}{{end}}
 
-<h1>{{.Project.Name}}</h1>
-<h2>Deployment Configuration</h2>
+<div class="page-head">
+    <span class="page-kind">Settings</span>
+    <h1 class="page-title">Deployment</h1>
+    <p class="page-lede">
+        Where this project's code runs: the demos you click through, and production.
+        Mendel proves the path works before it uses it for anything real.
+    </p>
+</div>
 
-<p style="color: #666; margin-bottom: 20px;">
-    <a href="/p/{{.ProjectID}}/strategy" style="color: #007bff;">&larr; Back to Strategy</a>
-</p>
+{{template "settings-tabs" .}}
 
 {{if .Success}}
-<div style="padding: 12px 16px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; margin-bottom: 20px; color: #155724;">
-    Deployment channel updated successfully.
+<div class="callout callout-success">
+    <p class="callout-body">Deployment channel updated.</p>
 </div>
 {{end}}
 
-<div style="display: flex; gap: 20px; align-items: flex-start;">
-    <div style="flex: 2;">
+<div class="split">
+    <div>
         {{if .Channel}}
         <div class="card">
-            <h2>Current Channel</h2>
-            <div style="padding: 16px; background: #f8f9fa; border-radius: 4px; margin-bottom: 16px;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div>
-                        <div style="font-size: 1.2em; font-weight: bold; margin-bottom: 8px;">
-                            {{.Channel.ArtifactKind}} &rarr; {{if .Channel.HostingPlatform}}{{.Channel.HostingPlatform.Name}}{{end}}
-                        </div>
-                        <div style="font-size: 0.9em; color: #666;">
-                            Created: {{.Channel.CreatedAt.Format "2006-01-02 15:04"}}
-                        </div>
-                    </div>
-                    <div style="text-align: right;">
-                        {{if .Channel.IsDemoValidating}}
-                        <span style="display: inline-block; padding: 4px 8px; background: #ffc107; color: #212529; border-radius: 4px; font-size: 0.85em; margin-bottom: 4px;">Demo Validating...</span>
-                        {{else if .Channel.IsDemoValidated}}
-                        <span style="display: inline-block; padding: 4px 8px; background: #28a745; color: white; border-radius: 4px; font-size: 0.85em; margin-bottom: 4px;">Demo Validated</span>
-                        {{else}}
-                        <span style="display: inline-block; padding: 4px 8px; background: #6c757d; color: white; border-radius: 4px; font-size: 0.85em; margin-bottom: 4px;">Demo Not Validated</span>
-                        {{end}}
-                        <br>
-                        {{if .Channel.IsProdValidating}}
-                        <span style="display: inline-block; padding: 4px 8px; background: #ffc107; color: #212529; border-radius: 4px; font-size: 0.85em;">Prod Validating...</span>
-                        {{else if .Channel.IsProdValidated}}
-                        <span style="display: inline-block; padding: 4px 8px; background: #28a745; color: white; border-radius: 4px; font-size: 0.85em;">Prod Validated</span>
-                        {{else}}
-                        <span style="display: inline-block; padding: 4px 8px; background: #6c757d; color: white; border-radius: 4px; font-size: 0.85em;">Prod Not Validated</span>
-                        {{end}}
-                    </div>
-                </div>
-                {{with .ProdDeployment}}
-                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #dee2e6;">
-                    <strong>Production URL:</strong>
-                    <a href="{{.URL}}" target="_blank">{{.URL}}</a>
-                    {{if .ShortCommit}}
-                    <span style="color: #666; margin-left: 8px;">commit <code>{{.ShortCommit}}</code></span>
-                    {{end}}
-                </div>
-                {{end}}
+            <div class="card-head">
+                <h2 class="card-title">Current channel</h2>
+                <span class="badge badge-quiet">{{.Channel.ArtifactKind}} &rarr;
+                    {{if .Channel.HostingPlatform}}{{.Channel.HostingPlatform.Name}}{{else}}platform missing{{end}}</span>
             </div>
 
-            <h3>Validation</h3>
-            <p style="color: #666; margin-bottom: 12px;">
-                Before demos or production deployments can proceed, the deployment path must be validated.
-                Validation deploys a hello-world container, health checks it, and tears it down.
+            <dl class="kv">
+                <dt>Demo path</dt>
+                <dd>
+                    {{with validationStatus .Channel.IsDemoValidating .Channel.IsDemoValidated (derefString .Channel.DemoValidationError)}}
+                    <span class="badge badge-{{.Tone}}">{{.Label}}</span>
+                    {{end}}
+                </dd>
+                <dt>Production path</dt>
+                <dd>
+                    {{with validationStatus .Channel.IsProdValidating .Channel.IsProdValidated (derefString .Channel.ProdValidationError)}}
+                    <span class="badge badge-{{.Tone}}">{{.Label}}</span>
+                    {{end}}
+                </dd>
+                {{with .ProdDeployment}}
+                <dt>Production URL</dt>
+                <dd>
+                    <a href="{{.URL}}" target="_blank">{{.URL}}</a>
+                    {{if .ShortCommit}}<span class="text-sm subtle">running <code>{{.ShortCommit}}</code></span>{{end}}
+                </dd>
+                {{end}}
+                <dt>Configured</dt>
+                <dd class="subtle">{{.Channel.CreatedAt.Format "2 Jan 2006, 15:04"}}</dd>
+            </dl>
+
+            <hr class="divider">
+
+            <h3 class="card-title">Validation</h3>
+            <p class="card-note">
+                Before Mendel deploys anything real, it deploys a hello-world container through
+                this channel, health checks it, and tears it down. That way the first demo fails
+                on your code if it fails at all, not on a credential.
             </p>
 
             {{if .Channel.DemoValidationError}}
-            <div style="padding: 12px 16px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; margin-bottom: 12px; color: #721c24;">
-                <strong>Demo validation failed:</strong> {{.Channel.DemoValidationError}}
+            <div class="callout callout-failure">
+                <p class="callout-title">Demo validation failed</p>
+                <p class="callout-detail">{{derefString .Channel.DemoValidationError}}</p>
             </div>
             {{end}}
 
             {{if .Channel.ProdValidationError}}
-            <div style="padding: 12px 16px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; margin-bottom: 12px; color: #721c24;">
-                <strong>Prod validation failed:</strong> {{.Channel.ProdValidationError}}
+            <div class="callout callout-failure">
+                <p class="callout-title">Production validation failed</p>
+                <p class="callout-detail">{{derefString .Channel.ProdValidationError}}</p>
             </div>
             {{end}}
 
-            <div style="display: flex; gap: 10px;">
+            <div class="actions">
                 {{if not .Channel.IsDemoValidated}}
-                <form method="POST" action="/p/{{.ProjectID}}/deployment/validate-demo" style="margin: 0;">
-                    <button type="submit" style="padding: 8px 16px; background: #ffc107; color: #212529; border: none; border-radius: 4px; cursor: pointer;"
-                        {{if .Channel.IsDemoValidating}}disabled{{end}}>
-                        {{if .Channel.IsDemoValidating}}Validating...{{else}}Validate Demo Path{{end}}
+                <form method="POST" action="/p/{{.ProjectID}}/deployment/validate-demo">
+                    <button type="submit" class="btn btn-primary" {{if .Channel.IsDemoValidating}}disabled{{end}}>
+                        {{if .Channel.IsDemoValidating}}Validating&hellip;{{else}}Validate the demo path{{end}}
                     </button>
                 </form>
                 {{end}}
                 {{if not .Channel.IsProdValidated}}
-                <form method="POST" action="/p/{{.ProjectID}}/deployment/validate-prod" style="margin: 0;">
-                    <button type="submit" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;"
-                        {{if .Channel.IsProdValidating}}disabled{{end}}>
-                        {{if .Channel.IsProdValidating}}Validating...{{else}}Validate Production Path{{end}}
+                <form method="POST" action="/p/{{.ProjectID}}/deployment/validate-prod">
+                    <button type="submit" class="btn btn-secondary" {{if .Channel.IsProdValidating}}disabled{{end}}>
+                        {{if .Channel.IsProdValidating}}Validating&hellip;{{else}}Validate the production path{{end}}
                     </button>
                 </form>
+                {{end}}
+                {{if and .Channel.IsDemoValidated .Channel.IsProdValidated}}
+                <p class="empty">Both paths are validated. Nothing to do here.</p>
                 {{end}}
             </div>
         </div>
 
         {{if .Channel.IsProdValidated}}
         <div class="card">
-            <h2>Production Deployment</h2>
-            <p style="color: #666; margin-bottom: 12px;">
-                Deploys the current <code>main</code> branch through this channel.
-            </p>
+            <div class="card-head"><h2 class="card-title">Production</h2></div>
+            <p class="card-note">Deploys the current <code>main</code> branch through this channel.</p>
 
             {{with .LatestProdDeployment}}
-            <div style="padding: 12px 16px; border-radius: 4px; margin-bottom: 12px;
-                {{if eq .Status "running"}}background: #d4edda; border: 1px solid #c3e6cb;
-                {{else if eq .Status "failed"}}background: #f8d7da; border: 1px solid #f5c6cb;
-                {{else}}background: #fff3cd; border: 1px solid #ffeeba;{{end}}">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div>
-                        <strong>Latest deploy:</strong> {{.Status}}
-                        {{if .ShortCommit}}&bull; <code>{{.ShortCommit}}</code>{{end}}
-                        <div style="font-size: 0.85em; color: #555; margin-top: 4px;">
-                            Started {{.StartedAt.Format "2006-01-02 15:04:05"}}
-                        </div>
-                    </div>
-                    {{if .URL}}<a href="{{.URL}}" target="_blank">{{.URL}}</a>{{end}}
-                </div>
-                {{if .ErrorMessage}}
-                <div style="margin-top: 8px; color: #721c24;">{{.ErrorMessage}}</div>
-                {{end}}
+            {{with deploymentStatus .Status}}
+            <div class="callout callout-quiet callout-{{.Tone}}">
+                <p class="callout-title">Latest deploy: {{.Label}}</p>
+            {{end}}
+                <p class="callout-body">
+                    Started {{.StartedAt.Format "2 Jan 2006, 15:04"}}
+                    {{if .ShortCommit}}from <code>{{.ShortCommit}}</code>{{end}}
+                    {{if .URL}}&middot; <a href="{{.URL}}" target="_blank">{{.URL}}</a>{{end}}
+                </p>
+                {{if .ErrorMessage}}<p class="callout-detail">{{derefString .ErrorMessage}}</p>{{end}}
             </div>
             {{end}}
 
-            {{/* Rendered inside the Production card, above the button, so the
-                 unmet requirement and the deploy it blocks are read together. */}}
+            {{/* Rendered above the button, so the unmet requirement and the
+                 deploy it blocks are read together. */}}
             {{template "requirements-panel" $.ProdRequirements}}
 
-            <form method="POST" action="/p/{{.ProjectID}}/redeploy" style="margin: 0 0 12px 0;">
-                <button type="submit" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;"
-                    {{if .LatestProdDeployment}}{{if eq .LatestProdDeployment.Status "deploying"}}disabled{{end}}{{end}}>
-                    {{if .LatestProdDeployment}}{{if eq .LatestProdDeployment.Status "deploying"}}Deploying...{{else}}Deploy main to Production{{end}}{{else}}Deploy main to Production{{end}}
+            <form method="POST" action="/p/{{.ProjectID}}/redeploy" class="actions">
+                <button type="submit" class="btn btn-primary" {{if .LatestProdDeployment.InFlight}}disabled{{end}}>
+                    {{if .LatestProdDeployment.InFlight}}Deploying&hellip;{{else}}Deploy main to production{{end}}
                 </button>
             </form>
 
             {{with .ProdLogPanel}}
-            <details {{if ne .Status "running"}}open{{end}}>
-                <summary style="cursor: pointer; color: #007bff;">Deploy log</summary>
-                <div style="margin-top: 8px;">{{template "log-tail" .}}</div>
+            <details class="disclosure" {{if ne .Status "running"}}open{{end}}>
+                <summary>Deploy log</summary>
+                <div class="disclosure-body">{{template "log-tail" .}}</div>
             </details>
             {{end}}
 
             {{/* `with` rather than a bare `len`, so an absent key renders
                  nothing instead of erroring the whole page. */}}
             {{with .ProdHistory}}{{if gt (len .) 1}}
-            <details style="margin-top: 12px;">
-                <summary style="cursor: pointer; color: #007bff;">Deploy history</summary>
-                <table style="margin-top: 8px; width: 100%;">
-                    <tr><th>Started</th><th>Commit</th><th>Status</th><th>URL</th></tr>
-                    {{range .}}
-                    <tr>
-                        <td>{{.StartedAt.Format "2006-01-02 15:04"}}</td>
-                        <td>{{if .ShortCommit}}<code>{{.ShortCommit}}</code>{{else}}&mdash;{{end}}</td>
-                        <td>{{.Status}}</td>
-                        <td>{{if .URL}}<a href="{{.URL}}" target="_blank">{{.URL}}</a>{{else}}&mdash;{{end}}</td>
-                    </tr>
-                    {{end}}
-                </table>
+            <details class="disclosure">
+                <summary>Deploy history</summary>
+                <div class="disclosure-body">
+                    <table class="table">
+                        <thead><tr><th>Started</th><th>Commit</th><th>Status</th><th>URL</th></tr></thead>
+                        <tbody>
+                            {{range .}}
+                            <tr>
+                                <td class="subtle nowrap">{{.StartedAt.Format "2 Jan 2006 15:04"}}</td>
+                                <td>{{if .ShortCommit}}<code>{{.ShortCommit}}</code>{{else}}&mdash;{{end}}</td>
+                                <td>{{with deploymentStatus .Status}}<span class="badge badge-{{.Tone}}">{{.Label}}</span>{{end}}</td>
+                                <td>{{if .URL}}<a href="{{.URL}}" target="_blank">{{.URL}}</a>{{else}}&mdash;{{end}}</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
             </details>
             {{end}}{{end}}
         </div>
         {{end}}
         {{end}}
 
+        {{/* Credentials live here, not in project settings: this is the page
+             that says what they are for, and which ones are needed depends on
+             the channel chosen above. */}}
         <div class="card">
-            <h2>{{if .Channel}}Change{{else}}Select{{end}} Deployment Channel</h2>
-            <p style="color: #666; margin-bottom: 16px;">
-                Choose how this project will be deployed. This determines the artifact type and hosting platform.
+            <div class="card-head"><h2 class="card-title">Cloud credentials</h2></div>
+            <p class="card-note">
+                Injected as environment variables when Mendel deploys through this channel.
+                Values are encrypted at rest and never shown again after saving.
+            </p>
+
+            {{if .RequiredCredentials}}
+            <p class="eyebrow">Required by this channel</p>
+            <div class="row row-tight">
+                {{range .RequiredCredentials}}
+                <span class="badge badge-{{if .IsConfigured}}success{{else}}waiting{{end}}">
+                    {{if .IsConfigured}}&check;{{else}}&times;{{end}} {{.Name}}
+                </span>
+                {{end}}
+            </div>
+            <hr class="divider">
+            {{else if .Channel}}
+            <p class="empty">This channel needs no credentials of its own.</p>
+            <hr class="divider">
+            {{end}}
+
+            {{if .CloudCredentials}}
+            <table class="table">
+                <thead><tr><th>Name</th><th>Value</th><th></th></tr></thead>
+                <tbody>
+                    {{range .CloudCredentials}}
+                    <tr>
+                        <td class="mono">{{.Name}}</td>
+                        <td class="subtle">{{if .HasValue}}&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;{{else}}not set{{end}}</td>
+                        <td class="table-num">
+                            <span class="actions actions-end">
+                                <a class="btn btn-secondary btn-sm" href="#credential-{{.ID}}">Replace</a>
+                                <form method="POST" action="/p/{{$.ProjectID}}/settings/credentials/{{.ID}}/delete">
+                                    <button type="submit" class="btn btn-danger btn-sm"
+                                            onclick="return confirm('Delete credential {{.Name}}?')">Delete</button>
+                                </form>
+                            </span>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+            <hr class="divider">
+            {{else}}
+            <p class="empty">No credentials stored yet.</p>
+            <hr class="divider">
+            {{end}}
+
+            <form method="POST" action="/p/{{.ProjectID}}/settings/credentials" class="row row-end">
+                <div class="field">
+                    <label for="credential_name">Name</label>
+                    <input type="text" id="credential_name" name="credential_name"
+                           class="input-mono input-inline" placeholder="FLY_API_TOKEN">
+                </div>
+                <div class="field">
+                    <label for="credential_value">Value</label>
+                    <input type="password" id="credential_value" name="credential_value"
+                           class="input-inline" placeholder="Paste the value">
+                </div>
+                <button type="submit" class="btn btn-secondary">Add credential</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <div class="card-head">
+                <h2 class="card-title">{{if .Channel}}Change the channel{{else}}Choose a channel{{end}}</h2>
+            </div>
+            <p class="card-note">
+                A channel is what this project produces paired with where it runs. Changing it
+                means validating the new path before anything can deploy through it.
             </p>
 
             {{if .Combos}}
             <form method="POST" action="/p/{{.ProjectID}}/deployment/channel">
-                <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;">
+                <div class="stack-tight">
                     {{range .Combos}}
-                    <label style="display: flex; align-items: flex-start; padding: 12px; background: #f8f9fa; border: 2px solid #dee2e6; border-radius: 4px; cursor: pointer; transition: border-color 0.2s;">
-                        <input type="radio" name="combo_id" value="{{.ID}}" style="margin-top: 3px; margin-right: 12px;"
+                    <label class="choice">
+                        <input type="radio" name="combo_id" value="{{.ID}}"
                             {{if $.Channel}}{{if and (eq $.Channel.ArtifactKind .ArtifactKind) (eq $.Channel.HostingPlatformID .HostingPlatformID)}}checked{{end}}{{end}}>
-                        <div>
-                            <div style="font-weight: bold; margin-bottom: 4px;">
-                                {{.ArtifactKind}} &rarr; {{if .HostingPlatform}}{{.HostingPlatform.Name}}{{end}}
-                            </div>
-                            {{if .Notes}}<div style="font-size: 0.9em; color: #666;">{{.Notes}}</div>{{end}}
-                        </div>
+                        <span>
+                            <span class="choice-title">{{.ArtifactKind}} &rarr;
+                                {{if .HostingPlatform}}{{.HostingPlatform.Name}}{{end}}</span>
+                            {{if .Notes}}<span class="choice-note">{{.Notes}}</span>{{end}}
+                        </span>
                     </label>
                     {{end}}
                 </div>
-                <button type="submit" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                    {{if .Channel}}Update Channel{{else}}Set Channel{{end}}
-                </button>
+                <div class="actions">
+                    <button type="submit" class="btn {{if .Channel}}btn-secondary{{else}}btn-primary{{end}}">
+                        {{if .Channel}}Update channel{{else}}Set channel{{end}}
+                    </button>
+                </div>
             </form>
             {{else}}
-            <p class="empty">No deployment options available. Contact your administrator.</p>
+            <p class="empty">
+                No deployment options are available. Run <code>mendel platforms refresh</code> to
+                load the current list.
+            </p>
             {{end}}
         </div>
     </div>
 
-    <div style="flex: 1;">
+    <div class="stack">
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">What a channel is</h2></div>
+            <dl class="kv">
+                <dt>Artifact</dt><dd>What this project produces &mdash; a container, Kubernetes manifests.</dd>
+                <dt>Platform</dt><dd>Where that runs &mdash; Fly.io, Cloud Run, GKE.</dd>
+            </dl>
+            <p class="text-sm muted">
+                Only combinations Mendel knows how to deploy are offered, and each one is
+                validated before use.
+            </p>
+        </div>
+
         {{if .ChannelHistory}}
         <div class="card">
-            <h2>History</h2>
-            {{range .ChannelHistory}}
-            <div style="padding: 8px 0; border-bottom: 1px solid #eee; {{if .IsActive}}background: #f8f9fa; margin: -4px -8px; padding: 8px;{{end}}">
-                <div style="font-weight: {{if .IsActive}}bold{{else}}normal{{end}};">
-                    {{.ArtifactKind}} &rarr; {{if .HostingPlatform}}{{.HostingPlatform.Name}}{{end}}
+            <div class="card-head"><h2 class="card-title">Previous channels</h2></div>
+            <div class="stack-tight">
+                {{range .ChannelHistory}}
+                <div class="callout callout-quiet callout-{{if .IsActive}}success{{else}}neutral{{end}}">
+                    <p class="callout-title">{{.ArtifactKind}} &rarr;
+                        {{if .HostingPlatform}}{{.HostingPlatform.Name}}{{end}}</p>
+                    <p class="callout-body text-sm">
+                        {{if .IsActive}}Current{{else}}Retired {{.DisabledAt.Format "2 Jan 2006"}}{{end}}
+                    </p>
                 </div>
-                <div style="font-size: 0.8em; color: #666;">
-                    {{if .IsActive}}Current{{else}}Disabled {{.DisabledAt.Format "2006-01-02"}}{{end}}
-                </div>
+                {{end}}
             </div>
-            {{end}}
         </div>
         {{end}}
-
-        <div class="card">
-            <h2>About Deployment Channels</h2>
-            <p style="font-size: 0.9em; color: #666; margin-bottom: 12px;">
-                A deployment channel defines:
-            </p>
-            <ul style="font-size: 0.9em; color: #666; padding-left: 20px; margin: 0;">
-                <li><strong>Artifact Kind</strong> - what your project produces (container, k8s manifests, etc.)</li>
-                <li><strong>Hosting Platform</strong> - where it runs (Fly.io, GKE, etc.)</li>
-            </ul>
-            <p style="font-size: 0.9em; color: #666; margin-top: 12px;">
-                Mendel validates each channel before allowing demos or production deploys.
-            </p>
-        </div>
     </div>
 </div>
+
+{{/* One replace-value dialog per credential, opened by :target. */}}
+{{range .CloudCredentials}}
+<div id="credential-{{.ID}}" class="modal">
+    <div class="modal-box">
+        <h2 class="modal-title">Replace <code>{{.Name}}</code></h2>
+        <p class="text-sm muted">
+            The stored value is never shown. Saving replaces it outright.
+        </p>
+        <form method="POST" action="/p/{{$.ProjectID}}/settings/credentials/{{.ID}}">
+            <div class="field">
+                <label for="value-{{.ID}}">New value</label>
+                <input type="password" id="value-{{.ID}}" name="credential_value" placeholder="Paste the new value">
+            </div>
+            <div class="actions actions-end">
+                <a class="btn btn-secondary" href="#">Cancel</a>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+{{end}}
 {{end}}

@@ -740,6 +740,14 @@ type HostingDeployment struct {
 	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
+// InFlight reports whether this deployment is still running.
+//
+// Nil-safe and single-return so a template can ask without a status comparison
+// of its own; a project that has never deployed is not deploying.
+func (d *HostingDeployment) InFlight() bool {
+	return d != nil && d.Status == HostingDeploymentStatusDeploying
+}
+
 // ShortCommit returns the abbreviated commit SHA, or "" if unknown.
 func (d *HostingDeployment) ShortCommit() string {
 	if d.CommitSHA == nil || len(*d.CommitSHA) < 8 {

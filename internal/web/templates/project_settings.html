@@ -1,72 +1,63 @@
 {{define "page-content"}}
-<h1>Project Settings</h1>
-<p><a href="/p/{{.ProjectID}}/strategy">&larr; Back to Strategy</a></p>
-
-<div class="card" style="margin-bottom: 20px; background: #e7f1ff; border: 1px solid #b8daff;">
-    <h2 style="margin-top: 0;">Deployment</h2>
-    <p style="color: #004085; margin-bottom: 10px;">
-        Configure how this project deploys demos and production.
+<div class="page-head">
+    <span class="page-kind">Settings</span>
+    <h1 class="page-title">Project</h1>
+    <p class="page-lede">
+        Where Mendel writes code, and the key it uses to do the writing.
+        Deployment credentials live on the Deployment tab, beside the channel that needs them.
     </p>
-    <a href="/p/{{.ProjectID}}/deployment" style="display: inline-block; padding: 8px 16px; background: #007bff; color: white; border-radius: 4px; text-decoration: none;">
-        Configure Deployment Channel
-    </a>
 </div>
 
+{{template "settings-tabs" .}}
+
 {{if .Success}}
-<div style="padding: 15px; background: #d4edda; border-radius: 4px; margin-bottom: 20px;">
-    Settings saved successfully.
+<div class="callout callout-success">
+    <p class="callout-body">Settings saved.</p>
 </div>
 {{end}}
 
 {{if .Error}}
-<div style="padding: 15px; background: #f8d7da; border-radius: 4px; margin-bottom: 20px;">
-    Error: {{.Error}}
+<div class="callout callout-failure">
+    <p class="callout-title">That did not save</p>
+    <p class="callout-body">{{.Error}}</p>
 </div>
 {{end}}
 
 <form method="POST" action="/p/{{.ProjectID}}/settings">
     <div class="card">
-        <h2>Repository</h2>
+        <div class="card-head"><h2 class="card-title">Repository</h2></div>
 
-        <div style="margin-bottom: 15px;">
-            <label for="repo_url" style="display: block; font-weight: bold; margin-bottom: 5px;">Repository URL</label>
+        <div class="field">
+            <label for="repo_url">Repository URL</label>
+            <span class="hint">The HTTPS URL of the git repository Mendel writes to.</span>
             <input type="text" id="repo_url" name="repo_url" value="{{.Settings.RepoURL}}"
-                   placeholder="https://github.com/user/repo"
-                   style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
-            <small style="color: #666;">HTTPS URL for the git repository</small>
+                   placeholder="https://github.com/user/repo">
         </div>
 
-        <div style="margin-bottom: 15px;">
-            <label for="main_branch" style="display: block; font-weight: bold; margin-bottom: 5px;">Main Branch</label>
-            <input type="text" id="main_branch" name="main_branch" value="{{.Settings.MainBranch}}"
-                   placeholder="main"
-                   style="width: 300px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
-            <small style="color: #666;">Branch to base variations on (usually "main" or "master")</small>
+        <div class="field">
+            <label for="main_branch">Main branch</label>
+            <span class="hint">The branch variations are based on, and that winners are merged into.</span>
+            <input type="text" id="main_branch" name="main_branch" value="{{.Settings.MainBranch}}" placeholder="main">
         </div>
 
-        <div style="margin-bottom: 15px;">
-            <label for="auth_token" style="display: block; font-weight: bold; margin-bottom: 5px;">GitHub Access Token</label>
+        <div class="field">
+            <label for="auth_token">GitHub access token</label>
+            <span class="hint">
+                Needs write access to contents and pull requests, so Mendel can branch, push, and open PRs.
+            </span>
             <input type="password" id="auth_token" name="auth_token" value="{{.Settings.AuthToken}}"
-                   placeholder="github_pat_xxxxxxxxxxxx"
-                   style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
-            <details style="margin-top: 8px;">
-                <summary style="cursor: pointer; color: #007bff; font-size: 0.9em;">How to create a GitHub access token</summary>
-                <div style="margin-top: 10px; padding: 12px; background: #f8f9fa; border-radius: 4px; font-size: 0.9em;">
-                    <ol style="margin: 0; padding-left: 20px;">
-                        <li>Go to GitHub.com and click your profile picture (top right)</li>
-                        <li>Click <strong>Settings</strong></li>
-                        <li>Scroll down and click <strong>Developer settings</strong> (bottom of left sidebar)</li>
-                        <li>Click <strong>Personal access tokens</strong> &rarr; <strong>Fine-grained tokens</strong></li>
-                        <li>Click <strong>Generate new token</strong></li>
-                        <li>Give it a name like "MendelBuild"</li>
-                        <li>Under <strong>Repository access</strong>, select "Only select repositories" and choose your repo</li>
-                        <li>Under <strong>Permissions</strong>, set:
-                            <ul style="margin: 5px 0;">
-                                <li><strong>Contents</strong>: Read and write (for cloning, branching, pushing)</li>
-                                <li><strong>Pull requests</strong>: Read and write (for creating PRs)</li>
-                            </ul>
-                        </li>
-                        <li>Click <strong>Generate token</strong> and copy it here</li>
+                   placeholder="github_pat_...">
+            <details class="disclosure">
+                <summary>How to create one</summary>
+                <div class="disclosure-body">
+                    <ol class="text-sm muted">
+                        <li>On GitHub, open <strong>Settings</strong> &rarr; <strong>Developer settings</strong>.</li>
+                        <li>Choose <strong>Personal access tokens</strong> &rarr; <strong>Fine-grained tokens</strong>,
+                            then <strong>Generate new token</strong>.</li>
+                        <li>Under <strong>Repository access</strong>, select only the repository above.</li>
+                        <li>Under <strong>Permissions</strong>, set <strong>Contents</strong> and
+                            <strong>Pull requests</strong> to <em>Read and write</em>.</li>
+                        <li>Generate it, and paste it here.</li>
                     </ol>
                 </div>
             </details>
@@ -74,57 +65,44 @@
     </div>
 
     <div class="card">
-        <h2>AI Credentials</h2>
-
-        <div style="margin-bottom: 15px;">
-            <label for="anthropic_api_key" style="display: block; font-weight: bold; margin-bottom: 5px;">Anthropic API Key</label>
-            <input type="password" id="anthropic_api_key" name="anthropic_api_key" value="{{.Settings.AnthropicAPIKey}}"
-                   placeholder="sk-ant-xxxxxxxxxxxx"
-                   style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
-            <small style="color: #666;">API key for Claude (used for roadmap proposals and code generation)</small>
+        <div class="card-head"><h2 class="card-title">Anthropic API key</h2></div>
+        <div class="field">
+            <label for="anthropic_api_key">API key</label>
+            <span class="hint">
+                Used for every agent call this project makes &mdash; drafting objectives, proposing
+                roadmaps, and writing code. Spend against it is recorded on the Costs page.
+            </span>
+            <input type="password" id="anthropic_api_key" name="anthropic_api_key"
+                   value="{{.Settings.AnthropicAPIKey}}" placeholder="sk-ant-...">
         </div>
     </div>
 
-    <div style="margin-top: 20px;">
-        <button type="submit" style="padding: 12px 24px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px;">
-            Save Settings
-        </button>
+    <div class="actions">
+        <button type="submit" class="btn btn-primary">Save settings</button>
     </div>
 </form>
 
 {{if .AuthEnabled}}
-<div class="card" style="margin-top: 20px;">
-    <h2>Members</h2>
-    <p style="color: #666; margin-bottom: 15px;">
-        People who can access this project.
-    </p>
+<div class="card">
+    <div class="card-head"><h2 class="card-title">Members</h2></div>
+    <p class="card-note">People who can see and act on this project.</p>
 
     {{if .Members}}
-    <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-        <thead>
-            <tr style="border-bottom: 2px solid #dee2e6;">
-                <th style="text-align: left; padding: 10px;">Email</th>
-                <th style="text-align: left; padding: 10px;">Role</th>
-                <th style="text-align: right; padding: 10px;">Actions</th>
-            </tr>
-        </thead>
+    <table class="table">
+        <thead><tr><th>Email</th><th>Role</th><th></th></tr></thead>
         <tbody>
             {{range .Members}}
-            <tr style="border-bottom: 1px solid #dee2e6;">
-                <td style="padding: 10px;">
+            <tr>
+                <td>
                     {{.User.Email}}
-                    {{if .User.Name}}<span style="color: #666; margin-left: 8px;">({{.User.Name}})</span>{{end}}
+                    {{if .User.Name}}<span class="table-sub">{{.User.Name}}</span>{{end}}
                 </td>
-                <td style="padding: 10px;">
-                    <span class="status {{if eq .Role "owner"}}status-active{{else}}status-pending{{end}}">{{.Role}}</span>
-                </td>
-                <td style="padding: 10px; text-align: right;">
+                <td>{{with memberRole .Role}}<span class="badge badge-{{.Tone}}">{{.Label}}</span>{{end}}</td>
+                <td class="table-num">
                     {{if and (ne .Role "owner") $.IsOwner}}
-                    <form method="POST" action="/p/{{$.ProjectID}}/settings/members/{{.User.ID}}/remove" style="display: inline;">
-                        <button type="submit" onclick="return confirm('Remove {{.User.Email}} from this project?')"
-                                style="padding: 4px 8px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
-                            Remove
-                        </button>
+                    <form method="POST" action="/p/{{$.ProjectID}}/settings/members/{{.User.ID}}/remove">
+                        <button type="submit" class="btn btn-danger btn-sm"
+                                onclick="return confirm('Remove {{.User.Email}} from this project?')">Remove</button>
                     </form>
                     {{end}}
                 </td>
@@ -135,161 +113,17 @@
     {{end}}
 
     {{if .IsOwner}}
-    <div style="border-top: 1px solid #dee2e6; padding-top: 15px;">
-        <h3 style="font-size: 1em; margin-bottom: 10px;">Add Member</h3>
-        <form method="POST" action="/p/{{.ProjectID}}/settings/members" style="display: flex; gap: 10px; align-items: flex-end;">
-            <div style="flex: 1;">
-                <label for="member_email" style="display: block; font-size: 0.85em; margin-bottom: 3px;">Email</label>
-                <input type="email" id="member_email" name="email" placeholder="colleague@example.com" required
-                       style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-            </div>
-            <button type="submit" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                Add
-            </button>
-        </form>
-        <small style="color: #666; display: block; margin-top: 8px;">
-            If the user doesn't have an account yet, they'll be added when they first sign in.
-        </small>
-    </div>
+    <hr class="divider">
+    <form method="POST" action="/p/{{.ProjectID}}/settings/members" class="row row-end">
+        <div class="field">
+            <label for="member_email">Add a member</label>
+            <span class="hint">If they have no account yet, they are added when they first sign in.</span>
+            <input type="email" id="member_email" name="email" placeholder="colleague@example.com" required
+                   class="input-inline">
+        </div>
+        <button type="submit" class="btn btn-secondary">Add</button>
+    </form>
     {{end}}
 </div>
 {{end}}
-
-<div class="card" style="margin-top: 20px;">
-    <h2>Cloud Deployment Credentials</h2>
-    <p style="color: #666; margin-bottom: 15px;">
-        These credentials are injected as environment variables when deploying variations to production.
-        Values are encrypted at rest.
-    </p>
-
-    {{if .RequiredCredentials}}
-    <div style="margin-bottom: 20px; padding: 12px; background: #f8f9fa; border-radius: 4px; border: 1px solid #dee2e6;">
-        <strong style="font-size: 0.9em;">Required by deploy-config.yml:</strong>
-        <div style="margin-top: 8px;">
-            {{range .RequiredCredentials}}
-            <span style="display: inline-flex; align-items: center; gap: 4px; margin-right: 12px; margin-bottom: 4px;">
-                {{if .IsConfigured}}
-                <span style="color: #28a745;">✓</span>
-                {{else}}
-                <span style="color: #dc3545;">✗</span>
-                {{end}}
-                <code style="background: {{if .IsConfigured}}#d4edda{{else}}#f8d7da{{end}}; padding: 2px 6px; border-radius: 3px;">{{.Name}}</code>
-            </span>
-            {{end}}
-        </div>
-    </div>
-    {{end}}
-
-    {{if .CloudCredentials}}
-    <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-        <thead>
-            <tr style="border-bottom: 2px solid #dee2e6;">
-                <th style="text-align: left; padding: 10px;">Name</th>
-                <th style="text-align: left; padding: 10px;">Value</th>
-                <th style="text-align: right; padding: 10px;">Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            {{range .CloudCredentials}}
-            <tr style="border-bottom: 1px solid #dee2e6;">
-                <td style="padding: 10px; font-family: monospace;">{{.Name}}</td>
-                <td style="padding: 10px;">
-                    {{if .HasValue}}
-                    <span style="color: #666;">••••••••••••</span>
-                    {{else}}
-                    <span style="color: #dc3545;">(not set)</span>
-                    {{end}}
-                </td>
-                <td style="padding: 10px; text-align: right;">
-                    <button type="button" onclick="showEditCredential('{{.ID}}', '{{.Name}}')"
-                            style="padding: 4px 8px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em; margin-right: 5px;">
-                        Edit
-                    </button>
-                    <form method="POST" action="/p/{{$.ProjectID}}/settings/credentials/{{.ID}}/delete" style="display: inline;">
-                        <button type="submit" onclick="return confirm('Delete credential {{.Name}}?')"
-                                style="padding: 4px 8px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
-                            Delete
-                        </button>
-                    </form>
-                </td>
-            </tr>
-            {{end}}
-        </tbody>
-    </table>
-    {{else}}
-    <p style="color: #666; font-style: italic; margin-bottom: 20px;">No cloud credentials configured yet.</p>
-    {{end}}
-
-    <div style="border-top: 1px solid #dee2e6; padding-top: 15px;">
-        <h3 style="font-size: 1em; margin-bottom: 10px;">Add New Credential</h3>
-        <form method="POST" action="/p/{{.ProjectID}}/settings/credentials" style="display: flex; gap: 10px; align-items: flex-end;">
-            <div style="flex: 1;">
-                <label for="credential_name" style="display: block; font-size: 0.85em; margin-bottom: 3px;">Name</label>
-                <input type="text" id="credential_name" name="credential_name" placeholder="RENDER_API_KEY"
-                       style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-family: monospace;">
-            </div>
-            <div style="flex: 2;">
-                <label for="credential_value" style="display: block; font-size: 0.85em; margin-bottom: 3px;">Value</label>
-                <input type="password" id="credential_value" name="credential_value" placeholder="Enter value..."
-                       style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-            </div>
-            <button type="submit" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                Add
-            </button>
-        </form>
-    </div>
-</div>
-
-<div class="card" style="margin-top: 20px;">
-    <h2>Deployment</h2>
-    <p style="color: #666; margin-bottom: 15px;">
-        Configure how this project is deployed to demos and production.
-    </p>
-    <a href="/p/{{.ProjectID}}/deployment" style="padding: 8px 16px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; display: inline-block;">
-        Configure Deployment Channel
-    </a>
-</div>
-
-<!-- Edit Credential Modal -->
-<div id="edit-credential-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000;">
-    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 8px; width: 400px;">
-        <h3 style="margin-top: 0;">Edit Credential</h3>
-        <form id="edit-credential-form" method="POST">
-            <p style="margin-bottom: 10px;">
-                Updating: <strong id="edit-credential-name" style="font-family: monospace;"></strong>
-            </p>
-            <div style="margin-bottom: 15px;">
-                <label style="display: block; font-size: 0.85em; margin-bottom: 3px;">New Value</label>
-                <input type="password" name="credential_value" placeholder="Enter new value..."
-                       style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-            </div>
-            <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                <button type="button" onclick="hideEditCredential()"
-                        style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                    Cancel
-                </button>
-                <button type="submit" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                    Save
-                </button>
-            </div>
-        </form>
-    </div>
-</div>
-
-<script>
-function showEditCredential(id, name) {
-    document.getElementById('edit-credential-name').textContent = name;
-    document.getElementById('edit-credential-form').action = '/p/{{.ProjectID}}/settings/credentials/' + id;
-    document.getElementById('edit-credential-modal').style.display = 'block';
-}
-
-function hideEditCredential() {
-    document.getElementById('edit-credential-modal').style.display = 'none';
-}
-
-// Close modal on outside click
-document.getElementById('edit-credential-modal').addEventListener('click', function(e) {
-    if (e.target === this) hideEditCredential();
-});
-</script>
 {{end}}

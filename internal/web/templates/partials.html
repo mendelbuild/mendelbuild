@@ -254,3 +254,18 @@ document.querySelectorAll('[data-meter-mark]').forEach(function (el) {
 });
 </script>
 {{end}}
+
+{{/*
+    settings-tabs is the navigation for the settings area. Takes the page's
+    top-level data and reads .ProjectID and .SettingsTab.
+
+    Settings and Deployment were separate pages with no relationship visible
+    between them, which is how the cloud credentials ended up on one and the
+    channel that consumes them on the other.
+*/}}
+{{define "settings-tabs"}}
+<div class="tabs">
+    <a class="tab{{if eq .SettingsTab "project"}} is-active{{end}}" href="/p/{{.ProjectID}}/settings">Project</a>
+    <a class="tab{{if eq .SettingsTab "deployment"}} is-active{{end}}" href="/p/{{.ProjectID}}/deployment">Deployment</a>
+</div>
+{{end}}

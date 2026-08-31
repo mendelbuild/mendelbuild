@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,7 +17,6 @@ import (
 	"github.com/bhs/mendelbuild/internal/hosting"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"gopkg.in/yaml.v3"
 )
 
 // ProjectSettings holds the settings form data.
@@ -40,68 +38,6 @@ type CloudCredentialView struct {
 type RequiredCredentialView struct {
 	Name         string
 	IsConfigured bool
-}
-
-// fetchRequiredCredentials fetches deploy-config.yml from GitHub and returns required credential names.
-func fetchRequiredCredentials(repoURL, authToken string) []string {
-	if repoURL == "" || authToken == "" {
-		return nil
-	}
-
-	// Convert repo URL to GitHub API URL
-	// https://github.com/user/repo -> https://api.github.com/repos/user/repo/contents/.mendel/deploy-config.yml
-	repoURL = strings.TrimSuffix(repoURL, ".git")
-	if !strings.HasPrefix(repoURL, "https://github.com/") {
-		return nil
-	}
-	repoPath := strings.TrimPrefix(repoURL, "https://github.com/")
-	apiURL := "https://api.github.com/repos/" + repoPath + "/contents/.mendel/deploy-config.yml"
-
-	req, err := http.NewRequest("GET", apiURL, nil)
-	if err != nil {
-		return nil
-	}
-	req.Header.Set("Authorization", "Bearer "+authToken)
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil || resp.StatusCode != 200 {
-		return nil
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil
-	}
-
-	// Parse GitHub API response
-	var ghResp struct {
-		Content  string `json:"content"`
-		Encoding string `json:"encoding"`
-	}
-	if err := json.Unmarshal(body, &ghResp); err != nil {
-		return nil
-	}
-
-	if ghResp.Encoding != "base64" {
-		return nil
-	}
-
-	content, err := base64.StdEncoding.DecodeString(ghResp.Content)
-	if err != nil {
-		return nil
-	}
-
-	// Parse deploy config
-	var config struct {
-		Credentials []string `yaml:"credentials"`
-	}
-	if err := yaml.Unmarshal(content, &config); err != nil {
-		return nil
-	}
-
-	return config.Credentials
 }
 
 func (s *Server) handleProjectSettings(w http.ResponseWriter, r *http.Request) {
@@ -146,31 +82,6 @@ func (s *Server) handleProjectSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get cloud credentials (names only, not values)
-	var cloudCredentials []CloudCredentialView
-	configuredCreds := make(map[string]bool)
-	creds, err := s.db.ListProjectCredentials(ctx, projectID)
-	if err == nil {
-		for _, c := range creds {
-			cloudCredentials = append(cloudCredentials, CloudCredentialView{
-				ID:       c.ID.String(),
-				Name:     c.Name,
-				HasValue: true, // If it's in the list, it has a value
-			})
-			configuredCreds[c.Name] = true
-		}
-	}
-
-	// Fetch required credentials from deploy-config.yml
-	var requiredCredentials []RequiredCredentialView
-	requiredNames := fetchRequiredCredentials(settings.RepoURL, settings.AuthToken)
-	for _, name := range requiredNames {
-		requiredCredentials = append(requiredCredentials, RequiredCredentialView{
-			Name:         name,
-			IsConfigured: configuredCreds[name],
-		})
-	}
-
 	// Check for success message
 	success := r.URL.Query().Get("success") == "1"
 
@@ -206,9 +117,8 @@ func (s *Server) handleProjectSettings(w http.ResponseWriter, r *http.Request) {
 	data := map[string]interface{}{
 		"Title":               "Project Settings",
 		"ProjectID":           projectID.String(),
+		"SettingsTab":         "project",
 		"Settings":            settings,
-		"CloudCredentials":    cloudCredentials,
-		"RequiredCredentials": requiredCredentials,
 		"Success":             success,
 		"AuthEnabled":         s.authEnabled,
 		"Members":             members,
@@ -286,9 +196,10 @@ func (s *Server) handleSaveProjectSettings(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) renderSettingsWithError(w http.ResponseWriter, r *http.Request, projectID uuid.UUID, errMsg string) {
 	data := map[string]interface{}{
-		"Title":     "Project Settings",
-		"ProjectID": projectID.String(),
-		"Error":     errMsg,
+		"Title":       "Project Settings",
+		"ProjectID":   projectID.String(),
+		"SettingsTab": "project",
+		"Error":       errMsg,
 		"Settings":  ProjectSettings{MainBranch: "main"},
 	}
 	s.renderPageFor(w, r, "project_settings.html", data)
@@ -679,8 +590,30 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Credentials live here rather than in project settings, because this is
+	// the page that says what they are for. Which ones are needed comes from
+	// the chosen channel, not from a file in the user's repository: the channel
+	// is what actually gates a demo.
+	cloudCredentials, configured := s.cloudCredentialViews(ctx, projectID)
+	var requiredCredentials []RequiredCredentialView
+	if channel != nil {
+		platformSlug := ""
+		if channel.HostingPlatform != nil {
+			platformSlug = channel.HostingPlatform.Slug
+		}
+		for _, name := range hosting.RequiredCredentialsForCombo(channel.ArtifactKind, platformSlug) {
+			requiredCredentials = append(requiredCredentials, RequiredCredentialView{
+				Name:         name,
+				IsConfigured: configured[name],
+			})
+		}
+	}
+
 	data := map[string]interface{}{
 		"Title":                "Deployment: " + project.Name,
+		"SettingsTab":          "deployment",
+		"CloudCredentials":     cloudCredentials,
+		"RequiredCredentials":  requiredCredentials,
 		"ProjectID":            projectID.String(),
 		"Project":              project,
 		"Channel":              channel,
@@ -1213,4 +1146,25 @@ spec:
 	}
 
 	return nil
+}
+
+
+// cloudCredentialViews lists the project's stored credentials by name, never by
+// value, along with a set for checking whether a required one is present.
+func (s *Server) cloudCredentialViews(ctx context.Context, projectID uuid.UUID) ([]CloudCredentialView, map[string]bool) {
+	configured := make(map[string]bool)
+	creds, err := s.db.ListProjectCredentials(ctx, projectID)
+	if err != nil {
+		return nil, configured
+	}
+	views := make([]CloudCredentialView, 0, len(creds))
+	for _, c := range creds {
+		views = append(views, CloudCredentialView{
+			ID:       c.ID.String(),
+			Name:     c.Name,
+			HasValue: true, // If it is in the list, it has a value.
+		})
+		configured[c.Name] = true
+	}
+	return views, configured
 }
