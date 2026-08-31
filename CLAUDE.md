@@ -163,7 +163,7 @@ The goal: Mendel's platform knowledge stays current without code changes.
 All spend is denominated in **USD**. Tokens are telemetry, not currency — prices
 differ ~10x across models, a cache read is 0.1x an input token and a cache write
 1.25x, so a token-denominated budget floats in worth. See
-`dev/claude_plans/10_initial_design_phases.md` for the full design.
+`dev/claude_plans/10_phase_08.md` for the full design.
 
 ### Recording spend
 

@@ -103,7 +103,7 @@ mendelbuild/
 ├── schema/
 │   └── 001_initial.sql
 ├── DESIGN.md
-├── 01_initial_plan.md        # This file
+├── 01_plan_v0.1.md          # This file
 └── go.mod
 ```
 
