@@ -554,6 +554,16 @@ Subcommands:
 		}
 		fmt.Printf("Refreshed %d hosting platforms.\n", count)
 
+		// Combos are refreshed with the platforms they reference. A platform the
+		// installation cannot pair with anything is not usable, and the two were
+		// always seeded together.
+		comboCount, err := hosting.RefreshCombos(ctx, database)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error refreshing deployment combos: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Refreshed %d deployment combos.\n", comboCount)
+
 	case "seed":
 		count, err := hosting.SeedIfEmpty(ctx, database)
 		if err != nil {

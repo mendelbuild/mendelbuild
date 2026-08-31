@@ -236,7 +236,40 @@ func RequiredCredentialsForCombo(artifactKind domain.DeployArtifactKind, platfor
 type ComboDB interface {
 	CountSupportedDeploymentCombos(ctx context.Context) (int, error)
 	CreateSupportedDeploymentCombo(ctx context.Context, c *domain.SupportedDeploymentCombo) error
+	UpsertSupportedDeploymentCombo(ctx context.Context, c *domain.SupportedDeploymentCombo) error
 	GetHostingPlatformBySlug(ctx context.Context, slug string) (*domain.HostingPlatform, error)
+}
+
+// RefreshCombos writes every default combo, adding the ones an existing
+// installation is missing and updating the rest.
+//
+// Platforms have had this since the beginning; combos only had a seed that runs
+// on an empty table. So an installation seeded before a combo was added could
+// never acquire it: the gke combo existed in this file and in no database, which
+// left GKE unselectable in the UI with nothing to explain why.
+func RefreshCombos(ctx context.Context, db ComboDB) (int, error) {
+	refreshed := 0
+	for _, spec := range DefaultCombos() {
+		platform, err := db.GetHostingPlatformBySlug(ctx, spec.PlatformSlug)
+		if err != nil {
+			continue // Platform not present; refresh platforms first.
+		}
+
+		guidanceJSON, _ := json.Marshal(spec.Guidance)
+		notes := spec.Notes
+
+		combo := &domain.SupportedDeploymentCombo{
+			ArtifactKind:      spec.ArtifactKind,
+			HostingPlatformID: platform.ID,
+			Notes:             &notes,
+			Guidance:          guidanceJSON,
+		}
+		if err := db.UpsertSupportedDeploymentCombo(ctx, combo); err != nil {
+			return refreshed, err
+		}
+		refreshed++
+	}
+	return refreshed, nil
 }
 
 // SeedCombosIfEmpty seeds the supported_deployment_combos table if empty.

@@ -2955,6 +2955,18 @@ func (db *DB) CreateSupportedDeploymentCombo(ctx context.Context, c *domain.Supp
 	`, c.ArtifactKind, c.HostingPlatformID, c.Notes, c.Guidance).Scan(&c.ID, &c.CreatedAt)
 }
 
+// UpsertSupportedDeploymentCombo writes a combo, updating the existing row when
+// the (artifact_kind, platform) pair is already present.
+func (db *DB) UpsertSupportedDeploymentCombo(ctx context.Context, c *domain.SupportedDeploymentCombo) error {
+	return db.Pool.QueryRow(ctx, `
+		INSERT INTO supported_deployment_combos (artifact_kind, hosting_platform_id, notes, guidance)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (artifact_kind, hosting_platform_id) DO UPDATE
+		SET notes = EXCLUDED.notes, guidance = EXCLUDED.guidance
+		RETURNING id, created_at
+	`, c.ArtifactKind, c.HostingPlatformID, c.Notes, c.Guidance).Scan(&c.ID, &c.CreatedAt)
+}
+
 // CountSupportedDeploymentCombos returns the number of supported combos.
 func (db *DB) CountSupportedDeploymentCombos(ctx context.Context) (int, error) {
 	var count int
