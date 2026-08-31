@@ -1,7 +1,8 @@
 # Live-Traffic Experiments — Design
 
-Status: **draft for review.** No code written. The Decisions and Open Questions
-sections are the parts most worth your time.
+Status: **revised after review.** No code written. §13 (Decisions), §14
+(Resolved from review) and §15 (Open questions) are the parts most worth your
+time.
 
 Everything currently in the tree under `traffic_allocations`,
 `traffic_allocation_slices`, and `traffic_allocation_envoy_configs` is dead —
@@ -39,13 +40,16 @@ inherits this default.
 
 ## 2. Vocabulary
 
-- **Experiment** — one Hop's Variations competing on live traffic.
-- **Arm** — one Variation within an experiment, plus mainline as the control.
-- **Unit** — the thing traffic is divided by: user, session, request, tenant.
-  Not implied, always declared.
-- **Allocation** — the share of *units* (not requests) each arm receives.
+- **Experiment** — potentially multiple Variations from one Hop that are
+  competing on live traffic.
+- **Experiment Unit** — one Variation within an experiment, plus mainline as the
+  control.
+- **Assignment Unit** — the thing traffic is divided by: user, session, request,
+  tenant. Not implied, always declared.
+- **Allocation** — the share of Assignment Units each Experiment Unit receives.
 
-"10% of traffic" is incoherent without the unit. The allocation is over units.
+"10% of traffic" is incoherent without the Assignment Unit. Allocation is over
+Assignment Units, never over requests.
 
 ---
 
@@ -66,10 +70,10 @@ Rollback is *stop routing*; there is nothing to undo.
 This is the launch surface, and the case that will impress users: stateless UI
 changes measured against conversion.
 
-### Tier 2 — additive schema, per-unit writes
+### Tier 2 — additive schema, per-Assignment-Unit writes
 
 Adds nullable columns or new tables that only this Variation reads. Writes only
-to rows keyed by the unit being served, so sticky assignment means mainline and
+to rows keyed by the Assignment Unit being served, so sticky assignment means mainline and
 the Variation never interleave conflicting semantics on the same row.
 
 Rollback is: stop routing → archive the added data → run the down migration.
@@ -90,20 +94,30 @@ drives.
 
 ## 4. Classification, and why it is not the safety story
 
-Three signals. The tier is the **minimum** of the three; any one vetoes.
+**Two signals.** Each one independently answers *what is the highest tier this
+Variation could be admitted at?* — Tier 1, Tier 2, or Tier 3 and therefore
+refused. Each answer is a ceiling, and the Variation is admitted at the **lower
+of the two ceilings**. Neither signal can raise the other's answer; either can
+lower it.
 
 1. **Declaration** — codegen states what it touched, following the
    `requirements.json` precedent. Cheap, but self-reported by the thing being
-   judged. Never sufficient alone.
+   judged, so it can only ever lower the ceiling, never vouch for one.
 2. **Static analysis of the diff** — the load-bearing signal. The target is
    *durable state attached to the Variation that is not accounted for by its up
    and down migrations*. Note this includes writes to **existing** tables: a new
    nullable column is the easy case; the risk is the `INSERT INTO orders` that
    looks like mainline's and isn't.
-3. **Adversarial audit** — an agent prompted to refute safety. **Deferred.**
-   Slow and expensive relative to its marginal value once (1), (2), and the
-   enforcement in §4.1 are in place. Revisit if static analysis proves too
-   permissive in practice.
+
+Worked example: codegen declares "presentation only" (ceiling: Tier 1) but the
+diff touches a migration file (ceiling: Tier 2). The Variation is admitted at
+Tier 2 and must satisfy everything in §5 — a declaration does not get to
+override what the diff plainly shows.
+
+**Adversarial audit is not part of this design.** An agent prompted to refute
+safety was considered and set aside: slow, expensive, and of marginal value once
+these two signals and the enforcement in §4.1 are in place. It stays on the
+shelf in case static analysis proves too permissive in practice (see D12).
 
 Re-run on **every revision**. A revision that adds a write turns a Tier 1 into a
 Tier 3 and must halt any running experiment.
@@ -114,11 +128,11 @@ A classifier is a belief about code. These are guarantees regardless of what the
 code does, and they are the reason Tier 1 is safe to ship even though the
 classifier will sometimes be wrong:
 
-- **Tier 1 arms get a read-only database role.** If classification was wrong and
+- **Tier 1 Experiment Units get a read-only database role.** If classification was wrong and
   the code writes, it errors instead of corrupting a row.
-- **Tier 2 arms get grants scoped to what their migration added**, plus whatever
+- **Tier 2 Experiment Units get grants scoped to what their migration added**, plus whatever
   mainline already writes for tables they legitimately share.
-- **Egress is restricted by NetworkPolicy**, so an arm cannot reach Stripe or an
+- **Egress is restricted by NetworkPolicy**, so an Experiment Unit cannot reach Stripe or an
   SMTP host even if it tried.
 
 **Be precise about the limit:** a grant stops "wrote a table it never declared."
@@ -128,18 +142,34 @@ substitutes for the other.
 
 This is the main argument for k8s-first — both mechanisms are native there.
 
+### 4.2 This is a platform prerequisite, and it is a big ask
+
+Live experiments need programmable L7 routing and pod-level credential and
+egress control. In practice that means Kubernetes (§6). A user on Fly.io or
+Cloud Run cannot run one without migrating, and migrating a production
+deployment is a far larger undertaking than anything else Mendel asks of anyone.
+
+So it has to be said **early and unprompted** — when a user first expresses
+interest in production experiments, or when a Hop is proposed with
+`requires_production`, not at the point of refusal after they have built
+Variations for it. The honest framing is a prerequisite with a real cost, not a
+missing feature Mendel might add later.
+
+Demo-level comparison stays available on every platform, and remains the right
+answer for most Hops.
+
 ---
 
 ## 5. What every live experiment must declare
 
 Six things, all required before admission:
 
-1. **Unit and its key.** `user | session | request | tenant`, plus how to extract
+1. **Assignment Unit and its key.** `user | session | request | tenant`, plus how to extract
    the key (cookie name, header, JWT claim, subdomain). App-specific, so it is a
    `.mendel/` declaration — the app tells Mendel what a "user" is rather than
    Mendel assuming.
 
-2. **Schema additions**, if any. Names, types, and which arm reads them.
+2. **Schema additions**, if any. Names, types, and which Experiment Unit reads them.
 
 3. **Up and down migrations, with a test that exercises the whole cycle.**
    Not "the migration applies" — the full round trip in a throwaway schema:
@@ -163,16 +193,16 @@ Six things, all required before admission:
 
 6. **Success criteria**, including the statistics (§8).
 
-### 5.1 The unit is a correctness constraint, not a preference
+### 5.1 The Assignment Unit is a correctness constraint, not a preference
 
 Three things must agree: what the proxy hashes, what durable writes are keyed
 by, and the denominator of the success metric. Mismatches are refusable
 mechanically:
 
-- Per-**event** assignment is invalid for any Variation writing per-unit durable
-  state (the same row gets written by two arms' logic), and invalid for any
-  user-scoped metric like conversion (one person sees both arms).
-- Therefore `unit: request` implies **no per-unit durable writes are
+- Per-**event** assignment is invalid for any Variation writing per-Assignment-Unit durable
+  state (the same row gets written by two Experiment Units' logic), and invalid for any
+  user-scoped metric like conversion (one person sees both Experiment Units).
+- Therefore `assignment_unit: request` implies **no per-Assignment-Unit durable writes are
   admissible** — a derivation, not a separate rule.
 - **Tenant** matters for B2B: two people in one org seeing different UIs is its
   own dissonance problem, and it is a different key from user.
@@ -201,20 +231,20 @@ resource kind and works across every conformant implementation.
 
 Gateway API can **match** on a header; it cannot **compute** the bucket. That
 step differs per platform, so it sits behind a narrow interface — *given a
-request, produce an arm assignment and route to it* — with per-platform
+request, produce an Experiment Unit assignment and route to it* — with per-platform
 implementations. Lua stays out of the domain model.
 
 | Platform | Mechanism |
 |---|---|
 | Kubernetes | Envoy Lua/WASM filter, or a small assigner service in front |
-| Fly.io | `fly-replay`: a router app reads the cookie and responds `fly-replay: app=<arm>`; Fly Proxy replays internally, ~10ms |
+| Fly.io | `fly-replay`: a router app reads the cookie and responds `fly-replay: app=<variation-app>`; Fly Proxy replays internally, ~10ms |
 | AWS ALB | Weighted target groups plus header-based rules, no mesh |
 | Edge functions | Cloudflare Workers / Vercel middleware / CloudFront, in front of any origin |
 
 **Cloud Run cannot do this.** Its splitting is percentage-of-requests across
 revisions, and its session affinity pins a client to an *instance*, best-effort,
 broken by autoscaling. No operator-controlled header, cookie, or identity
-routing. It gives "10% of requests," not "these units."
+routing. It gives "10% of requests," not "these Assignment Units."
 
 k8s first. Fly second — already supported, and `fly-replay` is unusually clean.
 
@@ -222,21 +252,33 @@ k8s first. Fly second — already supported, and `fly-replay` is unusually clean
 
 ## 7. Concurrency and schema drift
 
-Multiple arms of one Hop **must** run in parallel; that is the entire model. The
+Multiple Experiment Units of one Hop **must** run in parallel; that is the entire model. The
 question is only independent experiments touching the same schema, and the
 answer must not assume Mendel is the only writer of the user's database.
 
 Mechanism:
 
-- Record a **fingerprint of the touched tables** (column names + types) at
-  classification time, scoped to the tables the Variation actually touches, so
-  unrelated schema churn does not invalidate everything constantly.
-- Take a **per-datastore advisory lock** before applying any migration, so
-  applications serialize.
-- **Re-fingerprint after acquiring the lock.** If it differs from classification
-  time, the classification is stale — re-classify rather than apply.
+- **Record the schemas of the touched tables** — column names and types,
+  verbatim — at classification time, scoped to the tables the Variation actually
+  touches, so unrelated schema churn does not invalidate everything constantly.
+  Stored as the schema itself rather than a hash: they are small, and when one
+  fails to match, the reader wants to see *what* changed, which a fingerprint
+  cannot tell them.
+- **Serialize migration application with a lock held in Mendel's own database.**
+  Not the user's: advisory locks are a Postgres and MySQL feature, and a
+  Mendel-side lock keyed by (project, datastore) works no matter what the user
+  runs. It orders Mendel against itself, which is what it is for.
+- **Re-read the touched-table schemas after acquiring the lock.** If they differ
+  from classification time, the classification is stale — re-classify rather
+  than apply, and show the reader the difference.
 
-Additive-ness makes conflicts rare but not impossible: two arms both adding
+Mendel is not the only writer of the user's database, so nothing here prevents
+an external DDL change landing between the re-read and the apply. That window is
+accepted rather than closed; the re-read shrinks it to the width of one
+migration, and the alternative would be a lock the user's datastore may not
+offer.
+
+Additive-ness makes conflicts rare but not impossible: two Experiment Units both adding
 `users.preferred_theme` with different types collide. Additive does not imply
 commutative when names coincide. See Open Question O1.
 
@@ -271,7 +313,7 @@ Before that: **archive it**, encrypted with the project key, to Mendel-owned
 blob storage with a TTL.
 
 What is archived is bounded by *experiment traffic, not table size* — the
-non-null rows in added columns, i.e. the units that actually participated. So it
+non-null rows in added columns, i.e. the Assignment Units that actually participated. So it
 is estimable at admission and genuinely small.
 
 Which makes it a gate rather than a hope: **projected archive size is an
@@ -302,7 +344,7 @@ migrations get.
 
 ### What rollback does not undo
 
-A losing arm that ran for three days placed real orders and sent real mail. Its
+A losing Experiment Unit that ran for three days placed real orders and sent real mail. Its
 column can be dropped; its side effects are permanent. That is what an
 experiment *is* — but the UI must not imply otherwise.
 
@@ -312,8 +354,8 @@ experiment *is* — but the UI must not imply otherwise.
 
 ### 10.1 Two tiers, and the first needs nothing from the app
 
-**Guardrails — free.** The gateway already labels every request by arm. Error
-rate, status distribution, and latency percentiles per arm cost nothing and
+**Guardrails — free.** The gateway already labels every request by Experiment Unit. Error
+rate, status distribution, and latency percentiles per Experiment Unit cost nothing and
 require zero app cooperation. These drive auto-rollback.
 
 **Business metrics — isolated provider.** The app constructs a **second
@@ -353,11 +395,11 @@ gateway's guardrail metrics point at the same endpoint.
 **Identity comes from the credential, never the payload.** A public OTLP
 endpoint that trusts a `mendel.variation` attribute is trivially forgeable —
 anyone could poison an experiment. Mendel mints a per-deployment bearer token,
-injects it as `OTEL_EXPORTER_OTLP_HEADERS`, and resolves (project, arm)
+injects it as `OTEL_EXPORTER_OTLP_HEADERS`, and resolves (project, Experiment Unit)
 server-side. The resource attribute is a cross-check, not the source of truth.
 
 Cardinality protection at ingest: reject metric names outside the contract, cap
-attribute values, cap series per arm. Otherwise one buggy generated app writes
+attribute values, cap series per Experiment Unit. Otherwise one buggy generated app writes
 unbounded rows into Mendel's database.
 
 ### 10.3 Storage: one shared database
@@ -366,7 +408,7 @@ unbounded rows into Mendel's database.
 (project_id, experiment_id, arm_id, metric_name, bucket_start, count, sum)
 ```
 
-A contingency table, not a telemetry store. Ten projects × 5 arms × 5 metrics at
+A contingency table, not a telemetry store. Ten projects × 5 Experiment Units × 5 metrics at
 5-minute buckets is single-digit millions of rows per month — unremarkable for
 Postgres, rolled up to hourly after 24h if the fine grain is only needed for
 guardrail responsiveness. Per-project infrastructure would cost orders of
@@ -375,6 +417,30 @@ magnitude more to operate than this data justifies.
 If ingest volume ever outgrows the handler, a collector goes in front without
 touching the app contract, since the endpoint is an env var.
 
+### 10.4 Accumulate in memory, flush on an interval
+
+Ingest does **not** write to Postgres per OTLP request. Counts accumulate in
+memory keyed by `(project, experiment, experiment_unit, metric, bucket_start)`
+and flush every 60s, upserting into the table above:
+
+```sql
+INSERT INTO ... VALUES (...)
+ON CONFLICT (project_id, experiment_id, experiment_unit_id, metric_name, bucket_start)
+DO UPDATE SET count = experiment_metrics.count + EXCLUDED.count,
+              sum   = experiment_metrics.sum   + EXCLUDED.sum
+```
+
+A 5-minute bucket therefore takes five accumulating upserts rather than one row
+per request, and write volume is bounded by *series count*, not traffic.
+
+**Losing the in-flight window on a crash is accepted.** At most 60s of counts
+from an experiment that runs for days, which cannot move a conclusion that
+needed statistical significance to reach. Durability is not worth a write per
+ingest here.
+
+If that trade ever stops holding, the replacement is a write-optimised log that
+is truncated on each flush — not a Postgres write per request.
+
 ---
 
 ## 11. Blast radius
@@ -382,7 +448,7 @@ touching the app contract, since the endpoint is an env var.
 Independent of classification being right:
 
 - Maximum exposure ceiling per experiment.
-- Auto-rollback on error-rate or latency regression against the control arm.
+- Auto-rollback on error-rate or latency regression against the control Experiment Unit.
 - Time cap and spend cap, the latter wired to the existing cost model.
 - A one-action kill switch returning 100% to mainline.
 
@@ -416,44 +482,78 @@ Recorded with what was rejected, for audit.
 | D10 | Identity from bearer token | Trust payload attributes | Otherwise experiment results are forgeable |
 | D11 | Archive to Mendel-owned storage, TTL'd | User-owned bucket | Lower setup burden; user bucket has no natural home off GCP |
 | D12 | Adversarial audit deferred | Include from the start | Expensive; marginal once static analysis + enforcement exist |
-| D13 | Arms of a Hop run in parallel; drift handled by fingerprint + lock | One experiment at a time | A blanket constraint breaks the core model |
+| D13 | Experiment Units of a Hop run in parallel; drift handled by recorded schemas + lock | One experiment at a time | A blanket constraint breaks the core model |
+| D14 | Lock held in Mendel's database, not the user's | Advisory lock in the user's datastore | Not every datastore offers one; Mendel only needs to order itself |
+| D15 | Record touched-table schemas verbatim | Hash fingerprint | Schemas are small, and a mismatch should show *what* changed |
+| D16 | `mendel_exp_` prefix, renamed on promotion | Refuse on name collision | Commutative additions, and the schema documents which objects are experimental |
+| D17 | Accumulate in memory, flush every 60s | Postgres write per OTLP ingest | Write volume bounded by series count, not traffic; 60s of loss cannot move a conclusion |
+| D18 | Allocation derived from MDE and duration, mainline carries the brunt | Even split across Experiment Units | Minimises exposure while still reaching significance |
 
 ---
 
-## 14. Open questions
+## 14. Resolved from review
 
-**O1 — Namespacing additive changes.** Two arms adding `users.preferred_theme`
-with different types collide. Prefixing each arm's additions with a
-variation-derived token makes them genuinely commutative, at the cost of a
-rename on promotion. Namespace and rename, or refuse on collision and let the
-user disambiguate?
+**Namespacing (was O1).** Additive objects are created under a `mendel_exp_`
+prefix carrying the Variation token, making concurrent additions genuinely
+commutative, and **renamed on promotion**. The prefix doubles as documentation:
+a human reading the schema can see at a glance which objects belong to a live
+experiment and which are permanent.
 
-**O2 — Is archive mandatory for all Tier 2?** Or only where the added data is
-not derivable from what mainline already stores? Mandatory is simpler to reason
-about; conditional avoids archiving data nobody would ever want.
+The consequence to design for: promotion is a rename migration *and* a code
+edit, because the merged code must stop referring to the prefixed name. On
+Postgres the rename itself is metadata-only and cheap; the code edit is
+codegen's job, and it has to be atomic with the rename or the merged code breaks
+on the next deploy.
 
-**O3 — Control arm sizing.** Mainline as control competes with N arms for
-traffic. Equal split across all arms including control, or a fixed larger
-control share? Affects both statistical power and how long experiments run.
+**Archive (was O2).** Not mandatory. Required only where the added data is not
+derivable from what mainline already stores, which codegen declares and the user
+can waive. Default on, since a waiver is a choice someone made and an omission
+is not.
 
-**O4 — Guardrail baseline.** Auto-rollback compares an arm against the control,
-but a low-traffic arm's error rate is noisy. What is the minimum sample before
-guardrails may fire, and what happens in the window before it is reached?
+**Allocation (was O3).** The user decides, but Mendel proposes **mainline
+carrying the brunt of traffic**, with each Experiment Unit given the minimum
+allocation that reaches significance within the target duration. This inverts
+the usual framing: allocation is *derived* from the MDE and the duration (§8)
+rather than picked, and the derivation is what Mendel shows the user.
+
+**Guardrail baseline (was O4).** Mendel proposes defaults for every statistical
+parameter — minimum sample before guardrails may fire, MDE, duration, stopping
+rule — and the user may override any of them. Until an Experiment Unit reaches
+the minimum sample, guardrails cannot fire on a comparison; the absolute
+circuit-breakers in §11 still apply, since a hard error-rate ceiling needs no
+baseline to be exceeded.
 
 ---
 
-## 15. What I would build first
+## 15. Open questions
+
+**O5 — Does "Experiment Unit" fight its own field?** In experimental design,
+*experimental unit* conventionally means the thing being randomised — which here
+is the **Assignment Unit**, the other concept. A reader with a statistics
+background will read the term backwards. "Assignment Unit" resolves the
+collision this document originally had, but if the pairing still reads
+awkwardly, "Variant" or "Experiment Variant" is the alternative for this concept.
+
+**O6 — What does a mainline deploy do to a running experiment?** Mainline is the
+control, and it will be deployed to mid-experiment when unrelated work merges.
+The control therefore changes underneath a comparison in flight. Options:
+invalidate and restart, carry on and annotate the result, or admit only
+non-overlapping changes while an experiment runs. This looks like the biggest
+unaddressed hole in the design.
+
+## 16. What I would build first
 
 Deliberately not the whole design. Tier 1 alone is both the safest and the most
 demonstrable slice, and it requires solving none of the migration problem:
 
-1. Experiment and arm domain model, unit declaration, allocation over units.
+1. Experiment and Experiment Unit domain model, Assignment Unit declaration,
+   allocation over Assignment Units.
 2. Tier 1 classifier: declaration plus static analysis, default deny.
-3. Read-only DB role and NetworkPolicy enforcement for Tier 1 arms.
+3. Read-only DB role and NetworkPolicy enforcement for Tier 1 Experiment Units.
 4. Gateway API `HTTPRoute` generation, k8s assignment filter, kill switch.
 5. OTLP ingest endpoint, token minting, contingency-table storage.
 6. Guardrail metrics and auto-rollback.
-7. Eval matrix showing arms with intervals, and the decline surface.
+7. Eval matrix showing Experiment Units with intervals, and the decline surface.
 
-Tier 2 — migrations, archive, fingerprinting, lock — is the second phase, and
+Tier 2 — migrations, archive, recorded schemas, lock — is the second phase, and
 the design above exists so that phase does not require reopening phase one.
