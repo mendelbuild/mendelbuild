@@ -192,6 +192,22 @@ To update prices, edit `DefaultModelRates()` in `internal/cost/rates.go` and run
 `mendel rates refresh` — **verify current pricing from up-to-date online sources
 first**, the same as for model names.
 
+Rate cards are keyed on the model *line* (`claude-haiku-4-5`), but the API
+answers with the snapshot that served the request (`claude-haiku-4-5-20251001`).
+The ledger stores what the API said, so the row records exactly what ran, and
+the card lookup falls back from the snapshot to its line
+(`domain.BaseModelID`). Do not add a card per snapshot: every future one would
+need its own, and a single model's spend would fragment across aliases. An exact
+card still wins, so pricing one snapshot differently remains possible when it is
+actually warranted.
+
+A charge written before its rate card existed keeps its tokens and prices to
+zero, which is the right behaviour at write time — losing the counts would be
+worse — but it leaves the project understating itself. `mendel rates reprice`
+fills those gaps, pricing each against the card in force when the charge
+happened. It only ever fills a gap: an entry priced when it was written keeps
+that figure, for the same reason cards are never rewritten.
+
 ### Estimates must be falsifiable
 
 `hop_cost_estimates` is append-only and records who estimated, their confidence,

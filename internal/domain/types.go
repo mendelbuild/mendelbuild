@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"regexp"
 	"time"
 
 	"github.com/google/uuid"
@@ -893,3 +894,27 @@ func (v *Variation) BudgetLimitUSD() float64 {
 	}
 	return *v.BudgetCeilingUSD
 }
+
+// BaseModelID strips a dated snapshot suffix from a model identifier.
+//
+// The API reports the snapshot that actually served a request --
+// "claude-haiku-4-5-20251001" -- while rate cards are keyed on the model line,
+// "claude-haiku-4-5". Matching them literally means every dated response finds
+// no card and is priced at zero, so the project's cost silently understates
+// itself. That is exactly what happened to the OKR tuner: it asked for
+// claude-haiku-4-5, the API answered as claude-haiku-4-5-20251001, and every
+// one of its calls was billed at nothing.
+//
+// Adding a card per snapshot is the wrong fix: every future snapshot would need
+// one, and the same model's spend would fragment across aliases.
+//
+// The rule is mirrored in SQL wherever a query has to do this join; the
+// identical regexp is spelled out at each site and
+// TestBaseModelIDMatchesSQL keeps the two from drifting.
+func BaseModelID(model string) string {
+	return datedSnapshotSuffix.ReplaceAllString(model, "")
+}
+
+// datedSnapshotSuffix matches a trailing -YYYYMMDD. Deliberately simple so the
+// SQL form ('-[0-9]{8}$') can be identical rather than merely similar.
+var datedSnapshotSuffix = regexp.MustCompile(`-[0-9]{8}$`)

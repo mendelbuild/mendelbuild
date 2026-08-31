@@ -71,7 +71,7 @@ Commands:
   generate          Run code generation for a hop's approved variations
   assign-owner      Assign a user as owner to all projects without an owner
   platforms         Manage hosting platforms (list, refresh)
-  rates             Manage model and hosting price rate cards (list, refresh)
+  rates             Manage model and hosting price rate cards (list, refresh, reprice)
 
 Environment:
   MENDEL_DB_URL       Postgres connection string (default: postgres://localhost:5432/mendelbuild?sslmode=disable)
@@ -585,7 +585,8 @@ func runRates(args []string) {
 Subcommands:
   list      Show the rate cards currently in force
   refresh   Write the built-in defaults as newly effective rate cards
-  seed      Seed defaults only if the tables are empty`)
+  seed      Seed defaults only if the tables are empty
+  reprice   Price ledger entries that were written before their rate card existed`)
 		os.Exit(1)
 	}
 
@@ -636,6 +637,50 @@ Subcommands:
 			fmt.Println("Rate card tables already have data. Use 'mendel rates refresh' to update.")
 		} else {
 			fmt.Printf("Seeded %d rate cards.\n", count)
+		}
+
+	case "reprice":
+		// A charge written before its rate card existed has its tokens counted
+		// and its dollars at zero, so the project understates itself. This
+		// fills those gaps and only those: an entry that was priced when it was
+		// written keeps the figure the card of the day produced.
+		entries, err := database.ListUnpricedModelEntries(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error listing unpriced entries: %v\n", err)
+			os.Exit(1)
+		}
+		if len(entries) == 0 {
+			fmt.Println("Every model charge in the ledger is priced. Nothing to do.")
+			return
+		}
+
+		var priced, stillUnpriced int
+		var added float64
+		for _, e := range entries {
+			// Priced against the card in force when the charge happened, not
+			// today's, so the figure matches what it would have been.
+			card, err := database.GetModelRateCard(ctx, e.Model, e.OccurredAt)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error looking up a rate card for %s: %v\n", e.Model, err)
+				os.Exit(1)
+			}
+			if card == nil {
+				stillUnpriced++
+				continue
+			}
+			amount := cost.PriceModelUsage(card, e.Tokens, false)
+			if err := database.PriceExistingEntry(ctx, e.ID, card.ID, amount); err != nil {
+				fmt.Fprintf(os.Stderr, "error pricing entry %s: %v\n", e.ID, err)
+				os.Exit(1)
+			}
+			priced++
+			added += amount
+		}
+
+		fmt.Printf("Priced %d of %d previously unpriced entries, adding $%.4f to the ledger.\n",
+			priced, len(entries), added)
+		if stillUnpriced > 0 {
+			fmt.Printf("%d still have no rate card. Add one and run this again.\n", stillUnpriced)
 		}
 
 	default:

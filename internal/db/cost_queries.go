@@ -54,6 +54,10 @@ func (db *DB) UpsertModelRateCard(ctx context.Context, c *domain.ModelRateCard) 
 // Returns nil (not an error) when the model has no card, so an unpriced model
 // shows up as a zero-dollar entry with its tokens still recorded, rather than
 // failing the run that used it.
+// A dated snapshot falls back to its model line: the API answers as
+// "claude-haiku-4-5-20251001" but cards are keyed "claude-haiku-4-5". An exact
+// match still wins, so a card added deliberately for one snapshot takes
+// precedence over the line's.
 func (db *DB) GetModelRateCard(ctx context.Context, model string, at time.Time) (*domain.ModelRateCard, error) {
 	var c domain.ModelRateCard
 	err := db.Pool.QueryRow(ctx, `
@@ -61,10 +65,10 @@ func (db *DB) GetModelRateCard(ctx context.Context, model string, at time.Time) 
 		       cache_read_multiplier, cache_write_multiplier, batch_multiplier,
 		       effective_from, source, created_at
 		FROM model_rate_cards
-		WHERE model = $1 AND effective_from <= $2
-		ORDER BY effective_from DESC
+		WHERE model IN ($1, $3) AND effective_from <= $2
+		ORDER BY (model = $1) DESC, effective_from DESC
 		LIMIT 1
-	`, model, at).Scan(&c.ID, &c.Model, &c.InputUSDPerMTok, &c.OutputUSDPerMTok,
+	`, model, at, domain.BaseModelID(model)).Scan(&c.ID, &c.Model, &c.InputUSDPerMTok, &c.OutputUSDPerMTok,
 		&c.CacheReadMultiplier, &c.CacheWriteMultiplier, &c.BatchMultiplier,
 		&c.EffectiveFrom, &c.Source, &c.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -801,7 +805,9 @@ func (db *DB) GetUnpricedModels(ctx context.Context) ([]string, error) {
 		WHERE c.kind = 'model' AND c.model IS NOT NULL
 		  AND NOT EXISTS (
 		      SELECT 1 FROM model_rate_cards r
-		      WHERE r.model = c.model AND r.effective_from <= c.occurred_at
+		      -- Mirrors domain.BaseModelID; kept identical by TestBaseModelIDMatchesSQL.
+		      WHERE r.model IN (c.model, regexp_replace(c.model, '-[0-9]{8}$', ''))
+		        AND r.effective_from <= c.occurred_at
 		  )
 		ORDER BY 1
 	`)
@@ -859,4 +865,59 @@ func (db *DB) GetLatestHopEstimateUSD(ctx context.Context, hopID uuid.UUID) (flo
 		return 0, err
 	}
 	return est.AmountUSD, nil
+}
+
+// UnpricedEntry is a model charge that found no rate card when it was written,
+// and so sits in the ledger with its tokens counted and its dollars at zero.
+type UnpricedEntry struct {
+	ID         uuid.UUID
+	Model      string
+	Tokens     domain.TokenCounts
+	OccurredAt time.Time
+}
+
+// ListUnpricedModelEntries returns model charges that were never priced.
+//
+// The signal is model_rate_card_id IS NULL, not amount_usd = 0: a card whose
+// rate is genuinely zero prices to zero legitimately, and those rows are
+// correct and must not be touched. A NULL card means no price was ever found.
+func (db *DB) ListUnpricedModelEntries(ctx context.Context) ([]UnpricedEntry, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, model, input_tokens, output_tokens, cache_read_tokens,
+		       cache_write_tokens, occurred_at
+		FROM cost_entries
+		WHERE kind = 'model' AND model IS NOT NULL AND model_rate_card_id IS NULL
+		ORDER BY occurred_at
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []UnpricedEntry
+	for rows.Next() {
+		var e UnpricedEntry
+		if err := rows.Scan(&e.ID, &e.Model, &e.Tokens.InputTokens, &e.Tokens.OutputTokens,
+			&e.Tokens.CacheReadTokens, &e.Tokens.CacheWriteTokens, &e.OccurredAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// PriceExistingEntry fills in the price of an entry that was written without
+// one, recording which card supplied it.
+//
+// Guarded on model_rate_card_id IS NULL so it can only ever fill a gap. A
+// figure that was priced when it was written keeps the price that produced it,
+// which is the same rule that stops rate cards being rewritten: numbers already
+// in the ledger stay verifiable against the card they were computed from.
+func (db *DB) PriceExistingEntry(ctx context.Context, entryID, cardID uuid.UUID, amountUSD float64) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE cost_entries
+		SET amount_usd = $2, model_rate_card_id = $3
+		WHERE id = $1 AND model_rate_card_id IS NULL
+	`, entryID, amountUSD, cardID)
+	return err
 }
