@@ -45,6 +45,12 @@ type Verdict struct {
 	// Adds names the objects the migration creates, for the archive to find
 	// later and for the namespace check.
 	Adds []Object
+
+	// Unrecognised lists statements the patterns could not read. These do not
+	// refuse anything on their own — VerifyAdditive judges the migration by
+	// what it does — but an object created by one of them would be missing
+	// from Adds, so the catalogue check has the last word.
+	Unrecognised []string
 }
 
 // ObjectKind distinguishes the things a migration can add.
@@ -77,20 +83,28 @@ func (o Object) String() string {
 	return fmt.Sprintf("table %s", o.Table)
 }
 
-// Statement patterns. These are deliberately a small allow-list rather than a
-// SQL parser: the question is not "what does this statement do" but "is this
-// one of the few statements we are certain only adds". Anything unrecognised
-// is refused, which is the right default when the cost of a false negative is
-// a missed experiment and the cost of a false positive is corrupted production
-// data (§1).
+// Statement patterns, used to name what a migration adds so the archive knows
+// where to look. They are not the safety judgment — VerifyAdditive is, by
+// applying the migration and reading the catalogue. A statement these do not
+// recognise is reported as unrecognised rather than refused: the empirical
+// check will say whether it was additive, and it is right far more often than
+// a pattern can be.
 var (
 	reCreateTable = regexp.MustCompile(`(?is)^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z0-9_."]+)\s*\(`)
 	reCreateIndex = regexp.MustCompile(`(?is)^CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([a-z0-9_."]+)\s+ON\s+([a-z0-9_."]+)`)
 	reAddColumn   = regexp.MustCompile(`(?is)^ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?([a-z0-9_."]+)\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z0-9_."]+)\s+(.*)$`)
 )
 
-// Statements that are never additive, matched only to give the reader a
-// specific reason rather than "unrecognised statement".
+// Statements that are never safe against a shared production database, whatever
+// anything else concludes.
+//
+// This is a deny-list, and deliberately short. It runs before the migration is
+// executed even speculatively, so an obviously destructive statement never
+// takes a lock on a live table; and it is the backstop that a confidently wrong
+// judge, or text engineered to mislead one, cannot talk its way past. Being
+// small is what makes it auditable at a glance — the affirmative judgment of
+// whether something is additive belongs to VerifyAdditive and to the reviewing
+// agent, not here.
 var refusals = []struct {
 	pattern *regexp.Regexp
 	because string
@@ -185,7 +199,11 @@ func (v *Verdict) classifyStatement(stmt string) {
 		}
 
 	default:
-		refuse("is not a statement Mendel recognises as purely additive")
+		// Not recognised, which is a gap in what this can name rather than a
+		// verdict. VerifyAdditive decides; Unrecognised only means the archive
+		// may not know about objects this statement creates, which
+		// VerifyAdditive also detects because the catalogue shows them.
+		v.Unrecognised = append(v.Unrecognised, firstLine(stmt))
 	}
 }
 
@@ -322,4 +340,25 @@ func firstLine(stmt string) string {
 
 func unquote(ident string) string {
 	return strings.ToLower(strings.Trim(ident, `"`))
+}
+
+// Forbidden reports statements that are never safe against a shared production
+// database. An empty result does not mean the migration is additive — that is
+// VerifyAdditive's question — only that nothing here is categorically
+// destructive.
+//
+// It exists as a separate, cheap check so an obviously destructive migration is
+// refused before it is executed even inside a transaction that will be rolled
+// back, which would still briefly lock a live table.
+func Forbidden(sql string) []string {
+	var reasons []string
+	for _, stmt := range SplitStatements(sql) {
+		for _, r := range refusals {
+			if r.pattern.MatchString(stmt) {
+				reasons = append(reasons, fmt.Sprintf("%s: %s", firstLine(stmt), r.because))
+				break
+			}
+		}
+	}
+	return reasons
 }

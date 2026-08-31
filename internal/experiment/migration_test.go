@@ -23,9 +23,6 @@ func TestClassifyRefusesWhatCannotBeUndone(t *testing.T) {
 		{"insert rows", `INSERT INTO orders (id) VALUES (1)`, "seeds rows"},
 		{"truncate", `TRUNCATE orders`, "empties"},
 		{"grant", `GRANT SELECT ON orders TO someone`, "privileges"},
-		// The catch-all matters most: an unrecognised statement is refused
-		// rather than assumed harmless.
-		{"unknown statement", `CREATE TRIGGER t BEFORE INSERT ON orders EXECUTE FUNCTION f()`, "recognises as purely additive"},
 		{"not null without default", `ALTER TABLE orders ADD COLUMN mendel_exp_x text NOT NULL`, "cannot apply to rows that already exist"},
 	}
 
@@ -159,5 +156,50 @@ func TestCommentsDoNotChangeTheVerdict(t *testing.T) {
 	}
 	if v := Classify(`/* harmless */ DROP TABLE orders;`); v.Additive {
 		t.Error("a real drop behind a comment must still be refused")
+	}
+}
+
+// An unrecognised statement is a gap in what the patterns can name, not a
+// verdict. Refusing it here would reject legitimate additive SQL — CREATE TYPE,
+// ADD CONSTRAINT NOT VALID, partitions — that the empirical check in Admit
+// handles correctly. It is recorded so the archive knows its inventory may be
+// incomplete.
+func TestUnrecognisedStatementsAreRecordedNotRefused(t *testing.T) {
+	v := Classify(`CREATE TYPE mendel_exp_mood AS ENUM ('ok', 'good')`)
+	if !v.Additive {
+		t.Errorf("pattern matching does not get to refuse what it cannot read: %v", v.Reasons)
+	}
+	if len(v.Unrecognised) != 1 {
+		t.Errorf("the statement should be recorded as unread, got %v", v.Unrecognised)
+	}
+}
+
+// The deny-list is the backstop that runs before anything is executed, so it
+// must catch the categorically destructive on its own, without help.
+func TestForbiddenCatchesTheCatastrophicAlone(t *testing.T) {
+	for _, sql := range []string{
+		`DROP TABLE orders`,
+		`ALTER TABLE orders DROP COLUMN status`,
+		`UPDATE orders SET status = 'x'`,
+		`DELETE FROM orders`,
+		`TRUNCATE orders`,
+		`GRANT SELECT ON orders TO nobody`,
+		`ALTER TABLE orders RENAME COLUMN a TO b`,
+	} {
+		if reasons := Forbidden(sql); len(reasons) == 0 {
+			t.Errorf("deny-list let this through: %s", sql)
+		}
+	}
+
+	// It must not refuse ordinary additions, or it becomes the allow-list again.
+	for _, sql := range []string{
+		`ALTER TABLE users ADD COLUMN mendel_exp_x text`,
+		`CREATE TABLE mendel_exp_t (id int PRIMARY KEY)`,
+		`CREATE INDEX CONCURRENTLY mendel_exp_i ON users (id)`,
+		`CREATE TYPE mendel_exp_mood AS ENUM ('ok')`,
+	} {
+		if reasons := Forbidden(sql); len(reasons) != 0 {
+			t.Errorf("deny-list refused an addition: %s -> %v", sql, reasons)
+		}
 	}
 }

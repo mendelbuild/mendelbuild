@@ -97,6 +97,13 @@ type Applier struct {
 // live traffic at all, and saying so here is cheaper than discovering it at
 // apply time.
 func (a *Applier) Admit(ctx context.Context, m Migration) (*Admission, error) {
+	// 1. The deny-list, before anything is executed: a categorically
+	// destructive statement must not reach the verification run, which would
+	// briefly lock live tables to find out what it already tells us.
+	if reasons := Forbidden(m.Up); len(reasons) > 0 {
+		return nil, fmt.Errorf("migration is not additive:\n  %s", strings.Join(reasons, "\n  "))
+	}
+
 	v := Classify(m.Up)
 	if !v.Additive {
 		return nil, fmt.Errorf("migration is not additive:\n  %s", strings.Join(v.Reasons, "\n  "))
@@ -113,6 +120,20 @@ func (a *Applier) Admit(ctx context.Context, m Migration) (*Admission, error) {
 		return nil, fmt.Errorf("migration has no down: an experiment that cannot be withdrawn cannot be run")
 	}
 
+	// 2. The empirical check, which is the affirmative judgment: run the
+	// migration against the real schema and read what changed. Patterns say
+	// what a statement looks like; only this says what it does.
+	delta, err := a.VerifyAdditive(ctx, m)
+	if err != nil {
+		return nil, err
+	}
+	if !delta.PurelyAdditive() {
+		return nil, fmt.Errorf("migration is not additive: applying it %s", delta.Describe())
+	}
+	if len(delta.Added) == 0 {
+		return nil, fmt.Errorf("migration changes nothing, so there is nothing to run or to withdraw")
+	}
+
 	schemas := make(map[string]TableSchema)
 	for _, t := range TouchedTables(v.Adds) {
 		s, err := readTableSchema(ctx, a.Target, t)
@@ -122,6 +143,19 @@ func (a *Applier) Admit(ctx context.Context, m Migration) (*Admission, error) {
 		if len(s) == 0 {
 			return nil, fmt.Errorf("table %s does not exist, so the migration cannot add to it", t)
 		}
+
+		// Without a primary key there is no way to say which row an archived
+		// value belongs to, so the experiment's data could be captured but
+		// never put back. Refused here rather than discovered at rollback,
+		// when the data is already on its way out.
+		pk, err := primaryKeyColumns(ctx, a.Target, t)
+		if err != nil {
+			return nil, fmt.Errorf("read primary key of %s: %w", t, err)
+		}
+		if len(pk) == 0 {
+			return nil, fmt.Errorf("table %s has no primary key, so anything this experiment writes to it could not be archived in a restorable form", t)
+		}
+
 		schemas[t] = s
 	}
 
@@ -319,10 +353,9 @@ func (a *Applier) archive(ctx context.Context, adm *Admission) (*Archive, error)
 			return nil, fmt.Errorf("primary key of %s: %w", table, err)
 		}
 		if len(pk) == 0 {
-			// Without a key there is no way to say which row a value belongs
-			// to, so the archive would be unrestorable. Better to say so than
-			// to write a dump nobody can use.
-			return nil, fmt.Errorf("table %s has no primary key, so its experiment data cannot be archived in a restorable form", table)
+			// Admit refuses these, so reaching here means the table lost its
+			// primary key while the experiment was running.
+			return nil, fmt.Errorf("table %s no longer has a primary key, so its experiment data cannot be archived in a restorable form", table)
 		}
 
 		names := make([]string, 0, len(pk)+len(cols))
