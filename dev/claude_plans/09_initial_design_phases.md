@@ -1,181 +1,197 @@
-# Phase 09 — Variation Requirements: What the Code Needs to Run
+# Phase 9: Lifecycle Model and Roadmap Context
 
 ## Overview
 
-A demo deployed a variation that had wired up Google sign-in, and it started,
-and it did not work. There was no client secret, and nobody had registered the
-demo's redirect URI with Google. Mendel had no way to know either was needed
-and no place to put them if it had.
+Information-architecture work on the web UI. The system was legible only to
+someone who already knew it: a page showed a Hop's *current word* (`selecting`,
+`terminated`) but never its *lifecycle*, so a newcomer could not tell where a
+thing was in its life, whether anything was expected of them, or how the Hop in
+front of them related to the rest of the roadmap.
 
-This phase gives a variation a way to say what its code needs in order to run
-anywhere, and gives Mendel a way to collect it, hold it, and inject it — before
-a deploy that cannot possibly succeed consumes a build.
+This phase adds a presentation-facing lifecycle model in `internal/domain`, a
+shared ribbon component that renders it, and an embedded roadmap panel that
+places the current Hop in the graph. It also fixes three rendering bugs found on
+the way, each of which showed a failure as a success.
 
-## The framing that matters
+Scope was deliberately limited to Hop and Variation detail pages. The shared
+review shell for agent-conversation pages, and project-level orientation, are
+separate phases.
 
-The obvious framing is "demo requirements", and it is wrong. A variation that
-needs an OAuth client secret needs it wherever it runs. Demos are merely where
-it first bites, because a demo is the first time the code is pushed through a
-deployment channel. The same requirements gate a production deploy of that
-variation once it is merged.
+## Key Design Decisions
 
-So the requirement belongs to the **variation**, not to the demo — which is
-also why the tables are named `variation_requirements` and not anything
-demo-flavoured, and why gating lives in both `handleStartDemo` and
-`runChannelProdDeployment`.
+### Status enums are storage, not presentation
 
-## Key design decisions
+The rule this phase establishes, stated at the top of `lifecycle.go`:
+**templates must never switch on a raw status string.**
 
-### Two kinds, distinguished by what Mendel can do about them
+`VariationStatus` is one column doing three unrelated jobs — build progress
+(`creating`/`pending`/`blocked`), runtime state (`migrating`/`active`/
+`draining`), and adjudication outcome (`pruned`/`selected`/`merged`/`rejected`).
+A Variation can legitimately be built *and* live *and* unjudged at the same
+moment. Any template branching on that column is forced to invent an ordering
+that does not exist, which is how the same failure-as-success bug appeared
+independently in three templates.
 
-- **`secret`** — a value Mendel needs from the user (`GOOGLE_CLIENT_SECRET`).
-  Stored encrypted, injected at deploy time. Mendel can hold this.
-- **`acknowledgement`** — an action taken somewhere else, where Mendel already
-  knows the string involved (the deployment's OAuth redirect URI) and only
-  needs confirmation it was done. Mendel stores the confirmation, never a
-  secret.
+So each entity maps its status(es) into a `Ribbon` in the domain layer, and
+templates render only the Ribbon.
 
-The split is not cosmetic: it is the difference between something Mendel can
-supply and something only a human can do.
+### Multi-track, not one stepper
 
-### Acknowledgements are keyed by the string confirmed, not by the requirement
+- **Hop** — one track. A Hop really is sequential: Planned → Exploring
+  approaches → Comparing results → Decided. `completed`, `rejected`, and
+  `abandoned` are three outcomes of the *same* final position, so they share a
+  stage and differ in Tone and Label.
+- **Variation** — four concurrent tracks: Build, Refine, Trial, Verdict.
+- **Decision** — one track: Routing → Assigned → Being worked on → Resolved.
+  Uses DESIGN.md's "Decision" vocabulary rather than "Input Request".
 
-`instructions` may contain `{{deploy_url}}`, which resolves to whichever
-deployment is being gated. One requirement therefore yields the demo's redirect
-URI and production's as **separate** acknowledgements, both of which must be
-registered.
+### Refine is a track, not a repeat of Build
 
-`requirement_acknowledgements` is keyed by `(requirement_id, resolved_value)`.
-A changed URL leaves no matching row, so the requirement is unmet again rather
-than silently vouching for a string nobody registered.
+`handleRequestChange` sets the Variation back to `creating`, so a first build and
+a third revision are **indistinguishable from the status column alone**. The
+revision records are the only place that difference lives, which is why
+`VariationLifecycle` requires them:
 
-### Deferral, because two of three platforms cannot know their URL in advance
+```go
+refining := st == VariationStatusCreating && rev.inFlight
+```
 
-Fly.io's hostname is deterministically `<app>.fly.dev`, so a redirect URI can be
-registered before the first deploy. Cloud Run assigns a hash at deploy time
-(`<service>-<hash>-<region>.a.run.app`) and GKE a LoadBalancer IP after
-provisioning.
+### A trial is not one fixed thing
 
-On those platforms an acknowledgement naming `{{deploy_url}}` is **deferred**:
-listed, explained, but neither met nor blocking, because blocking would make the
-demo unstartable. Once a deployment exists, its real URL is used and the
-acknowledgement becomes ordinary and actionable. `predictedDeployURL` is the one
-place that knows which platforms can answer in advance.
+A Hop that only wants a clickable demo never migrates data and never takes real
+traffic. Describing its stages as "Applying migrations" and "Serving live
+traffic" would promise work that will never happen. `shapeOfTrial` picks the
+stage sequence from what the Hop actually asks for, and "Applying data
+migrations" surfaces only while a migration is genuinely running.
 
-### Values are project-scoped, requirements are variation-scoped
+### Terminal is not a synonym for success
 
-An OAuth client ID is the same for every variation and for production, so it is
-entered once per project (`project_env_vars`). Requirements are declared per
-variation because what is needed depends on the code that was written.
+Three outcomes are distinguished by `Ribbon.StatusLabel()`: `Complete`,
+`Failed`, and `Closed` (eliminated, not selected, cancelled — over, but neither
+a success nor a failure). Badging a failed build "Complete" is the same class of
+bug as painting it green.
 
-`project_env_vars` is kept apart from `project_credentials`, which holds the
-platform credentials Mendel needs in order to deploy *at all*, rather than
-values belonging to the user's own application.
+### The panel shows the real roadmap, not a summary of it
 
-### Declared in the repo, in `.mendel/requirements.json`
+The first cut was a text strip of neighbouring Hop names. It was replaced by the
+actual roadmap graph, embedded and scrolled to the Hop in question, because a
+second, reduced drawing would drift from the real one, and the *shape* of the
+graph — how much is upstream, how much is still ahead — is most of what the
+panel is for.
 
-This amends the `.mendel/` allowed-files rule in CLAUDE.md, deliberately. The
-declaration follows the `migration.json` precedent for the same reason: what
-the code requires is a property of the code, code generation is the only thing
-that knows it, and it belongs next to what it describes.
+To make divergence impossible by construction, the roadmap page's inline
+renderer moved to `static/js/roadmap-view.js` and both callers use it;
+`handleRoadmap` and the panel share `buildRoadmapGraph` for the payload.
 
-The alternative — reporting requirements through the codegen response — keeps
-user repos untouched, which is the stronger reading of "minimize repository
-dependencies." It was rejected because the declaration would then live nowhere
-the code's author can see it.
+### Visual language of the ribbon
 
-The file is committed to the variation's branch, so on a revision it is still
-there unless the code no longer needs it. **Absent therefore means nothing is
-required**, and clears what a previous run declared — otherwise a revision that
-drops the OAuth flow leaves a demo blocked on a secret nothing reads.
+The first stepper read as a set of radio buttons ("select one of N") rather than
+a progression. Three things now carry direction of travel: arrows rather than
+plain rules between stages, arrows coloured only as far as progress has actually
+reached, and marks inside the dots (tick, cross) that a radio group would never
+have. Colour comes exclusively from `Tone` via CSS custom properties
+(`--tone`, `--tone-bg`, `--tone-ink`); no rule keys off a status name.
 
-A re-declaration preserves the IDs of requirements that survive it, and with
-them their acknowledgements: re-running codegen must not make the user
-re-register a redirect URI that is still required and still correct.
+## Files Created
 
-### Production requires what was merged
+### Domain
+- `internal/domain/lifecycle.go` — shared vocabulary: `Tone`, `StageState`,
+  `Actor`, `Stage`, `Track`, `Ribbon`, and `stageSeq`.
+- `internal/domain/hop_lifecycle.go` — `HopLifecycle(h, vars)`.
+- `internal/domain/variation_lifecycle.go` — `VariationLifecycle(v, revs, h)`.
+- `internal/domain/decision_lifecycle.go` — `DecisionLifecycle(ir)`, plus
+  `DecisionKindLabel`, `DecisionAsk`, `DecisionImportance`.
+- `internal/domain/lifecycle_test.go`
 
-`runChannelProdDeployment` deploys main, not a variation, so it gates on the
-union of requirements from variations in `merged`/`selected` status,
-deduplicated by `(kind, name)`. Two variations that both wired up Google sign-in
-describe the same requirement, and production should ask for it once.
+### Web
+- `internal/web/lifecycle_view.go` — `MiniRoadmap`, `buildMiniRoadmap`,
+  `buildRoadmapGraph`.
+- `internal/web/templates/partials.html` — `lifecycle-ribbon`, `roadmap-panel`.
+- `internal/web/static/js/roadmap-view.js` — the one roadmap renderer.
+- `internal/web/templates_test.go` — first tests in the `web` package.
+- `internal/web/preview_test.go` — component gallery generator.
 
-## New and modified files
+## Files Modified
 
-**New**
-- `internal/domain/requirements.go` — types, `{{deploy_url}}` resolution,
-  `EvaluateRequirements` and the met/deferred/blocking judgement
-- `internal/domain/requirements_test.go`
-- `internal/db/requirement_queries.go` — requirements, env vars, acknowledgements
-- `internal/db/requirement_queries_test.go` — real-SQL tests over an isolated
-  schema loaded from `full.sql`
-- `internal/web/requirements.go` — URL prediction, status assembly, secret
-  decryption, the three form handlers
-- `internal/web/requirements_test.go`
-- `internal/codegen/requirements_test.go`
-- `schema/migrations/031_variation_requirements.{up,down}.sql`
+- `internal/web/handlers.go` — `parsePageTemplate` now includes
+  `partials.html`; `handleRoadmap` collapsed onto `buildRoadmapGraph`.
+- `internal/web/handlers_hop.go` — `HopDetailView` and `VariationDetailView`
+  gain `Ribbon` and `Roadmap`; variation detail now loads revisions.
+- `internal/web/templates/layout.html` — tone tokens, ribbon, stepper, and
+  roadmap-panel CSS; adds `.status-neutral`.
+- `internal/web/templates/hop_detail.html` — panel + ribbon; the 76-line
+  narrator replaced by actionable-only branches.
+- `internal/web/templates/variation_detail.html` — panel + ribbon; new
+  "Requested changes" card.
+- `internal/web/templates/roadmap.html` — reduced to a call into `RoadmapView`.
+- `internal/web/templates/input_request_selection.html` — status mapping fix.
+- `internal/web/static/js/dag.js` — `terminated` moved to the failure palette.
 
-**Modified**
-- `internal/codegen/generator.go` — `saveRequirements`, declaration validation
-- `internal/codegen/cli.go` — the prompt section teaching the declaration format
-- `internal/web/handlers_demo.go` — gating in `handleStartDemo` and
-  `runChannelDemoDeployment`; secret injection in all three deploy functions
-- `internal/web/handlers_prod_deploy.go` — gating and injection for production
-- `internal/web/handlers_hop.go` — requirements on the variation detail view
-- `internal/web/templates/variation_detail.html` — the "What This Needs to Run"
-  section
-- `internal/web/server.go` — three routes
-- `CLAUDE.md` — `requirements.json` added to the `.mendel/` spec
-- `internal/web/flyurl_test.go` (new) — see below
+## Database Schema Changes
 
-## Schema changes (migration 031)
+**None.** This phase is presentation-only; it reads existing columns and adds no
+migrations.
 
-- `variation_requirements` — `(variation_id, kind, name)` unique; a CHECK
-  constraint refuses an acknowledgement with no instructions, since there would
-  be nothing to act on
-- `project_env_vars` — `(project_id, name)` unique, `encrypted_value BYTEA`
-- `requirement_acknowledgements` — `(requirement_id, resolved_value)` unique
+## Bugs Fixed
 
-## Secret injection, per platform
+1. `variation_detail.html` and `hop_detail.html` mapped `terminated` (a code or
+   test failure) to `status-resolved` — success green.
+2. `input_request_selection.html` mapped `rejected` to `status-resolved`,
+   identical to `merged`, so a losing Variation looked like the winner — on the
+   page where you pick the winner. Everything unmatched fell through to
+   `status-error`, so a still-building Variation read as an error.
+3. The roadmap DAG coloured `terminated` inert grey, as though it were a clean
+   shutdown.
 
-- **Fly.io** — `flyctl secrets set --stage` before `deploy`, so the first
-  machine to start already has them and no extra deploy is triggered
-- **Cloud Run** — `--set-env-vars` with the `^|^` delimiter override, because
-  the default comma separator would misread any value containing a comma
-- **GKE** — a `Secret` applied from a manifest written outside `workDir` and
-  deleted once applied, referenced by `envFrom`, so values never sit in the
-  checked-out repository
-
-## Also in this phase: the Fly.io URL bug
-
-Demo URLs were captured by taking the first `https://` in flyctl's output.
-flyctl prints a dashboard link before the app URL, and the build log carries
-whatever the project's toolchain emits — so staging recorded a monitoring page
-and, on another deploy, npm's release notes as the demo URL.
-
-`flyDeployedURL` now looks for the "Visit your newly deployed app at" marker,
-falls back to a `*.fly.dev` host preferring one that names the app, and finally
-to the deterministic hostname. It can never return a `fly.io` dashboard link.
-Both real staging failures are covered by tests.
+All three are now locked out by `TestNoStatusRendersFailureAsSuccess`, which
+greps the templates for the banned mappings.
 
 ## Verification
 
 ```bash
-go build ./... && go vet ./...
-MENDEL_TEST_DB_URL="postgres://bhs:@localhost:5432/mendel_test?sslmode=disable" go test ./... -count=1
+go build ./...
+go vet ./internal/...
+go test ./internal/...
+MENDEL_TEST_DB_URL="postgres://bhs:@localhost:5432/mendel_test?sslmode=disable" go test ./schema/...
 ```
 
-The `internal/db` tests exercise real SQL against an isolated schema. They
-caught a genuine bug during development: the first cut of
-`ReplaceVariationRequirements` joined kind and name with a NUL byte, which
-Postgres text cannot hold, so every re-declaration would have failed at runtime.
+Test coverage worth knowing about:
 
-## Known gaps
+- `lifecycle_test.go` keeps exhaustive enum lists (`allHopStatuses`,
+  `allVariationStatuses`, `allDecisionStatuses`, `allDecisionKinds`) so adding a
+  status **without teaching the lifecycle about it fails the tests** rather than
+  silently rendering "Unrecognized state" in the UI.
+- `templates_test.go` parses every page exactly as `parsePageTemplate` does.
+  Templates are parsed at request time via `template.Must`, so a syntax error
+  does not fail the build — it panics on the first request to that page.
+- `TestDetailPagesRender` renders both detail pages end to end through
+  `renderPage`. Parsing alone cannot catch a nil dereference or a bad field path.
 
-- A deferred acknowledgement is surfaced on the variation page after the first
-  deploy, but nothing *tells* the user it has become actionable — they have to
-  look. A notification or an InputRequest would close this.
-- Production gating uses merged variations' requirements. A requirement that
-  reached main by a route other than a Mendel merge is invisible to it.
-- Nothing yet re-checks acknowledgements when a deployment's URL changes; the
-  next deploy simply finds the requirement unmet, which is correct but late.
+Component gallery, for reviewing every ribbon state without a database or a
+running server:
+
+```bash
+MENDEL_PREVIEW=/tmp/preview.html go test ./internal/web/ -run TestGeneratePreview
+```
+
+The generated file is self-contained and publishable as-is. It does not include
+the roadmap panel, which needs dagre and the running app.
+
+`static/js/roadmap-view.js` was exercised under a throwaway jsdom harness to
+confirm it renders, centers on the focused Hop, re-centers when the panel is
+expanded, escapes Hop and Variation names, and returns cleanly on an empty
+roadmap.
+
+## Follow-ups Not Done
+
+- One shared review shell for the agent-conversation pages (roadmap review,
+  variation review, selection, credentials, hosting), which are visually
+  distinct today despite sharing a workflow. Backend consolidation behind a
+  `ReviewKind` interface should extract the domain effects (`approveRoadmap`,
+  `approveVariations`, `mergeWinnerToMain`) into a service layer first —
+  otherwise five divergent templates are traded for one god-interface.
+- Project home / orientation, breadcrumbs, and a human-readable decision queue.
+- `variation_detail.html` still maps demo-instance `stopped` to
+  `status-resolved` via a fall-through `{{else}}`.
+- Roadmap DAG nodes still colour from raw status rather than `Tone`; threading
+  tone through the hops JSON would finish the job the ribbon started.
