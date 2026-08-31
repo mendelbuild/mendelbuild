@@ -28,6 +28,24 @@ type LogLine struct {
 // client-side tailer produces for lines it appends.
 func (l LogLine) Timestamp() string { return l.LoggedAt.Format(LogTimeFormat) }
 
+// LevelLabel is the bracketed level as it appears in the panel. It lives here
+// rather than as a branch in the template for the same reason status colours
+// do: the template's job is to place it, not to decide what it says. It must
+// stay in step with levelCell() in static/js/log-tail.js, which writes the same
+// text for lines that arrive after the server render.
+func (l LogLine) LevelLabel() string {
+	switch l.Level {
+	case "milestone":
+		return "[MILESTONE]"
+	case "error":
+		return "[ERROR]"
+	case "info":
+		return "[INFO]"
+	default:
+		return "[" + l.Level + "]"
+	}
+}
+
 // LogFeed is what a tailing client polls: the owning object's status plus the
 // log so far. Status travels with the logs because a change in it means the
 // rest of the page is now stale and the client should reload.
@@ -48,8 +66,13 @@ type LogPanel struct {
 	// Live reports whether the underlying work is still running. Only live
 	// panels poll; a finished run is already complete on the server render.
 	Live bool
-	// MaxHeight bounds the scroll area, e.g. "300px".
-	MaxHeight string
+	// Tall selects the taller of the two scroll-area heights. A panel that is
+	// the point of its page (code generation, a deploy) is tall; one that is
+	// supporting detail beside other content is not. The two heights are
+	// design-system values in components.css, not arbitrary lengths: a free
+	// string here let each call site invent its own, which is how the app
+	// ended up with three different log panel sizes for no stated reason.
+	Tall bool
 	// Empty is shown when there are no lines yet.
 	Empty string
 	Lines []LogLine

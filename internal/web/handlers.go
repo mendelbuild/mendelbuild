@@ -1,12 +1,13 @@
 package web
 
 import (
-	"fmt"
 	"context"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
+	"strings"
 
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/go-chi/chi/v5"
@@ -16,7 +17,7 @@ import (
 //go:embed templates/*.html
 var templatesFS embed.FS
 
-//go:embed static/js/*.js static/*.png
+//go:embed static/js/*.js static/css/*.css static/*.png
 var staticFS embed.FS
 
 // templateFuncs provides custom functions for templates.
@@ -126,9 +127,57 @@ func parsePageTemplate(pageName string) *template.Template {
 }
 
 // renderPage renders a page template with the layout.
+//
+// Prefer renderPageFor. This is the escape hatch for the handful of pages
+// whose data is not a map (the login screen).
 func renderPage(w http.ResponseWriter, pageName string, data interface{}) error {
 	t := parsePageTemplate(pageName)
 	return t.ExecuteTemplate(w, "layout", data)
+}
+
+// renderPageFor renders a page and stamps the chrome the layout needs but no
+// handler should have to remember: who is signed in, and which navigation
+// section is current.
+//
+// Every handler used to add the user by hand and five of them forgot, so the
+// Hop and Variation pages showed no signed-in user and no way to log out.
+// Deriving it here means a new page cannot be born missing it.
+func (s *Server) renderPageFor(w http.ResponseWriter, r *http.Request, pageName string, data map[string]interface{}) error {
+	data["Nav"] = navSection(r.URL.Path)
+	return renderPage(w, pageName, data)
+}
+
+// navSection maps a request path to the navigation item that should read as
+// current. It returns "" for pages that sit under no section, which renders
+// the nav with nothing highlighted rather than guessing.
+func navSection(path string) string {
+	rest, ok := strings.CutPrefix(path, "/p/")
+	if !ok {
+		if path == "/" || strings.HasPrefix(path, "/new") {
+			return "projects"
+		}
+		return ""
+	}
+	// Drop the project ID; what follows is the section.
+	_, rest, _ = strings.Cut(rest, "/")
+	section, _, _ := strings.Cut(rest, "/")
+
+	switch section {
+	case "strategy", "roadmap", "settings", "inputs", "okr":
+		return section
+	case "deployment":
+		// Deployment configuration is part of settings, and the nav should say
+		// so even while it still lives at its own URL.
+		return "settings"
+	case "hops", "variations":
+		// A Hop or Variation is a place within the roadmap, so the roadmap is
+		// the section that contains it.
+		return "roadmap"
+	case "setup":
+		return "strategy"
+	default:
+		return ""
+	}
 }
 
 // addUserToData adds the current user to template data (if authenticated).
@@ -233,9 +282,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"Title":    "MendelBuild Dashboard",
 		"Projects": projects,
 	}
-	s.addUserToData(r, data)
 
-	if err := renderPage(w, "dashboard.html", data); err != nil {
+	if err := s.renderPageFor(w, r, "dashboard.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -316,9 +364,8 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)
 	s.addOnboardingRibbon(ctx, data)
-	s.addUserToData(r, data)
 
-	if err := renderPage(w, "strategy.html", data); err != nil {
+	if err := s.renderPageFor(w, r, "strategy.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -373,9 +420,8 @@ func (s *Server) handleInputRequests(w http.ResponseWriter, r *http.Request) {
 	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)
 	s.addOnboardingRibbon(ctx, data)
-	s.addUserToData(r, data)
 
-	if err := renderPage(w, "input_requests.html", data); err != nil {
+	if err := s.renderPageFor(w, r, "input_requests.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -444,9 +490,8 @@ func (s *Server) handleRoadmap(w http.ResponseWriter, r *http.Request) {
 	}
 	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)
-	s.addUserToData(r, data)
 
-	if err := renderPage(w, "roadmap.html", data); err != nil {
+	if err := s.renderPageFor(w, r, "roadmap.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

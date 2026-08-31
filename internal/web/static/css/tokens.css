@@ -1,0 +1,156 @@
+/* ============================================================================
+   Mendel design tokens
+   ============================================================================
+
+   Every colour, space, and size decision in the app is made once, here.
+   Templates and components.css reference these names and never a literal.
+
+   The rule that makes this worth having: a token names a MEANING, not an
+   appearance. `--tone-waiting` is "blocked on the user"; it happens to be
+   amber. Renaming it to `--amber` would let a template pick amber because
+   amber looked nice, which is exactly how the app arrived at forty
+   hand-chosen hex values saying nothing consistent.
+
+   ---- Tone ----------------------------------------------------------------
+
+   The six tones are not a palette. They are `domain.Tone` in
+   internal/domain/lifecycle.go, mirrored here one-for-one:
+
+       ToneNeutral  ToneProgress  ToneWaiting  ToneSuccess  ToneWarning  ToneFailure
+
+   Go decides which tone a thing is; CSS decides only what that tone looks
+   like. Adding a seventh colour here without a seventh domain.Tone means a
+   template is once again choosing colour by eye, and the lint test in
+   internal/web/templates_test.go will say so.
+
+   Each tone carries three values, and they are not interchangeable:
+
+       --tone-N        the line: borders, rules, bar fills, dots
+       --tone-N-bg     the fill: callout and badge backgrounds
+       --tone-N-ink    text ON that fill; contrast-checked against it
+
+   Never put --tone-N-ink on the page background, and never put --ink-1 on a
+   --tone-N-bg fill. The pairs are the unit.
+*/
+
+:root {
+    /* ---- Tone: neutral -----------------------------------------------------
+       Nothing has happened yet, or does not apply here. Deliberately grey:
+       an unstarted thing must not compete with a live one. */
+    --tone-neutral:     #6c757d;
+    --tone-neutral-bg:  #e9ecef;
+    --tone-neutral-ink: #383d41;
+
+    /* ---- Tone: progress ----------------------------------------------------
+       Mendel is working. Nothing is needed from the reader. Blue reads as
+       "informational, in motion" without implying either alarm or completion. */
+    --tone-progress:     #1a6dd4;
+    --tone-progress-bg:  #ddeafb;
+    --tone-progress-ink: #10457f;
+
+    /* ---- Tone: waiting -----------------------------------------------------
+       Blocked on the reader. This is the single most important state in the
+       app, so it gets the most arresting non-alarming colour. */
+    --tone-waiting:     #d99100;
+    --tone-waiting-bg:  #fdf3d7;
+    --tone-waiting-ink: #7a5200;
+
+    /* ---- Tone: success ----------------------------------------------------- */
+    --tone-success:     #1e8e46;
+    --tone-success-bg:  #dcf3e4;
+    --tone-success-ink: #12622f;
+
+    /* ---- Tone: warning -----------------------------------------------------
+       Something is off but nothing has failed. Distinct from `waiting`
+       (which is a request) and from `failure` (which is an outcome). */
+    --tone-warning:     #d3660c;
+    --tone-warning-bg:  #fdeadb;
+    --tone-warning-ink: #7d3a06;
+
+    /* ---- Tone: failure ----------------------------------------------------- */
+    --tone-failure:     #cf2438;
+    --tone-failure-bg:  #fbdde1;
+    --tone-failure-ink: #7d1522;
+
+    /* ---- Brand -------------------------------------------------------------
+       Mendel green is a chrome and identity colour: navigation, primary
+       buttons, the accent on setup screens. It is NOT a tone. A green button
+       does not mean success, it means "the main thing to press", which is why
+       it must never be reached for as a substitute for --tone-success. */
+    --brand:        #0D4D2D;
+    --brand-dark:   #093a21;
+    --brand-ink:    #ffffff;
+    --brand-accent: #F5A9C4;
+
+    /* ---- Surfaces ----------------------------------------------------------
+       Four depths, and four is the budget. Each must be distinguishable from
+       its neighbours at a glance or it is not carrying information. */
+    --surface-page:   #f4f5f6;  /* behind everything */
+    --surface-card:   #ffffff;  /* raised content */
+    --surface-sunken: #f7f8f9;  /* inset within a card: logs, code, table heads */
+    --surface-hover:  #eef0f2;
+
+    /* ---- Ink ---------------------------------------------------------------
+       Three weights of body text plus inverse. `--ink-3` is the floor: it is
+       the lightest text allowed to carry meaning. Anything fainter is
+       decoration and should not exist. */
+    --ink-1:       #1e2227;  /* headings, primary content */
+    --ink-2:       #4a5158;  /* secondary content, descriptions */
+    --ink-3:       #767e86;  /* labels, timestamps, hints */
+    --ink-inverse: #ffffff;
+
+    /* ---- Lines ------------------------------------------------------------- */
+    --line:        #e2e5e8;
+    --line-strong: #cbd0d5;
+
+    /* ---- Focus -------------------------------------------------------------
+       One focus treatment everywhere, never removed. */
+    --focus-ring: 0 0 0 3px rgba(26, 109, 212, 0.35);
+
+    /* ---- Space -------------------------------------------------------------
+       A 4px scale. Every margin, padding, and gap in the app is one of these
+       eight values; that constraint is most of what makes a page look
+       deliberate rather than assembled. */
+    --sp-1: 4px;
+    --sp-2: 8px;
+    --sp-3: 12px;
+    --sp-4: 16px;
+    --sp-5: 24px;
+    --sp-6: 32px;
+    --sp-7: 48px;
+    --sp-8: 64px;
+
+    /* ---- Type --------------------------------------------------------------
+       Six sizes. Sizes carry hierarchy; weight and colour carry emphasis
+       within a level. */
+    --text-xs:   0.75rem;   /* 12px - eyebrow labels, table meta */
+    --text-sm:   0.8125rem; /* 13px - secondary text, log lines */
+    --text-base: 0.9375rem; /* 15px - body */
+    --text-md:   1.0625rem; /* 17px - card titles */
+    --text-lg:   1.375rem;  /* 22px - page titles */
+    --text-xl:   1.75rem;   /* 28px - metrics */
+
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+    --leading-tight: 1.3;
+    --leading-body:  1.55;
+
+    /* ---- Radius ------------------------------------------------------------ */
+    --radius-sm:   4px;
+    --radius-md:   6px;
+    --radius-lg:   10px;
+    --radius-pill: 999px;
+
+    /* ---- Elevation ---------------------------------------------------------
+       Two levels. Shadows separate layers; they are not decoration, so a card
+       sitting on the page gets --shadow-1 and a thing floating above the page
+       gets --shadow-2, and nothing gets both. */
+    --shadow-1: 0 1px 2px rgba(16, 22, 26, 0.06), 0 1px 3px rgba(16, 22, 26, 0.05);
+    --shadow-2: 0 8px 24px rgba(16, 22, 26, 0.14);
+
+    /* ---- Layout ------------------------------------------------------------ */
+    --page-max: 1180px;
+    --measure:  68ch;   /* readable line length for prose */
+    --nav-h:    52px;
+}

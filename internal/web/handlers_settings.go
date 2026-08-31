@@ -217,9 +217,8 @@ func (s *Server) handleProjectSettings(w http.ResponseWriter, r *http.Request) {
 		"DemoScriptStatus":    demoScriptStatus,
 	}
 	s.addOpenInputCount(ctx, data)
-	s.addUserToData(r, data)
 
-	if err := renderPage(w, "project_settings.html", data); err != nil {
+	if err := s.renderPageFor(w, r, "project_settings.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -250,7 +249,7 @@ func (s *Server) handleSaveProjectSettings(w http.ResponseWriter, r *http.Reques
 	// Validate GitHub token has push permissions before saving
 	if repoURL != "" && authToken != "" {
 		if err := validateGitHubToken(repoURL, authToken); err != nil {
-			renderSettingsWithError(w, projectID, err.Error())
+			s.renderSettingsWithError(w, r, projectID, err.Error())
 			return
 		}
 	}
@@ -262,7 +261,7 @@ func (s *Server) handleSaveProjectSettings(w http.ResponseWriter, r *http.Reques
 	})
 
 	if err := s.db.UpsertRepository(ctx, projectID, repoURL, repoConfig); err != nil {
-		renderSettingsWithError(w, projectID, "Failed to save repository settings: "+err.Error())
+		s.renderSettingsWithError(w, r, projectID, "Failed to save repository settings: "+err.Error())
 		return
 	}
 
@@ -272,7 +271,7 @@ func (s *Server) handleSaveProjectSettings(w http.ResponseWriter, r *http.Reques
 	})
 
 	if err := s.db.UpdateProjectConfig(ctx, projectID, projectConfig); err != nil {
-		renderSettingsWithError(w, projectID, "Failed to save project settings: "+err.Error())
+		s.renderSettingsWithError(w, r, projectID, "Failed to save project settings: "+err.Error())
 		return
 	}
 
@@ -285,14 +284,14 @@ func (s *Server) handleSaveProjectSettings(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, "/p/"+projectID.String()+"/settings?success=1", http.StatusSeeOther)
 }
 
-func renderSettingsWithError(w http.ResponseWriter, projectID uuid.UUID, errMsg string) {
+func (s *Server) renderSettingsWithError(w http.ResponseWriter, r *http.Request, projectID uuid.UUID, errMsg string) {
 	data := map[string]interface{}{
 		"Title":     "Project Settings",
 		"ProjectID": projectID.String(),
 		"Error":     errMsg,
 		"Settings":  ProjectSettings{MainBranch: "main"},
 	}
-	renderPage(w, "project_settings.html", data)
+	s.renderPageFor(w, r, "project_settings.html", data)
 }
 
 // validateGitHubToken checks if a GitHub token has push permission to the repo.
@@ -382,20 +381,20 @@ func (s *Server) handleAddCloudCredential(w http.ResponseWriter, r *http.Request
 	value := r.FormValue("credential_value")
 
 	if name == "" {
-		renderSettingsWithError(w, projectID, "Credential name is required")
+		s.renderSettingsWithError(w, r, projectID, "Credential name is required")
 		return
 	}
 
 	// Get encryption key and encrypt the value
 	key, err := crypto.GetKey()
 	if err != nil {
-		renderSettingsWithError(w, projectID, "Encryption not configured: "+err.Error())
+		s.renderSettingsWithError(w, r, projectID, "Encryption not configured: "+err.Error())
 		return
 	}
 
 	encryptedValue, err := crypto.Encrypt([]byte(value), key)
 	if err != nil {
-		renderSettingsWithError(w, projectID, "Failed to encrypt credential: "+err.Error())
+		s.renderSettingsWithError(w, r, projectID, "Failed to encrypt credential: "+err.Error())
 		return
 	}
 
@@ -407,7 +406,7 @@ func (s *Server) handleAddCloudCredential(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := s.db.CreateProjectCredential(ctx, cred); err != nil {
-		renderSettingsWithError(w, projectID, "Failed to save credential: "+err.Error())
+		s.renderSettingsWithError(w, r, projectID, "Failed to save credential: "+err.Error())
 		return
 	}
 
@@ -442,18 +441,18 @@ func (s *Server) handleUpdateCloudCredential(w http.ResponseWriter, r *http.Requ
 	// Get encryption key and encrypt the value
 	key, err := crypto.GetKey()
 	if err != nil {
-		renderSettingsWithError(w, projectID, "Encryption not configured: "+err.Error())
+		s.renderSettingsWithError(w, r, projectID, "Encryption not configured: "+err.Error())
 		return
 	}
 
 	encryptedValue, err := crypto.Encrypt([]byte(value), key)
 	if err != nil {
-		renderSettingsWithError(w, projectID, "Failed to encrypt credential: "+err.Error())
+		s.renderSettingsWithError(w, r, projectID, "Failed to encrypt credential: "+err.Error())
 		return
 	}
 
 	if err := s.db.UpdateProjectCredential(ctx, credID, encryptedValue); err != nil {
-		renderSettingsWithError(w, projectID, "Failed to update credential: "+err.Error())
+		s.renderSettingsWithError(w, r, projectID, "Failed to update credential: "+err.Error())
 		return
 	}
 
@@ -485,7 +484,7 @@ func (s *Server) handleDeleteCloudCredential(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := s.db.DeleteProjectCredential(ctx, credID); err != nil {
-		renderSettingsWithError(w, projectID, "Failed to delete credential: "+err.Error())
+		s.renderSettingsWithError(w, r, projectID, "Failed to delete credential: "+err.Error())
 		return
 	}
 
@@ -664,7 +663,7 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 			FeedURL:   fmt.Sprintf("/api/deployments/%s/logs", latestProdDeployment.ID),
 			Status:    string(latestProdDeployment.Status),
 			Live:      latestProdDeployment.Status == domain.HostingDeploymentStatusDeploying,
-			MaxHeight: "400px",
+			Tall:      true,
 			Empty:     "No deploy logs yet.",
 			Lines:     logLinesFromDeployment(logs),
 		}
@@ -694,9 +693,8 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 		"ProdRequirements":     prodRequirements,
 		"Success":              r.URL.Query().Get("success") == "1",
 	}
-	s.addUserToData(r, data)
 
-	if err := renderPage(w, "deployment_channel.html", data); err != nil {
+	if err := s.renderPageFor(w, r, "deployment_channel.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

@@ -457,7 +457,7 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 	}
 	s.addOpenInputCount(ctx, data)
 
-	if err := renderPage(w, templateName, data); err != nil {
+	if err := s.renderPageFor(w, r, templateName, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

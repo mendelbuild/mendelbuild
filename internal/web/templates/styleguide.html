@@ -1,0 +1,344 @@
+{{define "page-content"}}
+<div class="page-head">
+    <span class="page-kind">Design system</span>
+    <h1 class="page-title">Mendel styleguide</h1>
+    <p class="page-lede">
+        Every component the app is allowed to use, and every lifecycle state it
+        can actually produce. The lifecycle ribbons below are not mock-ups: they
+        are real <code>domain.Ribbon</code> values built by the same functions the
+        live pages call, so this page cannot drift from the app.
+    </p>
+</div>
+
+<div class="card">
+    <div class="card-head"><h2 class="card-title">Contents</h2></div>
+    <div class="row">
+        <a href="#tone">Tone</a>
+        <a href="#type">Type &amp; space</a>
+        <a href="#buttons">Buttons</a>
+        <a href="#badges">Badges</a>
+        <a href="#callouts">Callouts</a>
+        <a href="#empty">Empty states</a>
+        <a href="#metrics">Metrics</a>
+        <a href="#tables">Tables</a>
+        <a href="#forms">Forms</a>
+        <a href="#chrome">Page chrome</a>
+        <a href="#logs">Logs &amp; disclosure</a>
+        <a href="#lifecycle">Lifecycle states</a>
+    </div>
+</div>
+
+{{/* ---- Tone ---------------------------------------------------------- */}}
+<h2 class="page-title" id="tone">Tone</h2>
+<div class="card">
+    <p class="card-note prose">
+        Six tones, mirroring <code>domain.Tone</code> one-for-one. Go decides which
+        tone a thing is; CSS decides only what that tone looks like. Each carries
+        three values that travel together: the line, the fill, and the ink that
+        goes on that fill. A seventh colour here without a seventh
+        <code>domain.Tone</code> means a template is choosing colour by eye again.
+    </p>
+    <table class="table">
+        <thead>
+            <tr><th>Tone</th><th>Means</th><th>Line</th><th>Fill + ink</th></tr>
+        </thead>
+        <tbody>
+            <tr><td><code>neutral</code></td><td>Not started, or not applicable</td>
+                <td><span class="swatch swatch-neutral"></span></td>
+                <td><span class="badge badge-neutral">badge / callout fill</span></td></tr>
+            <tr><td><code>progress</code></td><td>Mendel is working; nothing needed from you</td>
+                <td><span class="swatch swatch-progress"></span></td>
+                <td><span class="badge badge-progress">badge / callout fill</span></td></tr>
+            <tr><td><code>waiting</code></td><td>Blocked on you &mdash; the most important state in the app</td>
+                <td><span class="swatch swatch-waiting"></span></td>
+                <td><span class="badge badge-waiting">badge / callout fill</span></td></tr>
+            <tr><td><code>success</code></td><td>Finished, and it worked</td>
+                <td><span class="swatch swatch-success"></span></td>
+                <td><span class="badge badge-success">badge / callout fill</span></td></tr>
+            <tr><td><code>warning</code></td><td>Something is off, nothing has failed</td>
+                <td><span class="swatch swatch-warning"></span></td>
+                <td><span class="badge badge-warning">badge / callout fill</span></td></tr>
+            <tr><td><code>failure</code></td><td>Finished, and it did not work</td>
+                <td><span class="swatch swatch-failure"></span></td>
+                <td><span class="badge badge-failure">badge / callout fill</span></td></tr>
+        </tbody>
+    </table>
+    <p class="text-sm muted">
+        Mendel green is chrome, not a tone. A green button means &ldquo;the main thing
+        to press&rdquo;, never &ldquo;success&rdquo;.
+    </p>
+</div>
+
+{{/* ---- Type and space ------------------------------------------------ */}}
+<h2 class="page-title" id="type">Type &amp; space</h2>
+<div class="card">
+    <div class="stack">
+        <div class="metric-value">Metric &mdash; $1,284.40</div>
+        <h1 class="page-title">Page title &mdash; text-lg</h1>
+        <h2 class="card-title">Card title &mdash; text-md</h2>
+        <p>Body text &mdash; text-base. The default for anything a person reads in
+           sentences. Prose blocks are capped at a readable measure.</p>
+        <p class="text-sm muted">Secondary text &mdash; text-sm, ink-2. Descriptions and notes.</p>
+        <p class="text-xs subtle">Meta text &mdash; text-xs, ink-3. Timestamps and table meta. This is the
+           faintest text allowed to carry meaning; anything lighter is decoration.</p>
+        <p class="eyebrow">Eyebrow label</p>
+        <p><code>inline code</code> and <span class="mono numeric">1,234,567</span> tabular numerals.</p>
+    </div>
+</div>
+
+{{/* ---- Buttons ------------------------------------------------------- */}}
+<h2 class="page-title" id="buttons">Buttons</h2>
+<div class="card">
+    <p class="card-note prose">
+        Chosen by <strong>role</strong>, never by colour. Exactly one primary per
+        view: the thing the page wants you to do. The old variation page had five
+        different button colours inside a single card because colour was being
+        picked per site.
+    </p>
+    <div class="actions">
+        <button class="btn btn-primary">Primary</button>
+        <button class="btn btn-secondary">Secondary</button>
+        <button class="btn btn-danger">Danger</button>
+        <button class="btn btn-ghost">Ghost</button>
+        <button class="btn btn-primary" disabled>Disabled</button>
+    </div>
+    <hr class="divider">
+    <div class="actions">
+        <button class="btn btn-primary btn-sm">Primary small</button>
+        <button class="btn btn-secondary btn-sm">Secondary small</button>
+        <button class="btn btn-danger btn-sm">Danger small</button>
+    </div>
+</div>
+
+{{/* ---- Badges -------------------------------------------------------- */}}
+<h2 class="page-title" id="badges">Badges</h2>
+<div class="card">
+    <p class="card-note prose">
+        Tone-driven, always. A badge whose colour comes from a raw status string
+        is the bug this whole system exists to prevent.
+    </p>
+    <div class="row">
+        {{range .Tones}}<span class="badge badge-{{.}}">{{.}}</span>{{end}}
+        <span class="badge badge-quiet">quiet</span>
+    </div>
+</div>
+
+{{/* ---- Callouts ------------------------------------------------------ */}}
+<h2 class="page-title" id="callouts">Callouts</h2>
+<div class="card">
+    <p class="card-note prose">
+        One component replaces the eleven hand-rolled amber boxes. Links inside a
+        callout inherit the tone ink, because default link blue fights the fill.
+    </p>
+    <div class="stack">
+        {{range .Tones}}
+        <div class="callout callout-{{.}}">
+            <p class="callout-title">Callout &mdash; {{.}}</p>
+            <p class="callout-body">Body text explaining the situation, and what to do about it. <a href="#callouts">A link</a> inherits the tone.</p>
+        </div>
+        {{end}}
+        <div class="callout callout-failure">
+            <p class="callout-title">With a pre-formatted detail and an action</p>
+            <p class="callout-body">Deploy failed during the health check.</p>
+            <p class="callout-detail">Error: container exited before binding to $PORT
+  at /app/server.js:14</p>
+            <div class="actions">
+                <button class="btn btn-secondary btn-sm">Retry deploy</button>
+                <button class="btn btn-ghost btn-sm">View log</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{{/* ---- Empty states -------------------------------------------------- */}}
+<h2 class="page-title" id="empty">Empty states</h2>
+<div class="card">
+    <p class="card-note prose">
+        An empty region with no explanation reads as broken rather than as
+        not-yet-started. Say what would be here and how to make it appear.
+    </p>
+    <div class="stack">
+        <p class="empty">Inline: no variations yet.</p>
+        <div class="empty-block">
+            <div class="empty-title">No roadmap yet</div>
+            <p class="empty">Mendel drafts a roadmap from your objectives and budget. Nothing is committed until you approve it.</p>
+            <div class="actions"><button class="btn btn-primary">Draft a roadmap</button></div>
+        </div>
+    </div>
+</div>
+
+{{/* ---- Metrics ------------------------------------------------------- */}}
+<h2 class="page-title" id="metrics">Metrics &amp; meter</h2>
+<div class="card">
+    <div class="metrics">
+        <div><div class="metric-value">$41.82</div><div class="metric-label">Spent</div></div>
+        <div><div class="metric-value">$60.00</div><div class="metric-label">Estimated</div></div>
+        <div class="metric-alert"><div class="metric-value">$35.00</div><div class="metric-label">Ceiling</div></div>
+    </div>
+    <hr class="divider">
+    <div class="row row-baseline">
+        <div class="metric-value">$41.82 <span class="text-sm muted">of $120.00</span></div>
+        <span class="row-spacer text-sm muted">$78.18 left</span>
+    </div>
+    <div class="meter-wrap">
+        <div class="meter"><div class="meter-fill" data-w="35"></div></div>
+        <div class="meter-mark" data-x="61" title="Time elapsed in the budget period"></div>
+    </div>
+    <p class="text-sm muted">35% of budget spent, 61% of the period elapsed. <strong>Running under pace</strong>.</p>
+    <hr class="divider">
+    <div class="meter meter-over"><div class="meter-fill" data-w="100"></div></div>
+    <p class="text-sm muted">Over its ceiling.</p>
+</div>
+
+{{/* ---- Tables -------------------------------------------------------- */}}
+<h2 class="page-title" id="tables">Tables &amp; key-value lists</h2>
+<div class="card">
+    <div class="card-head">
+        <h2 class="card-title">Table</h2>
+        <a class="card-head-action" href="#tables">All hops &rarr;</a>
+    </div>
+    <table class="table">
+        <thead><tr><th>Name</th><th>Status</th><th class="table-num">Spend</th><th>Created</th></tr></thead>
+        <tbody>
+            <tr>
+                <td><a class="table-link" href="#tables">user-onboarding</a>
+                    <span class="table-sub">Sign-up, verification, and first-run state.</span></td>
+                <td><span class="badge badge-progress">Mendel is working</span></td>
+                <td class="table-num">$12.40</td>
+                <td class="subtle">2026-08-14</td>
+            </tr>
+            <tr>
+                <td><a class="table-link" href="#tables">billing-integration</a>
+                    <span class="table-sub">Stripe checkout and webhook handling.</span></td>
+                <td><span class="badge badge-waiting">Your move</span></td>
+                <td class="table-num">$29.42</td>
+                <td class="subtle">2026-08-20</td>
+            </tr>
+        </tbody>
+    </table>
+    <hr class="divider">
+    <h3 class="card-title">Key-value list</h3>
+    <p class="card-note">Replaces the &ldquo;Details&rdquo; tables on the Hop and Variation pages.</p>
+    <dl class="kv">
+        <dt>Approach</dt><dd>Server-rendered sessions with a signed cookie, no client-side token storage.</dd>
+        <dt>Branch</dt><dd><a href="#tables" class="mono">a1b2c3d4</a></dd>
+        <dt>Created</dt><dd class="subtle">2026-08-14 09:41</dd>
+    </dl>
+</div>
+
+{{/* ---- Forms --------------------------------------------------------- */}}
+<h2 class="page-title" id="forms">Forms</h2>
+<div class="card">
+    <div class="field">
+        <label for="sg-name">Repository URL</label>
+        <span class="hint">HTTPS URL for the git repository Mendel writes to.</span>
+        <input type="text" id="sg-name" placeholder="https://github.com/user/repo">
+    </div>
+    <div class="field-row">
+        <div class="field">
+            <label for="sg-branch">Main branch</label>
+            <input type="text" id="sg-branch" value="main">
+        </div>
+        <div class="field">
+            <label for="sg-token">Access token</label>
+            <input type="password" id="sg-token" placeholder="github_pat_...">
+        </div>
+    </div>
+    <div class="field">
+        <label>Deployment channel</label>
+        <div class="stack-tight">
+            <label class="choice">
+                <input type="radio" name="sg-combo" checked>
+                <span><span class="choice-title">container &rarr; Fly.io</span>
+                      <span class="choice-note">Fastest to a running demo. One machine per variation.</span></span>
+            </label>
+            <label class="choice">
+                <input type="radio" name="sg-combo">
+                <span><span class="choice-title">kubernetes &rarr; GKE</span>
+                      <span class="choice-note">Required for live-traffic experiments.</span></span>
+            </label>
+        </div>
+    </div>
+    <div class="actions"><button class="btn btn-primary">Save settings</button>
+        <button class="btn btn-secondary">Cancel</button></div>
+</div>
+
+{{/* ---- Page chrome --------------------------------------------------- */}}
+<h2 class="page-title" id="chrome">Page chrome</h2>
+<div class="card">
+    <p class="card-note prose">The spine every page shares: breadcrumb, then title, then the ribbon.</p>
+    <div class="page-head">
+        <nav class="breadcrumb">
+            <a href="#chrome">Acme Storefront</a><span class="breadcrumb-sep">/</span>
+            <a href="#chrome">Roadmap</a><span class="breadcrumb-sep">/</span>
+            <a href="#chrome">user-onboarding</a><span class="breadcrumb-sep">/</span>
+            <span>oauth-via-google</span>
+        </nav>
+        <span class="page-kind">Variation</span>
+        <h1 class="page-title">oauth-via-google</h1>
+        <p class="page-lede">Sign-in delegated to Google, with a server-side session cookie.</p>
+    </div>
+    <hr class="divider">
+    <h3 class="card-title">Tabs</h3>
+    <div class="tabs">
+        <a class="tab is-active" href="#chrome">Repository</a>
+        <a class="tab" href="#chrome">Credentials <span class="tab-count">3</span></a>
+        <a class="tab" href="#chrome">Deployment</a>
+        <a class="tab" href="#chrome">Members <span class="tab-count">2</span></a>
+    </div>
+</div>
+
+{{/* ---- Logs and disclosure ------------------------------------------- */}}
+<h2 class="page-title" id="logs">Logs &amp; disclosure</h2>
+<div class="card">
+    <div class="card-head"><h2 class="card-title">Log panel</h2></div>
+    {{template "log-tail" .LogPanel}}
+
+    <details class="disclosure">
+        <summary>Disclosure &mdash; the consistent home for detail a newcomer should not have to read</summary>
+        <div class="disclosure-body">
+            <p class="text-sm muted">Raw statuses, per-model cost breakdowns, deploy history, and
+               estimator notes all live behind one of these rather than in the body of a page.</p>
+            <dl class="kv">
+                <dt>Internal status</dt><dd><code>pending</code></dd>
+                <dt>Hop status</dt><dd><code>active</code></dd>
+            </dl>
+        </div>
+    </details>
+</div>
+
+{{/* ---- Lifecycle ----------------------------------------------------- */}}
+<h2 class="page-title" id="lifecycle">Lifecycle states</h2>
+<p class="page-lede">
+    Real ribbons from the real lifecycle functions. If a state here reads badly,
+    the fix belongs in <code>internal/domain/</code>, not in a template.
+</p>
+
+{{range .Lifecycles}}
+<div class="card">
+    <div class="card-head"><h2 class="card-title">{{.Title}}</h2></div>
+    <p class="card-note prose">{{.Note}}</p>
+    {{range .Specimens}}
+    <div class="stack-tight">
+        <div class="row row-baseline row-tight">
+            <code>{{.Label}}</code>
+            {{if .Note}}<span class="text-sm subtle">{{.Note}}</span>{{end}}
+        </div>
+        {{template "lifecycle-ribbon" .Ribbon}}
+    </div>
+    {{end}}
+</div>
+{{end}}
+
+<script>
+// Widths are data, not style: a `style` attribute in a template is exactly what
+// the lint test forbids, and a meter's fill is the one place a real page needs
+// a computed length. Setting it here keeps the rule absolute.
+document.querySelectorAll('[data-w]').forEach(function (el) {
+    el.style.width = el.dataset.w + '%';
+});
+document.querySelectorAll('[data-x]').forEach(function (el) {
+    el.style.left = el.dataset.x + '%';
+});
+</script>
+{{end}}

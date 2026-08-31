@@ -2,14 +2,20 @@
 Shared components. This file is parsed alongside layout.html for every page, so
 any template defined here is available everywhere.
 
-lifecycle-ribbon expects a domain.Ribbon.
-roadmap-panel   expects a *web.MiniRoadmap.
+    lifecycle-ribbon    expects a domain.Ribbon
+    roadmap-panel       expects a *web.MiniRoadmap
+    log-tail            expects a *web.LogPanel
+    requirements-panel  expects a web.RequirementsPanel
+
+These carry no `style=` attributes and no colour literals. Every appearance
+decision is a class from static/css/components.css; see /styleguide for the
+full set rendered in every tone and state.
 */}}
 
 {{define "lifecycle-ribbon"}}
-<div class="ribbon ribbon-{{.Tone}}">
+<section class="ribbon ribbon-{{.Tone}}">
     <div class="ribbon-head">
-        <span class="ribbon-status-label">Status</span>
+        <span class="eyebrow">{{.Subject}}</span>
         <span class="ribbon-headline">{{.Headline}}</span>
         {{/* StatusLabel, not WaitingOn: a finished Variation whose build failed
              is terminal, but it is not "Complete". */}}
@@ -34,17 +40,22 @@ roadmap-panel   expects a *web.MiniRoadmap.
     </div>
     {{end}}
 
-    <p class="ribbon-next">{{.NextAction}}</p>
-</div>
+    {{/* The foot is where a page's primary action belongs, beside the sentence
+         explaining why it is being offered. Pages that have one render it into
+         `.ribbon-foot .actions`; see /styleguide. */}}
+    <div class="ribbon-foot">
+        <p class="ribbon-next">{{.NextAction}}</p>
+    </div>
+</section>
 {{end}}
 
 {{define "roadmap-panel"}}
 {{if .HasContext}}
 <section class="roadmap-panel" data-roadmap-panel>
     <div class="roadmap-panel-head">
-        <span class="roadmap-panel-caption">Roadmap context</span>
+        <span class="eyebrow">Roadmap context</span>
         <span class="roadmap-panel-hint">Drag to pan &middot; shift-scroll to zoom</span>
-        <button type="button" class="roadmap-panel-toggle" data-roadmap-toggle aria-expanded="false">Expand</button>
+        <button type="button" class="btn btn-secondary btn-sm roadmap-panel-toggle" data-roadmap-toggle aria-expanded="false">Expand</button>
         <a class="roadmap-panel-all" href="/p/{{.ProjectID}}/roadmap">Open full roadmap &rarr;</a>
     </div>
     <div class="roadmap-panel-canvas" data-roadmap-canvas></div>
@@ -62,7 +73,7 @@ roadmap-panel   expects a *web.MiniRoadmap.
         // The renderer needs dagre from a CDN. If it did not load, say so and
         // point at the full roadmap rather than leaving an empty box.
         if (typeof dagre === 'undefined' || typeof RoadmapView === 'undefined') {
-            canvas.innerHTML = '<p class="empty" style="padding: 20px;">Roadmap could not be drawn. ' +
+            canvas.innerHTML = '<p class="empty empty-block">Roadmap could not be drawn. ' +
                 '<a href="/p/{{.ProjectID}}/roadmap">Open the full roadmap</a>.</p>';
             return;
         }
@@ -127,34 +138,27 @@ roadmap-panel   expects a *web.MiniRoadmap.
 {{define "log-tail"}}
 {{with .}}
 <div id="{{.DOMID}}"
+     class="log{{if .Tall}} log-tall{{end}}"
      data-log-feed="{{.FeedURL}}"
      data-log-status="{{.Status}}"
      data-log-live="{{if .Live}}true{{else}}false{{end}}">
-    <div data-log-scroll
-         style="max-height: {{if .MaxHeight}}{{.MaxHeight}}{{else}}300px{{end}}; overflow-y: auto; background: #f8f9fa; border-radius: 4px; padding: 10px;">
-        <table style="font-family: monospace; font-size: 0.85em; width: 100%;">
+    <div class="log-scroll" data-log-scroll>
+        <table class="log-table">
             <tbody data-log-body>
                 {{range .Lines}}
                 <tr>
-                    <td style="white-space: nowrap; color: #999; padding-right: 10px; vertical-align: top;">{{.Timestamp}}</td>
-                    <td style="padding-right: 8px; vertical-align: top;">
-                        {{if eq .Level "milestone"}}<span style="color: #28a745; font-weight: bold;">[MILESTONE]</span>
-                        {{else if eq .Level "error"}}<span style="color: #dc3545; font-weight: bold;">[ERROR]</span>
-                        {{else if eq .Level "info"}}<span style="color: #007bff;">[INFO]</span>
-                        {{else}}<span style="color: #6c757d;">[{{.Level}}]</span>{{end}}
-                    </td>
-                    <td style="word-break: break-word;">{{.Message}}</td>
+                    <td class="log-time">{{.Timestamp}}</td>
+                    <td class="log-level log-level-{{.Level}}">{{.LevelLabel}}</td>
+                    <td class="log-msg">{{.Message}}</td>
                 </tr>
                 {{end}}
             </tbody>
         </table>
-        <p data-log-empty class="empty" {{if .Lines}}style="display: none;"{{end}}>
+        <p data-log-empty class="empty"{{if .Lines}} hidden{{end}}>
             {{if .Empty}}{{.Empty}}{{else}}No logs yet.{{end}}
         </p>
     </div>
-    {{if .Live}}
-    <div style="font-size: 0.8em; color: #666; margin-top: 4px;">Streaming&hellip;</div>
-    {{end}}
+    {{if .Live}}<div class="log-foot">Streaming&hellip;</div>{{end}}
 </div>
 <script src="/static/js/log-tail.js"></script>
 {{end}}
@@ -163,54 +167,49 @@ roadmap-panel   expects a *web.MiniRoadmap.
 {{define "requirements-panel"}}
 {{if .HasAny}}
 <div class="card">
-    <h2>{{.Title}}</h2>
-    <p style="color: #666; font-size: 0.9em; margin-top: 0;">
+    <div class="card-head"><h2 class="card-title">{{.Title}}</h2></div>
+    <p class="card-note">
         {{.Intro}} Values are stored once per project and reused by demos and production.
     </p>
 
     {{$base := .ActionBase}}
     {{$deferredNote := .DeferredNote}}
+    <div class="stack">
     {{range .Statuses}}
-    <div style="padding: 12px; margin-bottom: 10px; border-radius: 4px; border: 1px solid {{if .Met}}#c3e6cb{{else if .Deferred}}#b8daff{{else}}#ffc107{{end}}; background: {{if .Met}}#f4fbf6{{else if .Deferred}}#e7f1ff{{else}}#fff3cd{{end}};">
-        <div style="display: flex; align-items: baseline; gap: 8px;">
-            <code style="font-weight: 600;">{{.Requirement.Name}}</code>
-            <span style="font-size: 0.8em; color: #666;">
+    <div class="callout callout-{{if .Met}}success{{else if .Deferred}}progress{{else}}waiting{{end}}">
+        <div class="row row-baseline row-tight">
+            <code>{{.Requirement.Name}}</code>
+            <span class="text-xs">
                 {{if .Met}}provided{{else if .Deferred}}waiting for the deployment URL{{else}}needed{{end}}
             </span>
         </div>
 
         {{if .Requirement.Description}}
-        <p style="margin: 6px 0 0 0; font-size: 0.9em; color: #444;">{{derefString .Requirement.Description}}</p>
+        <p class="callout-body">{{derefString .Requirement.Description}}</p>
         {{end}}
 
         {{if eq .Requirement.Kind "secret"}}
             {{if .Requirement.ConsoleURL}}
-            <p style="margin: 6px 0 0 0; font-size: 0.85em;">
-                <a href="{{derefString .Requirement.ConsoleURL}}" target="_blank">Where to find this</a>
-            </p>
+            <p class="callout-body"><a href="{{derefString .Requirement.ConsoleURL}}" target="_blank">Where to find this</a></p>
             {{end}}
-            <form method="POST" action="{{$base}}/{{.Requirement.ID}}/value" style="margin-top: 8px; display: flex; gap: 8px;">
+            <form method="POST" action="{{$base}}/{{.Requirement.ID}}/value" class="row row-tight actions">
                 <input type="password" name="value" autocomplete="off"
-                       placeholder="{{if .Met}}Replace stored value{{else}}Paste the value{{end}}"
-                       style="flex: 1; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-family: monospace;">
-                <button type="submit" style="padding: 6px 14px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                    Save
-                </button>
+                       class="input input-mono input-inline"
+                       placeholder="{{if .Met}}Replace stored value{{else}}Paste the value{{end}}">
+                <button type="submit" class="btn btn-primary btn-sm">Save</button>
             </form>
 
         {{else}}
             {{if .Deferred}}
-            <p style="margin: 6px 0 0 0; font-size: 0.9em; color: #004085;">{{$deferredNote}}</p>
+            <p class="callout-body">{{$deferredNote}}</p>
             {{else}}
-            <p style="margin: 8px 0 0 0; font-size: 0.9em; white-space: pre-wrap;">{{.ResolvedValue}}</p>
+            <p class="callout-detail">{{.ResolvedValue}}</p>
             {{if .Requirement.ConsoleURL}}
-            <p style="margin: 6px 0 0 0; font-size: 0.85em;">
-                <a href="{{derefString .Requirement.ConsoleURL}}" target="_blank">Open the console</a>
-            </p>
+            <p class="callout-body"><a href="{{derefString .Requirement.ConsoleURL}}" target="_blank">Open the console</a></p>
             {{end}}
-            <form method="POST" action="{{$base}}/{{.Requirement.ID}}/{{if .Met}}retract{{else}}acknowledge{{end}}" style="margin-top: 8px;">
+            <form method="POST" action="{{$base}}/{{.Requirement.ID}}/{{if .Met}}retract{{else}}acknowledge{{end}}" class="actions">
                 <input type="hidden" name="resolved_value" value="{{.ResolvedValue}}">
-                <button type="submit" style="padding: 6px 14px; background: {{if .Met}}#6c757d{{else}}#28a745{{end}}; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                <button type="submit" class="btn {{if .Met}}btn-secondary{{else}}btn-primary{{end}} btn-sm">
                     {{if .Met}}I have not done this{{else}}I've done this{{end}}
                 </button>
             </form>
@@ -218,6 +217,7 @@ roadmap-panel   expects a *web.MiniRoadmap.
         {{end}}
     </div>
     {{end}}
+    </div>
 </div>
 {{end}}
 {{end}}

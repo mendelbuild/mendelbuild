@@ -93,8 +93,7 @@ func (s *Server) renderNewProject(w http.ResponseWriter, r *http.Request, form n
 		"Error":  errMsg,
 		"Ribbon": domain.OnboardingLifecycle(domain.OnboardingState{}),
 	}
-	s.addUserToData(r, data)
-	if err := renderPage(w, "new_project.html", data); err != nil {
+	if err := s.renderPageFor(w, r, "new_project.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -495,8 +494,7 @@ func (s *Server) renderSetupOKRs(ctx context.Context, w http.ResponseWriter, r *
 		"ProjectID": projectID.String(),
 		"View":      view,
 	}
-	s.addUserToData(r, data)
-	if err := renderPage(w, "setup_okrs.html", data); err != nil {
+	if err := s.renderPageFor(w, r, "setup_okrs.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

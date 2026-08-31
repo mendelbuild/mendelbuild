@@ -628,6 +628,10 @@ func (s *Server) setupRoutes() {
 		// Global pages
 		r.Get("/", s.handleDashboard)
 
+		// The design system's own review surface. Not project-scoped: it
+		// renders components and real lifecycle values, never real data.
+		r.Get("/styleguide", s.handleStyleguide)
+
 		// Guided project creation (see handlers_onboarding.go)
 		r.Get("/new", s.handleNewProject)
 		r.Post("/new", s.handleCreateProject)

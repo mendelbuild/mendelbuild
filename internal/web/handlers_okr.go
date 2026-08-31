@@ -91,9 +91,8 @@ func (s *Server) handleOKREditor(w http.ResponseWriter, r *http.Request) {
 	}
 	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)
-	s.addUserToData(r, data)
 
-	if err := renderPage(w, "okr_editor.html", data); err != nil {
+	if err := s.renderPageFor(w, r, "okr_editor.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -197,7 +196,7 @@ func (s *Server) handleObjectiveDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	s.addOpenInputCount(ctx, data)
 
-	if err := renderPage(w, "okr_editor.html", data); err != nil {
+	if err := s.renderPageFor(w, r, "okr_editor.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

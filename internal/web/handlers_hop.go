@@ -221,7 +221,7 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	s.addOpenInputCount(ctx, data)
 
-	if err := renderPage(w, "hop_detail.html", data); err != nil {
+	if err := s.renderPageFor(w, r, "hop_detail.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -463,7 +463,7 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		FeedURL:   fmt.Sprintf("/api/variations/%s/logs", variationID),
 		Status:    string(variation.Status),
 		Live:      variation.Status == domain.VariationStatusCreating,
-		MaxHeight: "500px",
+		Tall:      true,
 		Empty:     "No logs yet.",
 		Lines:     logLinesFromVariation(logs),
 	}
@@ -476,7 +476,6 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 			FeedURL:   fmt.Sprintf("/api/demos/%s/logs", demoInstance.ID),
 			Status:    string(demoInstance.Status),
 			Live:      demoInstance.Status == domain.DemoInstanceStatusStarting,
-			MaxHeight: "300px",
 			Empty:     "No demo logs yet.",
 			Lines:     logLinesFromVariation(demoLogs),
 		}
@@ -513,7 +512,7 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	s.addOpenInputCount(ctx, data)
 
-	if err := renderPage(w, "variation_detail.html", data); err != nil {
+	if err := s.renderPageFor(w, r, "variation_detail.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
