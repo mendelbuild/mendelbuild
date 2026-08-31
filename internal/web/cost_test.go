@@ -162,11 +162,11 @@ func TestStrategyBudgetCardRenders(t *testing.T) {
 	}
 
 	t.Run("budget with a period and funded key results", func(t *testing.T) {
-		body := renderPageForTest(t, "strategy.html", map[string]interface{}{
+		body := renderPageForTest(t, "costs.html", map[string]interface{}{
 			"ProjectID": projectID.String(), "Strategy": strategyView, "Cost": full,
 		})
 		for _, want := range []string{
-			"$1500", "of $2000", "$500 left",
+			"$1500", "of $2000 budgeted", "$500", "Remaining",
 			"75% of budget spent", "50% of the period elapsed", "faster than the schedule",
 			"Q3 build", "Weekly active users", "1 of", "8.4M", "codegen", "Where the money went",
 		} {
@@ -198,7 +198,7 @@ func TestStrategyBudgetCardRenders(t *testing.T) {
 			TotalKeyResults: 2,
 		}}
 
-		body := renderPageForTest(t, "strategy.html", map[string]interface{}{
+		body := renderPageForTest(t, "costs.html", map[string]interface{}{
 			"ProjectID": projectID.String(), "Strategy": strategyView, "Cost": &everything,
 		})
 
@@ -216,23 +216,25 @@ func TestStrategyBudgetCardRenders(t *testing.T) {
 	// Spend recorded with no budget set must say so plainly rather than
 	// rendering a progress bar against zero.
 	t.Run("spend recorded but no budget set", func(t *testing.T) {
-		body := renderPageForTest(t, "strategy.html", map[string]interface{}{
+		body := renderPageForTest(t, "costs.html", map[string]interface{}{
 			"ProjectID": projectID.String(), "Strategy": strategyView,
 			"Cost": &StrategyCostView{SpentUSD: 42.5},
 		})
-		if !strings.Contains(body, "No budget defined") {
+		if !strings.Contains(body, "No budget is defined") {
 			t.Error("expected the card to say no budget is defined")
 		}
-		if !strings.Contains(body, "$42.50 spent so far") {
-			t.Error("expected spend to date to still be shown")
+		for _, want := range []string{"$42.50", "Spent to date"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("expected spend to date to still be shown: missing %q", want)
+			}
 		}
 	})
 
 	t.Run("no cost data at all", func(t *testing.T) {
-		body := renderPageForTest(t, "strategy.html", map[string]interface{}{
+		body := renderPageForTest(t, "costs.html", map[string]interface{}{
 			"ProjectID": projectID.String(), "Strategy": strategyView,
 		})
-		if strings.Contains(body, "No budget defined") {
+		if strings.Contains(body, "No budget is defined") {
 			t.Error("the budget card should be absent entirely, not empty")
 		}
 	})
@@ -407,7 +409,7 @@ func TestStrategyPageRendersPerModelCosts(t *testing.T) {
 		Strategy: &domain.Strategy{ID: uuid.New(), Name: "Q3"},
 	}
 
-	body := renderPageForTest(t, "strategy.html", map[string]interface{}{
+	body := renderPageForTest(t, "costs.html", map[string]interface{}{
 		"ProjectID": projectID.String(), "Strategy": strategyView,
 		"Cost": &StrategyCostView{
 			BudgetUSD: 500, SpentUSD: 140,
@@ -433,7 +435,7 @@ func TestStrategyPageRendersPerModelCosts(t *testing.T) {
 		"3.4M",                                       // cache reads, visible only since the ledger records them
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("per-model table missing %q", want)
+			t.Errorf("cost page missing %q", want)
 		}
 	}
 }
@@ -447,7 +449,7 @@ func TestStrategyPageWarnsAboutUnpricedModels(t *testing.T) {
 		Strategy: &domain.Strategy{ID: uuid.New(), Name: "Q3"},
 	}
 
-	body := renderPageForTest(t, "strategy.html", map[string]interface{}{
+	body := renderPageForTest(t, "costs.html", map[string]interface{}{
 		"ProjectID": projectID.String(), "Strategy": strategyView,
 		"Cost": &StrategyCostView{
 			BudgetUSD: 500, SpentUSD: 140,
@@ -460,7 +462,7 @@ func TestStrategyPageWarnsAboutUnpricedModels(t *testing.T) {
 		}
 	}
 
-	clean := renderPageForTest(t, "strategy.html", map[string]interface{}{
+	clean := renderPageForTest(t, "costs.html", map[string]interface{}{
 		"ProjectID": projectID.String(), "Strategy": strategyView,
 		"Cost": &StrategyCostView{BudgetUSD: 500, SpentUSD: 140},
 	})

@@ -168,61 +168,54 @@ func TestDeploymentChannelRendersDeployStates(t *testing.T) {
 	})
 }
 
-// TestStrategyRendersProdDeployment covers the deployment card on the strategy
-// page, which reads the live deployment rather than the channel now.
-func TestStrategyRendersProdDeployment(t *testing.T) {
-	projectID := uuid.New()
-	strategyView := &StrategyView{
-		Project:  &domain.Project{ID: projectID, Name: "pong"},
-		Strategy: &domain.Strategy{ID: uuid.New(), Name: "Q3"},
-	}
+// TestDeploymentSummaryStates covers the one-line reading of a project's
+// deployment, which the overview shows and which three separate pages used to
+// render three different ways.
+func TestDeploymentSummaryStates(t *testing.T) {
+	const href = "/p/x/deployment"
 
-	t.Run("deployed shows url and commit", func(t *testing.T) {
-		body := renderPageForTest(t, "strategy.html", map[string]interface{}{
-			"ProjectID": projectID.String(), "Strategy": strategyView,
-			"DeploymentChannel": validatedChannel(),
-			"ProdDeployment":    prodDeployment(domain.HostingDeploymentStatusRunning),
-		})
-		for _, want := range []string{"https://pong-prod.fly.dev", "abcdef12", "Manage"} {
-			if !strings.Contains(body, want) {
-				t.Errorf("strategy page missing %q", want)
-			}
+	t.Run("deployed reports the live release", func(t *testing.T) {
+		got := summarizeDeployment(href, validatedChannel(), prodDeployment(domain.HostingDeploymentStatusRunning))
+		if !got.Configured {
+			t.Error("a project with a channel is configured")
+		}
+		if got.URL != "https://pong-prod.fly.dev" {
+			t.Errorf("URL = %q", got.URL)
+		}
+		if got.ShortCommit != "abcdef12" {
+			t.Errorf("ShortCommit = %q", got.ShortCommit)
+		}
+		if got.Status.Tone != domain.ToneSuccess {
+			t.Errorf("a live deployment should read as success, got %q", got.Status.Tone)
 		}
 	})
 
 	// A configured, validated channel that has simply never shipped must not be
-	// presented as unconfigured. The button used to key off the production URL
+	// presented as unconfigured. The old card keyed off the production URL
 	// rather than the channel, so this state rendered as "Set Up" and read as
-	// though the deployment channel still needed creating.
-	t.Run("channel but never deployed offers management, not setup", func(t *testing.T) {
-		body := renderPageForTest(t, "strategy.html", map[string]interface{}{
-			"ProjectID": projectID.String(), "Strategy": strategyView,
-			"DeploymentChannel": validatedChannel(),
-		})
-		if !strings.Contains(body, "Prod validated") {
-			t.Error("a validated-but-undeployed channel should say so")
+	// though the channel still needed creating.
+	t.Run("validated but never deployed is not unfinished setup", func(t *testing.T) {
+		got := summarizeDeployment(href, validatedChannel(), nil)
+		if !got.Configured {
+			t.Error("an existing channel is configured, deployed or not")
 		}
-		if !strings.Contains(body, "Not yet deployed to production") {
-			t.Error("the undeployed state should be stated, not just implied by colour")
-		}
-		if strings.Contains(body, "Set Up") {
-			t.Error(`an existing channel must not offer "Set Up"; it is already set up`)
-		}
-		if !strings.Contains(body, "Manage") {
-			t.Error("an existing channel should offer management")
-		}
-		if strings.Contains(body, "pong-prod.fly.dev") {
+		if got.URL != "" {
 			t.Error("a project that never deployed must not show a production URL")
+		}
+		if got.Status.Tone == domain.ToneNeutral {
+			t.Errorf("a validated channel should not read as not-configured: %q", got.Status.Label)
 		}
 	})
 
 	t.Run("no channel offers setup", func(t *testing.T) {
-		body := renderPageForTest(t, "strategy.html", map[string]interface{}{
-			"ProjectID": projectID.String(), "Strategy": strategyView,
-			"SupportedCombos": []domain.SupportedDeploymentCombo{{}},
-		})
-		if !strings.Contains(body, "Set Up Deployment") {
-			t.Error("a project with no channel should be offered setup")
+		got := summarizeDeployment(href, nil, nil)
+		if got.Configured {
+			t.Error("a project with no channel is not configured")
+		}
+		if got.Status.Label != "Not configured" {
+			t.Errorf("Status.Label = %q", got.Status.Label)
 		}
 	})
 }
+
+// The overview has to render each of those states without erroring, since a bad

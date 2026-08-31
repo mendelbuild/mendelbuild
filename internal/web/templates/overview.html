@@ -1,0 +1,139 @@
+{{define "page-content"}}
+{{with .View}}
+<div class="page-head">
+    <span class="page-kind">Project</span>
+    <h1 class="page-title">{{.Project.Name}}</h1>
+    {{if .Strategy}}<p class="page-lede">{{.Strategy.Name}}</p>{{end}}
+</div>
+
+{{/* Until the first Variation exists, setup is the whole story. After that the
+     per-Hop readings below say more than this one does. */}}
+{{if $.OnboardingRibbon}}{{template "lifecycle-ribbon" $.OnboardingRibbon}}{{end}}
+
+<div class="split">
+    <div>
+        <div class="card">
+            <div class="card-head">
+                <h2 class="card-title">Needs you</h2>
+                {{if .NeedsYou}}<span class="badge badge-waiting">{{len .NeedsYou}}</span>{{end}}
+                <a class="card-head-action" href="/p/{{$.ProjectID}}/inputs">All decisions &rarr;</a>
+            </div>
+
+            {{if .NeedsYou}}
+            <div class="stack-tight">
+                {{range .NeedsYou}}
+                <a class="callout callout-quiet callout-{{.Tone}}" href="{{.Href}}">
+                    <span class="eyebrow">{{.Kind}}</span>
+                    <p class="callout-title">{{.Title}}</p>
+                    <p class="callout-body">{{.Note}}</p>
+                </a>
+                {{end}}
+            </div>
+            {{else}}
+            <p class="empty">
+                Nothing is waiting on you. Anything Mendel needs from you appears here
+                and in the Decisions queue.
+            </p>
+            {{end}}
+        </div>
+
+        {{if .InFlight}}
+        <div class="card">
+            <div class="card-head">
+                <h2 class="card-title">Mendel is working on</h2>
+                <span class="badge badge-quiet">{{len .InFlight}}</span>
+            </div>
+            <div class="stack-tight">
+                {{range .InFlight}}
+                <a class="callout callout-quiet callout-{{.Tone}}" href="{{.Href}}">
+                    <span class="eyebrow">{{.Kind}}</span>
+                    <p class="callout-title">{{.Title}}</p>
+                    <p class="callout-body">{{.Note}}</p>
+                </a>
+                {{end}}
+            </div>
+        </div>
+        {{end}}
+
+        {{if and .Quiet .Strategy}}
+        <div class="card">
+            <div class="empty-block">
+                <div class="empty-title">Nothing is in flight</div>
+                <p class="empty">
+                    Every Hop on the roadmap is settled and nothing is waiting on you.
+                    Propose changes to the roadmap to give Mendel more to do.
+                </p>
+                <div class="actions">
+                    <a class="btn btn-primary" href="/p/{{$.ProjectID}}/roadmap">Open the roadmap</a>
+                </div>
+            </div>
+        </div>
+        {{end}}
+
+        {{template "roadmap-panel" .Roadmap}}
+    </div>
+
+    <div class="stack">
+        <div class="card">
+            <div class="card-head">
+                <h2 class="card-title">Deployment</h2>
+                <span class="badge badge-{{.Deployment.Status.Tone}}">{{.Deployment.Status.Label}}</span>
+            </div>
+            {{if .Deployment.Configured}}
+            <p class="text-sm muted">{{.Deployment.Channel}}</p>
+            {{if .Deployment.URL}}
+            <p><a href="{{.Deployment.URL}}" target="_blank">{{.Deployment.URL}}</a></p>
+            {{if .Deployment.ShortCommit}}<p class="text-xs subtle">Running <code>{{.Deployment.ShortCommit}}</code></p>{{end}}
+            {{end}}
+            <div class="actions">
+                <a class="btn btn-secondary btn-sm" href="{{.Deployment.Href}}">Manage</a>
+            </div>
+            {{else}}
+            <p class="empty">Mendel has nowhere to run demos or ship production yet.</p>
+            <div class="actions">
+                <a class="btn btn-primary btn-sm" href="{{.Deployment.Href}}">Configure deployment</a>
+            </div>
+            {{end}}
+        </div>
+
+        {{with .Cost}}
+        <div class="card">
+            <div class="card-head">
+                <h2 class="card-title">Spend</h2>
+                <a class="card-head-action" href="/p/{{$.ProjectID}}/costs">Detail &rarr;</a>
+            </div>
+            {{if .HasBudget}}
+            <div class="metric-value{{if .OverBudget}} metric-alert{{end}}">{{usd .SpentUSD}}</div>
+            <p class="text-sm muted">of {{usd .BudgetUSD}} budgeted</p>
+            <div class="meter-wrap">
+                <div class="meter{{if .OverBudget}} meter-over{{end}}">
+                    <div class="meter-fill" data-meter-fill="{{printf "%.1f" (pctWidth .BurnedFraction)}}"></div>
+                </div>
+                {{if .HasPeriod}}
+                <div class="meter-mark" data-meter-mark="{{printf "%.1f" (pctWidth .ElapsedFraction)}}"
+                     title="Time elapsed in the budget period"></div>
+                {{end}}
+            </div>
+            {{if .Pace}}<p class="text-sm muted">{{.Pace}}.</p>{{end}}
+            {{else}}
+            <div class="metric-value">{{usd .SpentUSD}}</div>
+            <div class="metric-label">Spent so far</div>
+            <p class="empty">No budget set, so Mendel cannot say whether this is on track.</p>
+            {{end}}
+        </div>
+        {{end}}
+
+        {{if .HopCount}}
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">Roadmap</h2></div>
+            <p class="text-sm muted">{{.HopCount}} hop{{if ne .HopCount 1}}s{{end}} planned.</p>
+            <div class="actions">
+                <a class="btn btn-secondary btn-sm" href="/p/{{$.ProjectID}}/roadmap">Open the roadmap</a>
+            </div>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}
+{{template "meter-script"}}
+{{end}}

@@ -1,0 +1,187 @@
+{{define "page-content"}}
+<div class="page-head">
+    <span class="page-kind">Costs</span>
+    <h1 class="page-title">What this project has spent</h1>
+    <p class="page-lede">
+        All spend is in US dollars. Token counts are telemetry, not currency:
+        prices differ roughly tenfold across models, so a token total says little
+        about what anything cost.
+    </p>
+</div>
+
+{{with .Cost}}
+<div class="card">
+    <div class="card-head"><h2 class="card-title">Budget</h2></div>
+
+    {{if .HasBudget}}
+    <div class="row row-baseline">
+        <div>
+            <div class="metric-value{{if .OverBudget}} metric-alert{{end}}">{{usd .SpentUSD}}</div>
+            <div class="metric-label">of {{usd .BudgetUSD}} budgeted</div>
+        </div>
+        <div class="row-spacer">
+            <div class="metric-value">{{usd .RemainingUSD}}</div>
+            <div class="metric-label">Remaining</div>
+        </div>
+    </div>
+
+    {{/* Money spent means little without the time it was spent over, so the
+         marker shows how far through the period we are. */}}
+    <div class="meter-wrap">
+        <div class="meter{{if .OverBudget}} meter-over{{end}}">
+            <div class="meter-fill" data-meter-fill="{{printf "%.1f" (pctWidth .BurnedFraction)}}"></div>
+        </div>
+        {{if .HasPeriod}}
+        <div class="meter-mark" data-meter-mark="{{printf "%.1f" (pctWidth .ElapsedFraction)}}"
+             title="Time elapsed in the budget period"></div>
+        {{end}}
+    </div>
+
+    <p class="text-sm muted">
+        {{pct .BurnedFraction}} of budget spent{{if .HasPeriod}}, {{pct .ElapsedFraction}} of the period elapsed{{end}}.
+        {{if .Pace}}<strong>{{.Pace}}</strong>.{{end}}
+    </p>
+    {{else}}
+    <div class="metric-value">{{usd .SpentUSD}}</div>
+    <div class="metric-label">Spent to date</div>
+    <p class="empty">
+        No budget is defined, so Mendel is recording spend but cannot say whether
+        it is on track.
+    </p>
+    {{end}}
+
+    {{with .UnpricedModels}}
+    <div class="callout callout-warning">
+        <p class="callout-title">Spend recorded against unpriced models</p>
+        <p class="callout-body">
+            Their tokens are counted but priced at zero, so the totals above understate
+            the real cost. Add a rate card for
+            {{range $i, $m := .}}{{if $i}}, {{end}}<code>{{$m}}</code>{{end}}
+            and run <code>mendel rates refresh</code>.
+        </p>
+    </div>
+    {{end}}
+
+    {{if not .Tokens.IsZero}}
+    <details class="disclosure">
+        <summary>Token counts</summary>
+        <div class="disclosure-body">
+            <p class="text-sm muted">
+                {{toks .Tokens.InputTokens}} in &middot;
+                {{toks .Tokens.OutputTokens}} out &middot;
+                {{toks .Tokens.CacheReadTokens}} cache read &middot;
+                {{toks .Tokens.CacheWriteTokens}} cache write
+            </p>
+            <p class="text-xs subtle">
+                A cache read costs a tenth of an input token and a cache write a
+                quarter more, so these do not scale with the figures above.
+            </p>
+        </div>
+    </details>
+    {{end}}
+</div>
+
+{{if .Sources}}
+<div class="card">
+    <div class="card-head"><h2 class="card-title">Funding</h2></div>
+    <div class="stack">
+        {{range .Sources}}
+        <div>
+            <div class="row row-baseline">
+                <strong>{{.Source.Name}}</strong>
+                <span class="row-spacer numeric">{{usd .Source.AmountUSD}}</span>
+            </div>
+            {{if and .Source.PeriodStart .Source.PeriodEnd}}
+            <p class="text-sm subtle">
+                {{.Source.PeriodStart.Format "2 Jan 2006"}} &ndash; {{.Source.PeriodEnd.Format "2 Jan 2006"}}
+            </p>
+            {{end}}
+            {{/* What the money is meant to buy. When a budget funds every Key
+                 Result -- the ordinary case -- listing them restates the OKR
+                 page, and a dated list under a budget reads like a second
+                 roadmap. Only a budget covering a subset gets the list, because
+                 there the subset is the information. */}}
+            {{if .KeyResults}}
+            {{if .FundsEverything}}
+            <p class="text-sm subtle">
+                Spent to reach <a href="/p/{{$.ProjectID}}/okr">all {{len .KeyResults}} key results</a>.
+            </p>
+            {{else}}
+            <p class="text-sm subtle">
+                Spent to reach {{len .KeyResults}} of
+                <a href="/p/{{$.ProjectID}}/okr">{{.TotalKeyResults}} key results</a>:
+            </p>
+            <ul class="text-sm muted">
+                {{range .KeyResults}}<li>{{.Description}}</li>{{end}}
+            </ul>
+            {{end}}
+            {{end}}
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}
+
+{{if .Models}}
+<div class="card">
+    <div class="card-head"><h2 class="card-title">Cost by model</h2></div>
+    <p class="card-note">
+        Each variation counts once, against whichever model spent most on it.
+        &ldquo;Per success&rdquo; is what a model actually costs to land a winner &mdash;
+        a cheaper model that retries more can come out dearer.
+    </p>
+    <div class="table-scroll">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th class="table-num">Spend</th>
+                    <th class="table-num">Prompt tokens</th>
+                    <th class="table-num">Cached</th>
+                    <th class="table-num">Variations</th>
+                    <th class="table-num">Success</th>
+                    <th class="table-num">Per success</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Models}}
+                <tr>
+                    <td><code>{{.Model}}</code></td>
+                    <td class="table-num">{{usd .AmountUSD}}</td>
+                    <td class="table-num">{{toks .Tokens.PromptTokens}}</td>
+                    <td class="table-num subtle">{{toks .Tokens.CacheReadTokens}}</td>
+                    <td class="table-num">{{.Variations}}</td>
+                    <td class="table-num">{{if .HasFinished}}{{pct .SuccessRate}}{{else}}&mdash;{{end}}</td>
+                    <td class="table-num">{{if .HasSuccess}}{{usd .USDPerSuccess}}{{else}}&mdash;{{end}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+</div>
+{{end}}
+
+{{if .Components}}
+<div class="card">
+    <div class="card-head"><h2 class="card-title">Where the money went</h2></div>
+    <table class="table">
+        <thead><tr><th>Component</th><th>Kind</th><th class="table-num">Spend</th></tr></thead>
+        <tbody>
+            {{range .Components}}
+            <tr>
+                <td>{{.Component}}</td>
+                <td class="subtle">{{.Kind}}</td>
+                <td class="table-num">{{usd .AmountUSD}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    <p class="text-xs subtle">
+        Hosting figures are estimates from list prices and wall-clock time, not
+        provider invoices.
+    </p>
+</div>
+{{end}}
+{{end}}
+{{template "meter-script"}}
+{{end}}

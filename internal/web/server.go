@@ -641,9 +641,11 @@ func (s *Server) setupRoutes() {
 			if s.authEnabled {
 				r.Use(s.requireProjectAccess)
 			}
-		r.Get("/", s.handleProjectDashboard)
+		// The front door: what needs you, and what Mendel is doing.
+		r.Get("/", s.handleProjectOverview)
 		r.Get("/strategy", s.handleStrategy)
 		r.Get("/roadmap", s.handleRoadmap)
+		r.Get("/costs", s.handleCosts)
 		r.Get("/settings", s.handleProjectSettings)
 		r.Post("/settings", s.handleSaveProjectSettings)
 		r.Post("/settings/credentials", s.handleAddCloudCredential)

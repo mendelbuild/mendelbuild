@@ -310,11 +310,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	t.ExecuteTemplate(w, "login", nil)
 }
 
-func (s *Server) handleProjectDashboard(w http.ResponseWriter, r *http.Request) {
-	projectID := chi.URLParam(r, "projectID")
-	http.Redirect(w, r, "/p/"+projectID+"/strategy", http.StatusFound)
-}
-
+// handleStrategy renders the objectives and key results, and only those.
+//
+// It used to render everything: budget, per-model costs, the hops table, the
+// deployment channel, a propose-roadmap form and the decision queue. Each of
+// those now has a page whose subject it actually is, which leaves this one able
+// to be about what the project is trying to achieve.
 func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
@@ -335,54 +336,54 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get input requests for sidebar
-	inputRequests, _ := s.db.GetInputRequestsByProject(ctx, projectID)
-	var pendingInputRequest *domain.InputRequest
-	var pendingInputRequests []domain.InputRequest
-	for i := range inputRequests {
-		ir := &inputRequests[i]
-		if ir.Kind == domain.InputRequestKindRoadmapReview && ir.Status != domain.InputRequestStatusResolved {
-			pendingInputRequest = ir
-		}
-		// Collect all non-resolved input requests
-		if ir.Status != domain.InputRequestStatusResolved && len(pendingInputRequests) < 5 {
-			pendingInputRequests = append(pendingInputRequests, *ir)
-		}
-	}
-
-	// Get deployment channel info
-	var deploymentChannel *domain.ProjectDeploymentChannel
-	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
-	if err == nil {
-		deploymentChannel = channel
-	}
-
-	// Current production deployment (nil if the project has never deployed)
-	prodDeployment, _ := s.db.GetCurrentProdDeployment(ctx, projectID)
-
-	// Get supported combos for channel setup
-	supportedCombos, _ := s.db.ListSupportedDeploymentCombos(ctx)
-
-	// Budget, spend to date, pace against the schedule, and the Key Results the
-	// money is meant to buy.
-	costView := s.strategyCostView(ctx, projectID, view.Strategy.ID)
-
 	data := map[string]interface{}{
-		"Title":                "Strategy: " + view.Strategy.Name,
-		"ProjectID":            projectID.String(),
-		"Strategy":             view,
-		"PendingInputRequest":  pendingInputRequest,
-		"PendingInputRequests": pendingInputRequests,
-		"DeploymentChannel":    deploymentChannel,
-		"ProdDeployment":       prodDeployment,
-		"SupportedCombos":      supportedCombos,
-		"Cost":                 costView,
+		"Title":     "Strategy",
+		"ProjectID": projectID.String(),
+		"Strategy":  view,
 	}
 	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)
 	s.addOnboardingRibbon(ctx, data)
 
 	if err := s.renderPageFor(w, r, "strategy.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleCosts renders what the project has spent and whether that is on track.
+//
+// Cost is something you go and look at. On the front page it greeted every
+// visit with a burn-down chart and a per-model breakdown, above the work.
+func (s *Server) handleCosts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	project, err := s.db.GetProject(ctx, projectID)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	strategies, err := s.db.GetStrategiesByProject(ctx, projectID)
+	if err != nil || len(strategies) == 0 {
+		http.Error(w, "no strategy found", http.StatusNotFound)
+		return
+	}
+
+	data := map[string]interface{}{
+		"Title":     "Costs",
+		"ProjectID": projectID.String(),
+		"Project":   project,
+		"Cost":      s.strategyCostView(ctx, projectID, strategies[0].ID),
+	}
+	s.addOpenInputCount(ctx, data)
+	s.addProjectReadiness(ctx, data)
+
+	if err := s.renderPageFor(w, r, "costs.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -458,6 +459,15 @@ type RoadmapVariationView struct {
 	Status string
 }
 
+// HopRow is one Hop in the roadmap's table, carrying the same plain-English
+// reading its own page gives rather than a raw status.
+type HopRow struct {
+	Hop            domain.Hop
+	Status         domain.StatusView
+	VariationCount int
+	WaitingOnYou   bool
+}
+
 // RoadmapEdge represents a dependency edge in the DAG.
 type RoadmapEdge struct {
 	From string `json:"from"` // depends_on_hop_id (the dependency)
@@ -493,17 +503,37 @@ func (s *Server) handleRoadmap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert to JSON for JavaScript
-	hopsJSON, _ := json.Marshal(hopViews)
-	edgesJSON, _ := json.Marshal(edges)
+	hopsJSON, edgesJSON, err := marshalRoadmap(hopViews, edges)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// The graph and the table are the same information drawn two ways, and they
+	// were on separate pages: the picture here, the list on /strategy. Reading
+	// one to find a Hop and the other to find its state was needless.
+	hops, _ := s.db.GetHopsByStrategy(ctx, strategy.ID)
+	hopRows := make([]HopRow, 0, len(hops))
+	for i := range hops {
+		hop := &hops[i]
+		variations, _ := s.db.GetVariationsByHop(ctx, hop.ID)
+		ribbon := domain.HopLifecycle(hop, variations)
+		hopRows = append(hopRows, HopRow{
+			Hop:            *hop,
+			Status:         domain.StatusView{Label: ribbon.Headline, Tone: ribbon.Tone},
+			VariationCount: len(variations),
+			WaitingOnYou:   ribbon.WaitingOnYou(),
+		})
+	}
 
 	data := map[string]interface{}{
 		"Title":     "Roadmap",
 		"ProjectID": projectID.String(),
 		"Project":   project,
 		"Strategy":  strategy,
-		"HopsJSON":  template.JS(hopsJSON),
-		"EdgesJSON": template.JS(edgesJSON),
+		"HopsJSON":  hopsJSON,
+		"EdgesJSON": edgesJSON,
+		"Hops":      hopRows,
 	}
 	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)

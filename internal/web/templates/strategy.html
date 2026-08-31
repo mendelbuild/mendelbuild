@@ -1,347 +1,72 @@
 {{define "page-content"}}
 {{with .Strategy}}
-<h1>{{.Project.Name}}</h1>
-<h2>Strategy: {{.Strategy.Name}}</h2>
+<div class="page-head">
+    <span class="page-kind">Strategy</span>
+    <h1 class="page-title">{{.Strategy.Name}}</h1>
+    <p class="page-lede">
+        What this project is trying to achieve, and how it will know it has.
+        Every Hop on the roadmap exists to move one of these.
+    </p>
+</div>
 
-{{/* The setup ribbon, until the first Variation exists. After that the per-Hop
-     ribbons say more about where the project stands than this one does. */}}
 {{if $.OnboardingRibbon}}{{template "lifecycle-ribbon" $.OnboardingRibbon}}{{end}}
 
-{{if $.DeploymentChannel}}
-{{with $.DeploymentChannel}}
-<div class="card" style="margin-bottom: 20px; {{if $.ProdDeployment}}background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); border: 1px solid #28a745;{{else if .IsDemoValidated}}background: linear-gradient(135deg, #fff3cd 0%, #ffeeba 100%); border: 1px solid #ffc107;{{else}}background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border: 1px solid #6c757d;{{end}}">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div>
-            <h2 style="margin: 0 0 5px 0; {{if $.ProdDeployment}}color: #155724;{{else if .IsDemoValidated}}color: #856404;{{else}}color: #495057;{{end}}">
-                Deployment Channel
-            </h2>
-            <div style="margin-bottom: 8px;">
-                <span style="font-weight: bold;">{{.ArtifactKind}}</span> &rarr;
-                {{if .HostingPlatform}}<span>{{.HostingPlatform.Name}}</span>{{else}}<span style="color: #dc3545;">(platform missing - reconfigure)</span>{{end}}
-            </div>
-            {{with $.ProdDeployment}}
-            <a href="{{.URL}}" target="_blank" style="color: #155724; font-size: 1.1em;">{{.URL}}</a>
-            <div style="font-size: 0.85em; color: #155724; margin-top: 5px;">
-                Deployed: {{.StartedAt.Format "2006-01-02 15:04"}}
-                {{if .ShortCommit}}&bull; <code>{{.ShortCommit}}</code>{{end}}
-            </div>
-            {{else}}
-            <div style="font-size: 0.9em; margin-top: 5px;">
-                {{if .IsDemoValidated}}
-                <span style="color: #856404;">Demo validated</span>
-                {{if .IsProdValidated}} &bull; <span style="color: #155724;">Prod validated</span>{{else}} &bull; <span style="color: #6c757d;">Prod not validated</span>{{end}}
+<div class="card">
+    <div class="card-head">
+        <h2 class="card-title">Objectives &amp; key results</h2>
+        <a class="card-head-action" href="/p/{{$.ProjectID}}/okr">Edit OKRs &rarr;</a>
+    </div>
+
+    {{if .Objectives}}
+    <div class="stack-loose">
+        {{range .Objectives}}
+        <section>
+            <div class="row row-baseline">
+                <h3 class="card-title">{{.Objective.Description}}</h3>
+                {{if .HopCount}}
+                <a class="badge badge-progress" href="/p/{{$.ProjectID}}/roadmap">{{.HopCount}} hop{{if ne .HopCount 1}}s{{end}}</a>
                 {{else}}
-                <span style="color: #6c757d;">Not validated yet</span>
-                {{end}}
-                {{/* Say why the card is amber. Without this, a fully configured
-                     channel that simply has not shipped yet reads as unfinished
-                     setup. */}}
-                {{if .IsProdValidated}}
-                <div style="color: #856404; margin-top: 4px;">Not yet deployed to production.</div>
+                {{/* An objective with no Hop is one nothing is being done about,
+                     which is worth saying plainly rather than leaving blank. */}}
+                <span class="badge badge-waiting">Not planned</span>
                 {{end}}
             </div>
-            {{end}}
-        </div>
-        <div style="display: flex; gap: 10px;">
-            {{with $.ProdDeployment}}
-            <a href="{{.URL}}" target="_blank" style="padding: 8px 16px; background: #28a745; color: white; text-decoration: none; border-radius: 4px; font-weight: bold;">
-                View
-            </a>
-            {{end}}
-            {{/* A channel exists in this branch, so this always manages an
-                 existing one. Labelling it "Set Up" because nothing has
-                 deployed yet reads as though the channel were unconfigured. */}}
-            <a href="/p/{{$.ProjectID}}/deployment" style="padding: 8px 16px; background: #007bff; color: white; text-decoration: none; border-radius: 4px;">
-                Manage
-            </a>
-        </div>
-    </div>
-</div>
-{{end}}
-{{else if $.SupportedCombos}}
-<div class="card" style="margin-bottom: 20px; background: linear-gradient(135deg, #cce5ff 0%, #b8daff 100%); border: 1px solid #007bff;">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div>
-            <h2 style="margin: 0 0 5px 0; color: #004085;">Set Up Deployment</h2>
-            <div style="color: #004085; font-size: 0.95em;">
-                Configure how this project deploys to production and demos.
-            </div>
-        </div>
-        <a href="/p/{{$.ProjectID}}/deployment" style="padding: 8px 16px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; font-weight: bold;">
-            Configure
-        </a>
-    </div>
-</div>
-{{end}}
 
-<div style="display: flex; gap: 20px; align-items: flex-start;">
-    <div style="flex: 2;">
-        {{with $.Cost}}
-        <div class="card">
-            <h2>Budget</h2>
-
-            {{if .HasBudget}}
-            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px;">
-                <div style="font-size: 1.3em; font-weight: 600; {{if .OverBudget}}color: #dc3545;{{end}}">
-                    {{usd .SpentUSD}} <span style="font-weight: 400; color: #666; font-size: 0.75em;">of {{usd .BudgetUSD}}</span>
-                </div>
-                <div style="color: #666; font-size: 0.9em;">{{usd .RemainingUSD}} left</div>
-            </div>
-
-            <!-- Burn bar, with a marker showing how far through the period we are.
-                 Money spent means little without the time it was spent over. -->
-            <div style="position: relative; background: #e9ecef; border-radius: 4px; height: 12px; overflow: hidden;">
-                <div style="background: {{if .OverBudget}}#dc3545{{else}}#28a745{{end}}; height: 100%; width: {{printf "%.1f" (pctWidth .BurnedFraction)}}%;"></div>
-            </div>
-            {{if .HasPeriod}}
-            <div style="position: relative; height: 14px; margin-top: -13px; pointer-events: none;">
-                <div title="Time elapsed in the budget period"
-                     style="position: absolute; left: {{printf "%.1f" (pctWidth .ElapsedFraction)}}%; top: 0; width: 2px; height: 12px; background: #212529;"></div>
-            </div>
-            {{end}}
-
-            <p style="margin: 10px 0 0; color: #666; font-size: 0.9em;">
-                {{pct .BurnedFraction}} of budget spent{{if .HasPeriod}}, {{pct .ElapsedFraction}} of the period elapsed{{end}}.
-                {{if .Pace}}<strong>{{.Pace}}</strong>.{{end}}
-            </p>
-            {{else}}
-            <p class="empty">No budget defined. Mendel is recording spend but cannot say whether it is on track.</p>
-            {{if gt .SpentUSD 0.0}}
-            <p style="margin: 8px 0 0; font-size: 1.1em;">{{usd .SpentUSD}} spent so far.</p>
-            {{end}}
-            {{end}}
-
-            {{if not .Tokens.IsZero}}
-            <p style="margin: 8px 0 0; color: #888; font-size: 0.85em;">
-                {{toks .Tokens.InputTokens}} in &middot;
-                {{toks .Tokens.OutputTokens}} out &middot;
-                {{toks .Tokens.CacheReadTokens}} cache read &middot;
-                {{toks .Tokens.CacheWriteTokens}} cache write
-            </p>
-            {{end}}
-
-            {{range .Sources}}
-            <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #eee;">
-                <div style="display: flex; justify-content: space-between;">
-                    <strong>{{.Source.Name}}</strong>
-                    <span>{{usd .Source.AmountUSD}}</span>
-                </div>
-                {{if and .Source.PeriodStart .Source.PeriodEnd}}
-                <div style="color: #666; font-size: 0.85em;">
-                    {{.Source.PeriodStart.Format "2 Jan 2006"}} &ndash; {{.Source.PeriodEnd.Format "2 Jan 2006"}}
-                </div>
-                {{end}}
-                {{/* What the money is meant to buy. When a budget funds every Key
-                     Result -- the ordinary case -- listing them here just restates
-                     the OKR page, and a dated list under a budget reads like a
-                     second roadmap. Say so in a line and link instead. Only a
-                     budget covering a subset gets the list, because there the
-                     subset is the information. */}}
-                {{if .KeyResults}}
-                <div style="margin-top: 6px; font-size: 0.85em; color: #555;">
-                    {{if .FundsEverything}}
-                    <div style="color: #888;">
-                        Spent to reach
-                        <a href="/p/{{$.ProjectID}}/okr">all {{len .KeyResults}} key results</a>.
-                    </div>
-                    {{else}}
-                    <div style="color: #888;">
-                        Spent to reach {{len .KeyResults}} of
-                        <a href="/p/{{$.ProjectID}}/okr">{{.TotalKeyResults}} key results</a>:
-                    </div>
-                    <ul style="margin: 4px 0 0; padding-left: 18px;">
-                        {{range .KeyResults}}<li>{{.Description}}</li>{{end}}
-                    </ul>
-                    {{end}}
-                </div>
-                {{end}}
-            </div>
-            {{end}}
-
-            {{with .UnpricedModels}}
-            <div style="margin-top: 14px; padding: 10px; background: #fff3cd; border-left: 3px solid #b8860b; border-radius: 4px; font-size: 0.9em;">
-                <strong>Spend recorded against unpriced models.</strong>
-                Their tokens are counted but priced at zero, so the totals above understate the real cost.
-                Add a rate card for {{range $i, $m := .}}{{if $i}}, {{end}}<code>{{$m}}</code>{{end}}
-                and run <code>mendel rates refresh</code>.
-            </div>
-            {{end}}
-
-            {{if .Models}}
-            <details style="margin-top: 16px;" open>
-                <summary style="cursor: pointer; color: #007bff; font-size: 0.9em;">Cost by model</summary>
-                <table style="width: 100%; margin-top: 8px; font-size: 0.9em;">
-                    <thead>
-                        <tr>
-                            <th style="text-align: left;">Model</th>
-                            <th style="text-align: right;">Spend</th>
-                            <th style="text-align: right;">Prompt tokens</th>
-                            <th style="text-align: right;">Cached</th>
-                            <th style="text-align: right;">Variations</th>
-                            <th style="text-align: right;">Success</th>
-                            <th style="text-align: right;">Per success</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {{range .Models}}
-                        <tr>
-                            <td style="padding: 3px 0;"><code>{{.Model}}</code></td>
-                            <td style="text-align: right;">{{usd .AmountUSD}}</td>
-                            <td style="text-align: right;">{{toks .Tokens.PromptTokens}}</td>
-                            <td style="text-align: right; color: #666;">{{toks .Tokens.CacheReadTokens}}</td>
-                            <td style="text-align: right;">{{.Variations}}</td>
-                            <td style="text-align: right;">
-                                {{if .HasFinished}}{{pct .SuccessRate}}{{else}}&mdash;{{end}}
-                            </td>
-                            <td style="text-align: right;">
-                                {{if .HasSuccess}}{{usd .USDPerSuccess}}{{else}}&mdash;{{end}}
-                            </td>
-                        </tr>
-                        {{end}}
-                    </tbody>
-                </table>
-                <p style="margin: 8px 0 0; color: #888; font-size: 0.8em;">
-                    Each variation counts once, against whichever model spent most on it.
-                    &ldquo;Per success&rdquo; is what this model actually costs to land a winner &mdash;
-                    a cheaper model that retries more can come out dearer.
-                </p>
-            </details>
-            {{end}}
-
-            {{if .Components}}
-            <details style="margin-top: 16px;">
-                <summary style="cursor: pointer; color: #007bff; font-size: 0.9em;">Where the money went</summary>
-                <table style="width: 100%; margin-top: 8px; font-size: 0.9em;">
-                    {{range .Components}}
-                    <tr>
-                        <td style="padding: 3px 0;">{{.Component}}</td>
-                        <td style="padding: 3px 0; color: #888;">{{.Kind}}</td>
-                        <td style="padding: 3px 0; text-align: right;">{{usd .AmountUSD}}</td>
-                    </tr>
-                    {{end}}
-                </table>
-            </details>
-            {{end}}
-        </div>
-        {{end}}
-
-        <div class="card">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <h2 style="margin: 0;">Objectives &amp; Key Results</h2>
-                <a href="/p/{{$.ProjectID}}/okr" style="color: #007bff; text-decoration: none; font-size: 0.9em;">Edit OKRs</a>
-            </div>
-            {{if .Objectives}}
-                {{range .Objectives}}
-                <div class="objective">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                        <h3 style="margin: 0;">{{.Objective.Description}}</h3>
-                        {{if .HopCount}}
-                        <span class="status status-active">{{.HopCount}} hop(s)</span>
-                        {{else}}
-                        <span class="status status-pending">Not planned</span>
-                        {{end}}
-                    </div>
-                    {{if .KeyResults}}
-                        {{range .KeyResults}}
-                        <div class="key-result">
-                            <strong>{{.Description}}</strong>
-                            <span class="target">{{.TargetUnits}}</span>
-                            {{if .TargetDate}}
-                            <span style="color: #666; margin-left: 10px;">by {{.TargetDate.Format "2006-01-02"}}</span>
-                            {{end}}
-                        </div>
-                        {{end}}
-                    {{else}}
-                    <p class="empty">No key results defined.</p>
-                    {{end}}
-                </div>
-                {{end}}
-            {{else}}
-            <p class="empty">No objectives defined.</p>
-            {{end}}
-        </div>
-
-        <div class="card">
-            <h2>Roadmap (Hops)</h2>
-            {{if .Hops}}
-            <table>
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Status</th>
-                        <th>Created</th>
-                    </tr>
-                </thead>
+            {{if .KeyResults}}
+            <table class="table">
+                <thead><tr><th>Key result</th><th>Target</th><th>By</th></tr></thead>
                 <tbody>
-                    {{range .Hops}}
+                    {{range .KeyResults}}
                     <tr>
-                        <td>
-                            <a href="/p/{{$.ProjectID}}/hops/{{.ID}}" style="color: #007bff; text-decoration: none; font-weight: bold;">{{.Name}}</a>
-                            {{if .Commentary}}<br><small style="color: #666;">{{.Commentary}}</small>{{end}}
-                        </td>
-                        <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
-                        <td>{{.CreatedAt.Format "2006-01-02"}}</td>
+                        <td>{{.Description}}</td>
+                        <td class="mono nowrap">{{.TargetUnits}}</td>
+                        <td class="subtle nowrap">{{if .TargetDate}}{{.TargetDate.Format "2 Jan 2006"}}{{else}}&mdash;{{end}}</td>
                     </tr>
                     {{end}}
                 </tbody>
             </table>
             {{else}}
-            <p class="empty">No hops defined yet.</p>
+            <p class="empty">No key results, so there is no way to tell whether this objective is met.</p>
             {{end}}
-        </div>
-    </div>
-
-    <div style="flex: 1;">
-        <div class="card" id="manage-roadmap">
-            <h2>Manage Roadmap</h2>
-
-            {{if $.PendingInputRequest}}
-            <div style="padding: 15px; background: #cce5ff; border-radius: 4px; margin-bottom: 15px;">
-                <strong>Pending Review</strong><br>
-                <a href="/p/{{$.ProjectID}}/inputs/{{$.PendingInputRequest.ID}}">{{$.PendingInputRequest.Title}}</a>
-                <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
-                    Created {{$.PendingInputRequest.CreatedAt.Format "Jan 2, 2006"}}
-                </div>
-            </div>
-            {{end}}
-
-            {{if .Hops}}
-            <div style="margin-bottom: 15px;">
-                <strong>Current:</strong> {{len .Hops}} hop(s)
-            </div>
-            <form method="POST" action="/p/{{$.ProjectID}}/roadmap/propose">
-                <button type="submit" style="width: 100%; padding: 10px; background: #ffc107; color: #212529; border: none; border-radius: 4px; cursor: pointer;">
-                    Propose Changes
-                </button>
-            </form>
-            {{else}}
-            <p style="color: #666; margin-bottom: 15px;">
-                No roadmap exists yet. Generate a proposal based on your objectives and funding.
-            </p>
-            <form method="POST" action="/p/{{$.ProjectID}}/roadmap/propose">
-                <button type="submit" style="width: 100%; padding: 10px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                    Generate Roadmap Proposal
-                </button>
-            </form>
-            {{end}}
-        </div>
-
-        {{if $.PendingInputRequests}}
-        <div class="card">
-            <h2>Input Needed</h2>
-            {{range $.PendingInputRequests}}
-            <div style="padding: 8px 0; border-bottom: 1px solid #eee;">
-                <a href="/p/{{$.ProjectID}}/inputs/{{.ID}}">{{.Title}}</a>
-                <div style="font-size: 0.8em;">
-                    <span class="status status-{{.Status}}">{{.Status}}</span>
-                </div>
-            </div>
-            {{end}}
-        </div>
+        </section>
         {{end}}
     </div>
+    {{else}}
+    <div class="empty-block">
+        <div class="empty-title">No objectives yet</div>
+        <p class="empty">Mendel drafts objectives and key results from your brief, then asks you to approve them.</p>
+        <div class="actions">
+            <a class="btn btn-primary" href="/p/{{$.ProjectID}}/okr">Add objectives</a>
+        </div>
+    </div>
+    {{end}}
 </div>
 {{else}}
-<p class="empty">Strategy not found.</p>
+<div class="card">
+    <div class="empty-block">
+        <div class="empty-title">No strategy yet</div>
+        <p class="empty">This project has not been set up. Start by describing what you want built.</p>
+    </div>
+</div>
 {{end}}
 {{end}}

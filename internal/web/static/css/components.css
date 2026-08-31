@@ -433,6 +433,7 @@ code {
 /* One component replaces the eleven hand-rolled amber boxes. Tone chooses
    the colour; the template chooses the tone from domain.Tone, never by eye. */
 .callout {
+    display: block;
     border: 1px solid var(--tone-neutral);
     border-left-width: 4px;
     border-radius: var(--radius-md);
@@ -465,6 +466,19 @@ code {
 .callout-quiet.callout-failure  { border-left-color: var(--tone-failure); }
 .callout-quiet a { color: var(--tone-progress); text-decoration: none; }
 .callout-quiet a:hover { text-decoration: underline; }
+
+/* A whole callout that is itself a link, used for list rows. Without the block
+   display an anchor stays inline and its block children escape the box. */
+a.callout {
+    text-decoration: none;
+    color: inherit;
+}
+a.callout:hover {
+    background: var(--surface-hover);
+    border-color: var(--line-strong);
+}
+a.callout .callout-title { text-decoration: underline; text-underline-offset: 2px; }
+a.callout:hover .callout-title { color: var(--tone-progress); }
 
 .callout-title {
     font-weight: 650;
@@ -881,6 +895,14 @@ code {
     transition: height 0.18s ease;
 }
 .roadmap-panel.is-expanded .roadmap-panel-canvas { height: 480px; }
+
+/* The full roadmap page, where the graph is the subject rather than context. */
+.roadmap-canvas {
+    position: relative;
+    overflow: hidden;
+    cursor: grab;
+    min-height: 420px;
+}
 
 /* ---- Log panel ----------------------------------------------------------- */
 .log {

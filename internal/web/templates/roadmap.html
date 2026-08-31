@@ -1,16 +1,77 @@
 {{define "page-content"}}
-<h1>Roadmap: {{.Strategy.Name}}</h1>
+<div class="page-head">
+    <span class="page-kind">Roadmap</span>
+    <h1 class="page-title">{{.Strategy.Name}}</h1>
+    <p class="page-lede">
+        Every Hop, what it depends on, and where each one stands. The picture and
+        the table below show the same thing; use whichever suits what you are after.
+    </p>
+</div>
 
-<div class="card" style="overflow: hidden; position: relative;">
-    <div style="position: absolute; top: 8px; right: 12px; font-size: 11px; color: #999; z-index: 10;">
-        Scroll or drag to pan, pinch or shift-scroll to zoom
+<div class="card card-flush">
+    <div class="roadmap-panel-head">
+        <span class="eyebrow">Dependency graph</span>
+        <span class="roadmap-panel-hint">Drag to pan &middot; shift-scroll to zoom</span>
     </div>
-    <div id="roadmap-container" style="min-height: 400px; position: relative; cursor: grab;">
-        <div id="roadmap-loading" style="text-align: center; padding: 50px; color: #666;">
-            Loading roadmap...
-        </div>
+    <div id="roadmap-container" class="roadmap-canvas">
+        <p id="roadmap-loading" class="empty">Drawing the roadmap&hellip;</p>
     </div>
 </div>
+
+<div class="card">
+    <div class="card-head">
+        <h2 class="card-title">Hops</h2>
+        {{if .Hops}}<span class="badge badge-quiet">{{len .Hops}}</span>{{end}}
+    </div>
+
+    {{if .Hops}}
+    <table class="table">
+        <thead>
+            <tr><th>Hop</th><th>Status</th><th class="table-num">Variations</th><th>Created</th></tr>
+        </thead>
+        <tbody>
+            {{range .Hops}}
+            <tr>
+                <td>
+                    <a class="table-link" href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">{{.Hop.Name}}</a>
+                    {{if .Hop.Commentary}}<span class="table-sub">{{.Hop.Commentary}}</span>{{end}}
+                </td>
+                <td><span class="badge badge-{{.Status.Tone}}">{{.Status.Label}}</span></td>
+                <td class="table-num">{{if .VariationCount}}{{.VariationCount}}{{else}}&mdash;{{end}}</td>
+                <td class="subtle nowrap">{{.Hop.CreatedAt.Format "2 Jan 2006"}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{else}}
+    <div class="empty-block">
+        <div class="empty-title">No hops yet</div>
+        <p class="empty">
+            A roadmap is a set of Hops, each one a step toward a key result. Mendel
+            drafts them from your objectives and budget, and nothing is committed
+            until you approve it.
+        </p>
+        <div class="actions">
+            <form method="POST" action="/p/{{.ProjectID}}/roadmap/propose">
+                <button type="submit" class="btn btn-primary">Draft a roadmap</button>
+            </form>
+        </div>
+    </div>
+    {{end}}
+</div>
+
+{{if .Hops}}
+<div class="card">
+    <div class="card-head"><h2 class="card-title">Change the roadmap</h2></div>
+    <p class="card-note">
+        Mendel proposes a revised set of Hops against your current objectives and
+        budget. You review the proposal before anything changes.
+    </p>
+    <form method="POST" action="/p/{{.ProjectID}}/roadmap/propose">
+        <button type="submit" class="btn btn-secondary">Propose changes</button>
+    </form>
+</div>
+{{end}}
 
 <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
 <script src="/static/js/roadmap-view.js"></script>

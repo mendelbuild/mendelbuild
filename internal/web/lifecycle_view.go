@@ -50,11 +50,7 @@ func (s *Server) buildMiniRoadmap(ctx context.Context, projectID uuid.UUID, hop 
 		return nil
 	}
 
-	hopsJSON, err := json.Marshal(hops)
-	if err != nil {
-		return nil
-	}
-	edgesJSON, err := json.Marshal(edges)
+	hopsJSON, edgesJSON, err := marshalRoadmap(hops, edges)
 	if err != nil {
 		return nil
 	}
@@ -69,11 +65,25 @@ func (s *Server) buildMiniRoadmap(ctx context.Context, projectID uuid.UUID, hop 
 		FocusHopID:       hop.ID.String(),
 		FocusVariationID: focusVariation,
 		HopCount:         len(hops),
-		// template.JS, not string: html/template escapes strings in a script
-		// context and would corrupt the JSON. See CLAUDE.md.
-		HopsJSON:  template.JS(hopsJSON),
-		EdgesJSON: template.JS(edgesJSON),
+		HopsJSON:         hopsJSON,
+		EdgesJSON:        edgesJSON,
 	}
+}
+
+// marshalRoadmap encodes the graph for the renderer.
+//
+// template.JS, not string: html/template escapes strings in a script context
+// and would corrupt the JSON. See CLAUDE.md.
+func marshalRoadmap(hops []RoadmapHopView, edges []RoadmapEdge) (template.JS, template.JS, error) {
+	hopsJSON, err := json.Marshal(hops)
+	if err != nil {
+		return "", "", err
+	}
+	edgesJSON, err := json.Marshal(edges)
+	if err != nil {
+		return "", "", err
+	}
+	return template.JS(hopsJSON), template.JS(edgesJSON), nil
 }
 
 // buildRoadmapGraph loads every Hop in a strategy, its Variations, and the

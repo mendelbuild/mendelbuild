@@ -235,3 +235,22 @@ full set rendered in every tone and state.
 </div>
 {{end}}
 {{end}}
+
+{{/*
+    meter-script sizes every meter on the page.
+
+    A bar's length is data, not styling, but the only way to express it in HTML
+    is a length. Setting it from a data attribute keeps the templates free of
+    `style=` attributes -- which the lint test in templates_test.go forbids
+    outright, so that there is no judgement call about when one is acceptable.
+*/}}
+{{define "meter-script"}}
+<script>
+document.querySelectorAll('[data-meter-fill]').forEach(function (el) {
+    el.style.width = el.dataset.meterFill + '%';
+});
+document.querySelectorAll('[data-meter-mark]').forEach(function (el) {
+    el.style.left = el.dataset.meterMark + '%';
+});
+</script>
+{{end}}
