@@ -9,7 +9,11 @@
     </p>
 </div>
 
+{{template "strategy-tabs" $}}
+
 {{if $.OnboardingRibbon}}{{template "lifecycle-ribbon" $.OnboardingRibbon}}{{end}}
+
+{{template "budget-strip" $.Cost}}
 
 <div class="card">
     <div class="card-head">
@@ -69,4 +73,5 @@
     </div>
 </div>
 {{end}}
+{{template "meter-script"}}
 {{end}}

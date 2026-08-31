@@ -183,17 +183,21 @@ func navSection(path string) string {
 	section, _, _ := strings.Cut(rest, "/")
 
 	switch section {
-	case "strategy", "roadmap", "settings", "inputs", "okr":
+	case "":
+		// The project root is the overview.
+		return "overview"
+	case "strategy", "settings", "inputs", "costs":
 		return section
+	case "okr", "roadmap", "setup":
+		// Objectives and the Hop DAG belong to the Strategy that contains them.
+		return "strategy"
 	case "deployment":
 		// Deployment configuration is part of settings, and the nav should say
 		// so even while it still lives at its own URL.
 		return "settings"
 	case "hops", "variations":
-		// A Hop or Variation is a place within the roadmap, so the roadmap is
-		// the section that contains it.
-		return "roadmap"
-	case "setup":
+		// A Hop is a step in the roadmap, and the roadmap is part of Strategy,
+		// so that is the section that stays lit while you are inside one.
 		return "strategy"
 	default:
 		return ""
@@ -339,10 +343,19 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The money is shown beside the Key Results it is meant to buy; the Costs
+	// page carries the detail.
+	var costView *StrategyCostView
+	if view != nil && view.Strategy != nil {
+		costView = s.strategyCostView(ctx, projectID, view.Strategy.ID)
+	}
+
 	data := map[string]interface{}{
-		"Title":     "Strategy",
-		"ProjectID": projectID.String(),
-		"Strategy":  view,
+		"Title":       "Strategy",
+		"ProjectID":   projectID.String(),
+		"StrategyTab": "objectives",
+		"Strategy":    view,
+		"Cost":        costView,
 	}
 	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)
@@ -530,8 +543,9 @@ func (s *Server) handleRoadmap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]interface{}{
-		"Title":     "Roadmap",
-		"ProjectID": projectID.String(),
+		"Title":       "Roadmap",
+		"ProjectID":   projectID.String(),
+		"StrategyTab": "roadmap",
 		"Project":   project,
 		"Strategy":  strategy,
 		"HopsJSON":  hopsJSON,

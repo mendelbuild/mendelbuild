@@ -2,6 +2,8 @@
 {{with .View}}
 <div class="page-head">
     <nav class="breadcrumb">
+        <a href="/p/{{$.ProjectID}}/strategy">{{.Strategy.Name}}</a>
+        <span class="breadcrumb-sep">/</span>
         <a href="/p/{{$.ProjectID}}/roadmap">Roadmap</a>
         <span class="breadcrumb-sep">/</span>
         <span>{{.Hop.Name}}</span>
@@ -144,18 +146,13 @@
         </div>
         {{end}}
 
-        <div class="card">
-            <div class="card-head"><h2 class="card-title">Strategy</h2></div>
-            <p><a href="/p/{{$.ProjectID}}/strategy">{{.Strategy.Name}}</a></p>
-            <p class="text-sm subtle">Created {{.Hop.CreatedAt.Format "2 Jan 2006"}}</p>
-        </div>
-
         <details class="disclosure">
             <summary>Diagnostics</summary>
             <div class="disclosure-body">
                 <dl class="kv">
                     <dt>Hop status</dt><dd><code>{{.Hop.Status}}</code></dd>
                     <dt>Requires production</dt><dd><code>{{.Hop.RequiresProduction}}</code></dd>
+                    <dt>Created</dt><dd class="subtle">{{.Hop.CreatedAt.Format "2 Jan 2006, 15:04"}}</dd>
                 </dl>
             </div>
         </details>

@@ -266,6 +266,10 @@ func (v FundingSourceView) FundsEverything() bool {
 
 // StrategyCostView is the whole money picture for a Strategy.
 type StrategyCostView struct {
+	// ProjectID is carried so a summary of this view can link to the Costs
+	// page without its host template having to thread the ID through.
+	ProjectID string
+
 	BudgetUSD float64
 	SpentUSD  float64
 	Tokens    domain.TokenCounts
@@ -346,8 +350,9 @@ func (s *Server) strategyCostView(ctx context.Context, projectID, strategyID uui
 	}
 
 	view := &StrategyCostView{
-		SpentUSD: summary.AmountUSD,
-		Tokens:   summary.TokenCounts,
+		ProjectID: projectID.String(),
+		SpentUSD:  summary.AmountUSD,
+		Tokens:    summary.TokenCounts,
 	}
 	view.Components, _ = s.db.GetCostByComponent(ctx, strategyID)
 	view.Models, _ = s.db.GetModelUsage(ctx, projectID)

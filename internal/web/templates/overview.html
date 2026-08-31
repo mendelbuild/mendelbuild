@@ -16,7 +16,7 @@
             <div class="card-head">
                 <h2 class="card-title">Needs you</h2>
                 {{if .NeedsYou}}<span class="badge badge-waiting">{{len .NeedsYou}}</span>{{end}}
-                <a class="card-head-action" href="/p/{{$.ProjectID}}/inputs">All decisions &rarr;</a>
+                <a class="card-head-action" href="/p/{{$.ProjectID}}/inputs">Full queue &rarr;</a>
             </div>
 
             {{if .NeedsYou}}
@@ -31,8 +31,9 @@
             </div>
             {{else}}
             <p class="empty">
-                Nothing is waiting on you. Anything Mendel needs from you appears here
-                and in the Decisions queue.
+                Nothing is waiting on you. Anything Mendel needs a person for appears
+                here first; the Decisions queue holds the whole history, including the
+                ones agents settled without you.
             </p>
             {{end}}
         </div>
@@ -123,15 +124,7 @@
         </div>
         {{end}}
 
-        {{if .HopCount}}
-        <div class="card">
-            <div class="card-head"><h2 class="card-title">Roadmap</h2></div>
-            <p class="text-sm muted">{{.HopCount}} hop{{if ne .HopCount 1}}s{{end}} planned.</p>
-            <div class="actions">
-                <a class="btn btn-secondary btn-sm" href="/p/{{$.ProjectID}}/roadmap">Open the roadmap</a>
-            </div>
-        </div>
-        {{end}}
+
     </div>
 </div>
 {{end}}

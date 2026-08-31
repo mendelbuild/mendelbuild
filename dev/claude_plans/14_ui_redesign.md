@@ -145,16 +145,68 @@ Two consequences worth being explicit about:
 
 ## The information architecture
 
-Target route map:
+### The nav has to teach the right model
 
-| Route | Is | Was |
-| --- | --- | --- |
-| `/p/{id}` | **Overview** — what needs you now, roadmap thumbnail, deploy state, budget one-liner | redirect to `/strategy` |
-| `/p/{id}/roadmap` | graph **and** hop table together | graph only; the table was on `/strategy` |
-| `/p/{id}/strategy` | OKRs and objectives narrative | everything |
-| `/p/{id}/costs` | budget, burn, cost by model, where the money went | a card dominating `/strategy` |
-| `/p/{id}/inputs` | decision queue | unchanged |
-| `/p/{id}/settings` | tabs: Repository · Credentials · Deployment · Members | split across `/settings` and `/deployment` |
+The first pass at this moved cards between pages and added two more, which is
+rearranging furniture rather than architecture. The nav still read:
+
+```
+Strategy | OKRs | Roadmap | Decisions | Settings
+```
+
+DESIGN.md section 2.1 says Objectives, Key Results, Funding Sources and the Hop
+DAG are all *parts of* a Strategy. Listing three of them as siblings of the
+Strategy that contains them teaches a flatter model than the product has, and
+someone learning the nav learns the wrong thing. Two more faults came from the
+same inattention: `/costs` was added as a page and put in no nav at all, and the
+Overview became the front door while the logo stayed a bare `<img>`, so there was
+no way back to it from inside a project.
+
+The nav is now four destinations, and the containment is shown rather than
+flattened:
+
+```
+[logo → Overview]  Overview  Strategy  Decisions  Costs  Settings    All projects
+                                 │
+                   Objectives ─ Roadmap
+                                 │
+                          Hop → Variation
+```
+
+Costs keeps a top-level slot — spend is a first-class operational concern here —
+and Strategy carries a one-line summary of it beside the Key Results the money is
+meant to buy, so looking at what the project is for also shows what pursuing it
+costs.
+
+`internal/web/navigation_test.go` holds the rules: every nav link must light
+itself up when you arrive at it, every page must belong to a section the nav can
+show, Strategy must stay lit all the way down into a Variation, and every detail
+page must carry a breadcrumb. The first two of those fail on exactly the `/costs`
+orphan that shipped.
+
+### Route map
+
+| Route | Nav section | Is | Was |
+| --- | --- | --- | --- |
+| `/p/{id}` | Overview | what needs you now, what Mendel is doing, roadmap, deploy state, spend | redirect to `/strategy` |
+| `/p/{id}/strategy` | Strategy › Objectives | objectives, key results, hop coverage, budget summary | everything |
+| `/p/{id}/roadmap` | Strategy › Roadmap | graph **and** hop table together | graph only; the table was on `/strategy` |
+| `/p/{id}/okr` | Strategy | the editor behind the Objectives tab | a top-level nav item of its own |
+| `/p/{id}/hops/{id}` | Strategy | one Hop and its variations | unchanged |
+| `/p/{id}/variations/{id}` | Strategy | one variation, its demo and its log | unchanged |
+| `/p/{id}/inputs` | Decisions | the whole queue, open and settled | unchanged |
+| `/p/{id}/costs` | Costs | budget, burn, cost by model, where the money went | a card dominating `/strategy` |
+| `/p/{id}/settings` | Settings › Project | repository, API key, members | split across `/settings` and `/deployment` |
+| `/p/{id}/deployment` | Settings › Deployment | channel, credentials, validation, production | as above |
+
+Two surfaces answer "what needs me", and they are not the same question: the
+Overview shows the open decisions waiting on a person, and the queue holds the
+whole history including the ones agents settled alone. Each now says so, because
+without that they read as one list shown twice.
+
+A Decision about a Hop breadcrumbs back through that Hop rather than through the
+queue. It is a step in that Hop's work; only a Decision with no subject — a
+project-level credential, say — belongs under the queue itself.
 
 Rationale, briefly: the roadmap graph and the hops table are the same
 information drawn two ways and belong on one page; cost is a thing you go and

@@ -281,8 +281,18 @@ document.querySelectorAll('[data-meter-mark]').forEach(function (el) {
 */}}
 {{define "decision-head"}}
 <div class="page-head">
+    {{/* A Decision about a Hop is a step in that Hop's work, not a free-floating
+         queue item, so the trail leads back through where it came from. Only a
+         Decision with no subject -- a project-level credential, say -- belongs
+         under the queue itself. */}}
     <nav class="breadcrumb">
+        {{if .View.Hop}}
+        <a href="/p/{{.ProjectID}}/roadmap">Roadmap</a>
+        <span class="breadcrumb-sep">/</span>
+        <a href="/p/{{.ProjectID}}/hops/{{.View.Hop.ID}}">{{.View.Hop.Name}}</a>
+        {{else}}
         <a href="/p/{{.ProjectID}}/inputs">Decisions</a>
+        {{end}}
         <span class="breadcrumb-sep">/</span>
         <span>{{.View.InputRequest.Title}}</span>
     </nav>
@@ -329,4 +339,51 @@ document.querySelectorAll('[data-meter-mark]').forEach(function (el) {
         {{if .Resolution}}{{.Resolution}}{{else}}This decision has been resolved and Mendel has moved on.{{end}}
     </p>
 </div>
+{{end}}
+
+{{/*
+    strategy-tabs is the navigation within a Strategy. Takes the page's
+    top-level data and reads .ProjectID and .StrategyTab.
+
+    DESIGN.md section 2.1 makes Objectives, Key Results, Funding Sources and the
+    Hop DAG all parts of one Strategy. The nav used to list three of them as
+    top-level siblings, which taught a flatter model of the product than the
+    product actually has.
+*/}}
+{{define "strategy-tabs"}}
+<div class="tabs">
+    <a class="tab{{if eq .StrategyTab "objectives"}} is-active{{end}}" href="/p/{{.ProjectID}}/strategy">Objectives</a>
+    <a class="tab{{if eq .StrategyTab "roadmap"}} is-active{{end}}" href="/p/{{.ProjectID}}/roadmap">Roadmap</a>
+</div>
+{{end}}
+
+{{/*
+    budget-strip is the one-line reading of a Strategy's spend, shown beside the
+    Key Results the money is meant to buy. Takes a *StrategyCostView.
+
+    Costs has its own page for the detail; this exists so that looking at what
+    the project is trying to achieve also shows what achieving it is costing.
+*/}}
+{{define "budget-strip"}}
+{{with .}}
+<div class="card card-tight">
+    <div class="row row-baseline">
+        <span class="eyebrow">Spend</span>
+        {{if .HasBudget}}
+        <strong class="numeric{{if .OverBudget}} metric-alert{{end}}">{{usd .SpentUSD}}</strong>
+        <span class="text-sm muted">of {{usd .BudgetUSD}}</span>
+        <span class="meter-inline">
+            <span class="meter{{if .OverBudget}} meter-over{{end}}">
+                <span class="meter-fill" data-meter-fill="{{printf "%.1f" (pctWidth .BurnedFraction)}}"></span>
+            </span>
+        </span>
+        {{if .Pace}}<span class="text-sm muted">{{.Pace}}</span>{{end}}
+        {{else}}
+        <strong class="numeric">{{usd .SpentUSD}}</strong>
+        <span class="text-sm muted">no budget set</span>
+        {{end}}
+        <a class="row-spacer text-sm" href="/p/{{.ProjectID}}/costs">Costs &rarr;</a>
+    </div>
+</div>
+{{end}}
 {{end}}

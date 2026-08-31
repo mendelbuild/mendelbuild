@@ -140,11 +140,19 @@ code {
     gap: var(--sp-1);
     padding: 0 var(--sp-5);
 }
+.nav-home {
+    display: inline-flex;
+    align-items: center;
+    padding: var(--sp-1);
+    margin-right: var(--sp-3);
+    border-radius: var(--radius-sm);
+}
+.nav-home:hover { background: rgba(255, 255, 255, 0.12); }
 .nav-logo {
     height: 26px;
     width: 26px;
     border-radius: var(--radius-sm);
-    margin-right: var(--sp-4);
+    display: block;
 }
 .nav-link {
     color: rgba(255, 255, 255, 0.82);
@@ -326,6 +334,10 @@ code {
     border-radius: 1px;
 }
 .meter-wrap { position: relative; padding-top: 3px; }
+/* A meter sharing a line with text rather than owning a block. */
+.meter-inline { flex: 1 1 120px; min-width: 100px; display: block; }
+.meter-inline .meter { display: block; }
+.meter-inline .meter-fill { display: block; }
 
 /* ==== 5. Buttons and badges =============================================== */
 

@@ -18,17 +18,27 @@
 </head>
 <body>
     <nav class="nav">
-        <img src="/static/mendel-logo-transparent-32.png" alt="Mendel" class="nav-logo">
+        {{/* The logo leads home. Without this there was no way back to a
+             project's overview from inside it, short of leaving the project
+             entirely and coming back in. */}}
+        <a class="nav-home" href="{{if .ProjectID}}/p/{{.ProjectID}}{{else}}/{{end}}">
+            <img src="/static/mendel-logo-transparent-32.png" alt="Mendel" class="nav-logo">
+        </a>
         {{if .ProjectID}}
+        {{/* Four destinations, matching the hierarchy in DESIGN.md section 2.1.
+             Objectives, funding and the Hop DAG all belong to the Strategy, so
+             they are tabs within it rather than siblings of it: a nav that
+             lists them as peers teaches a model of the product that the product
+             does not have. */}}
         {{$nav := .Nav}}
+        <a class="nav-link{{if eq $nav "overview"}} is-active{{end}}" href="/p/{{.ProjectID}}">Overview</a>
         <a class="nav-link{{if eq $nav "strategy"}} is-active{{end}}" href="/p/{{.ProjectID}}/strategy">Strategy</a>
-        <a class="nav-link{{if eq $nav "okr"}} is-active{{end}}" href="/p/{{.ProjectID}}/okr">OKRs</a>
-        <a class="nav-link{{if eq $nav "roadmap"}} is-active{{end}}" href="/p/{{.ProjectID}}/roadmap">Roadmap</a>
         <a class="nav-link{{if eq $nav "inputs"}} is-active{{end}}" href="/p/{{.ProjectID}}/inputs">Decisions{{if .OpenInputCount}}<span class="nav-badge">{{.OpenInputCount}}</span>{{end}}</a>
+        <a class="nav-link{{if eq $nav "costs"}} is-active{{end}}" href="/p/{{.ProjectID}}/costs">Costs</a>
         <a class="nav-link{{if eq $nav "settings"}} is-active{{end}}" href="/p/{{.ProjectID}}/settings">Settings</a>
         {{end}}
-        <a class="nav-link{{if eq .Nav "projects"}} is-active{{end}}" href="/">All Projects</a>
         <span class="nav-right">
+            <a class="nav-link{{if eq .Nav "projects"}} is-active{{end}}" href="/">All projects</a>
             {{if .User}}<span class="nav-user">{{.User.Email}}</span>
             <a class="nav-link" href="/auth/logout">Log out</a>{{end}}
         </span>

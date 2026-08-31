@@ -604,3 +604,63 @@ func TestSelectionPageRendersBothStates(t *testing.T) {
 		}
 	})
 }
+
+// The Strategy page is the Objectives tab: what the project is for, and what
+// pursuing it is costing. Its cost assertions moved to the Costs page when that
+// was split out, which left this page with no test at all.
+func TestStrategyPageShowsObjectivesAndSpend(t *testing.T) {
+	projectID := uuid.New()
+	target := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
+
+	view := &StrategyView{
+		Project:  &domain.Project{ID: projectID, Name: "Pollstar"},
+		Strategy: &domain.Strategy{ID: uuid.New(), Name: "Q3 launch"},
+		Objectives: []ObjectiveView{
+			{
+				Objective:  domain.Objective{ID: uuid.New(), Description: "People can sign in"},
+				KeyResults: []domain.KeyResult{{Description: "Weekly active users", TargetUnits: "1000 users", TargetDate: &target}},
+				HopCount:   2,
+			},
+			{
+				Objective: domain.Objective{ID: uuid.New(), Description: "Nobody is locked out"},
+			},
+		},
+	}
+
+	body := renderPageForTest(t, "strategy.html", map[string]interface{}{
+		"ProjectID":   projectID.String(),
+		"StrategyTab": "objectives",
+		"Strategy":    view,
+		"Cost":        &StrategyCostView{ProjectID: projectID.String(), SpentUSD: 41.82, BudgetUSD: 120},
+	})
+
+	for _, want := range []string{
+		"Q3 launch", "People can sign in", "Weekly active users", "1000 users",
+		"2 hops",            // an objective the roadmap is actually pursuing
+		"Not planned",       // and one it is not, said plainly rather than left blank
+		"$41.82", "of $120", // the budget strip, beside what the money is buying
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("strategy page missing %q", want)
+		}
+	}
+
+	// An objective with no key results cannot be judged met, and saying so is
+	// the whole point of showing it.
+	if !strings.Contains(body, "no way to tell whether this objective is met") {
+		t.Error("an objective without key results should say why that matters")
+	}
+}
+
+// A project with no strategy must still render: it is the state every project
+// starts in, and the page it lands on cannot be the one that errors.
+func TestStrategyPageBeforeSetup(t *testing.T) {
+	projectID := uuid.New()
+	body := renderPageForTest(t, "strategy.html", map[string]interface{}{
+		"ProjectID":   projectID.String(),
+		"StrategyTab": "objectives",
+	})
+	if !strings.Contains(body, "No strategy yet") {
+		t.Error("a project before setup should say so rather than rendering an empty page")
+	}
+}

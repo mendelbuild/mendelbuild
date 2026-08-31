@@ -2,6 +2,8 @@
 {{with .View}}
 <div class="page-head">
     <nav class="breadcrumb">
+        <a href="/p/{{$.ProjectID}}/strategy">Strategy</a>
+        <span class="breadcrumb-sep">/</span>
         <a href="/p/{{$.ProjectID}}/roadmap">Roadmap</a>
         <span class="breadcrumb-sep">/</span>
         <a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">{{.Hop.Name}}</a>

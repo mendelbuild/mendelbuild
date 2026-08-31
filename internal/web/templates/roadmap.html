@@ -1,12 +1,14 @@
 {{define "page-content"}}
 <div class="page-head">
-    <span class="page-kind">Roadmap</span>
+    <span class="page-kind">Strategy</span>
     <h1 class="page-title">{{.Strategy.Name}}</h1>
     <p class="page-lede">
         Every Hop, what it depends on, and where each one stands. The picture and
         the table below show the same thing; use whichever suits what you are after.
     </p>
 </div>
+
+{{template "strategy-tabs" .}}
 
 <div class="card card-flush">
     <div class="roadmap-panel-head">

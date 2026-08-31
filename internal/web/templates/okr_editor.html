@@ -116,9 +116,9 @@
 {{with .OKR}}
 <div class="page-head">
     <nav class="breadcrumb">
-        <a href="/p/{{$.ProjectID}}/strategy">Strategy</a>
+        <a href="/p/{{$.ProjectID}}/strategy">Objectives</a>
         <span class="breadcrumb-sep">/</span>
-        <a href="/p/{{$.ProjectID}}/okr">OKRs</a>
+        <a href="/p/{{$.ProjectID}}/okr">Edit</a>
         {{range .Breadcrumbs}}
         <span class="breadcrumb-sep">/</span>
         <a href="/p/{{$.ProjectID}}/okr/objectives/{{.ID}}">{{.Description}}</a>
@@ -128,7 +128,7 @@
         <span>{{$.CurrentObjective.Objective.Description}}</span>
         {{end}}
     </nav>
-    <span class="page-kind">OKRs</span>
+    <span class="page-kind">Editing objectives</span>
     <h1 class="page-title">{{.Strategy.Name}}</h1>
     <p class="page-lede">
         Objectives say what this project is for; key results say how it will know.
