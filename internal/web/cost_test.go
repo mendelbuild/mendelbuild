@@ -325,7 +325,7 @@ func TestRoadmapReviewRendersCostAudit(t *testing.T) {
 	body := renderForTest(t, "input_request_roadmap.html", projectID, view)
 
 	for _, want := range []string{
-		"Cost Review",
+		"Cost review",
 		"$42",          // proposed total, 30 + 12
 		"$75",          // audited total
 		"$60",          // budget remaining, 100 - 40
@@ -342,7 +342,7 @@ func TestRoadmapReviewRendersCostAudit(t *testing.T) {
 	}
 
 	// A hop the auditor endorsed must not be flagged as disputed in the table.
-	if strings.Contains(body, "auditor: sound") {
+	if strings.Contains(body, "auditor says sound") {
 		t.Error("endorsed hops should not carry an auditor disagreement note")
 	}
 }

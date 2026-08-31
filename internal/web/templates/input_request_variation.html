@@ -1,317 +1,275 @@
 {{define "page-content"}}
+{{template "decision-head" .}}
 {{with .View}}
-<h1>{{.InputRequest.Title}}</h1>
 
-{{/* Conflict warning banner */}}
 {{if .ConflictInfo}}
-<div class="card" style="background: #f8d7da; border: 2px solid #dc3545; margin-bottom: 20px;">
-    <h2 style="margin: 0 0 10px 0; color: #721c24;">Migration Conflicts Detected</h2>
-    <p style="margin: 0 0 15px 0; color: #856404;">{{.ConflictInfo.Summary}}</p>
-
-    <div style="background: #fff; border-radius: 4px; padding: 15px;">
+<div class="callout callout-failure">
+    <p class="callout-title">These approaches cannot all be merged</p>
+    <p class="callout-body">{{.ConflictInfo.Summary}}</p>
+    <div class="stack-tight">
         {{range .ConflictInfo.Conflicts}}
-        <div style="margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #f5c6cb;">
-            <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 5px;">
-                <strong style="color: #dc3545;">{{.ConflictType}}</strong>
-                {{if .AffectedSchema}}<code style="background: #f8d7da; padding: 2px 6px; border-radius: 3px;">{{.AffectedSchema}}</code>{{end}}
+        <div>
+            <div class="row row-baseline row-tight">
+                <strong>{{.ConflictType}}</strong>
+                {{if .AffectedSchema}}<code>{{.AffectedSchema}}</code>{{end}}
             </div>
-            <p style="margin: 5px 0; color: #555;">{{.Description}}</p>
-            <div style="font-size: 0.85em; color: #666;">
-                Conflicts between: {{range $i, $name := .VariationNames}}{{if $i}}, {{end}}<strong>{{$name}}</strong>{{end}}
-            </div>
+            <p class="callout-body">{{.Description}}</p>
+            <p class="callout-body text-sm">
+                Between {{range $i, $name := .VariationNames}}{{if $i}}, {{end}}<strong>{{$name}}</strong>{{end}}.
+            </p>
         </div>
         {{end}}
     </div>
-
-    <p style="margin: 15px 0 0 0; font-size: 0.9em; color: #721c24;">
-        <strong>To proceed:</strong> Prune conflicting variations below until no conflicts remain, or request revised variations that avoid these conflicts.
+    <p class="callout-body">
+        Prune conflicting variations below until none remain, or ask for revised
+        approaches that avoid the clash.
     </p>
 </div>
 {{end}}
 
-<div style="display: flex; gap: 20px; align-items: flex-start;">
-    {{/* Left column: Variation proposals */}}
-    <div style="flex: 2;">
+<div class="split">
+    <div>
+        {{if .VariationProposal}}{{if .VariationProposal.Variations}}
         <div class="card">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                <h2 style="margin: 0;">{{if .ConflictInfo}}Existing{{else}}Proposed{{end}} Variations</h2>
-                {{if .VariationProposal}}
-                <div style="text-align: right;">
-                    <div style="font-size: 0.9em; color: #666;">
-                        Estimated: <strong>{{usd .VariationProposal.TotalEstimatedUSD}}</strong>
-                    </div>
-                    {{with .HopCost}}
-                    {{if .LimitUSD}}
-                    <div style="font-size: 0.85em; {{if gt $.View.VariationProposal.TotalEstimatedUSD .RemainingUSD}}color: #dc3545;{{else}}color: #28a745;{{end}}">
+            <div class="card-head">
+                <h2 class="card-title">{{if .ExistingVariations}}New approaches{{else}}Proposed approaches{{end}}</h2>
+                <span class="card-head-action">
+                    Estimated <strong>{{usd .VariationProposal.TotalEstimatedUSD}}</strong>
+                    {{with .HopCost}}{{if .LimitUSD}}
+                    <span class="badge badge-{{if gt $.View.VariationProposal.TotalEstimatedUSD .RemainingUSD}}failure{{else}}success{{end}}">
                         {{usd .RemainingUSD}} left of {{usdPtr .LimitUSD}}
-                    </div>
-                    {{end}}
-                    {{end}}
-                </div>
-                {{end}}
-            </div>
-
-            {{/* Existing variations (with optional pruning for conflicts) */}}
-            {{if .ExistingVariations}}
-            <div style="margin-bottom: 20px;">
-                {{if not .ConflictInfo}}<h3 style="color: #6c757d; margin-bottom: 10px;">Existing Variations (Code Complete)</h3>{{end}}
-                {{range .ExistingVariations}}
-                <div class="variation-card" style="border: 2px solid {{if .HasConflict}}#dc3545{{else if eq .Status "rejected"}}#dc3545{{else if eq .Status "merged"}}#28a745{{else if eq .Status "pruned"}}#6c757d{{else}}#6c757d{{end}}; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: {{if .HasConflict}}#fff5f5{{else if eq .Status "rejected"}}#f8d7da{{else if eq .Status "merged"}}#d4edda{{else}}#e9ecef{{end}}; {{if eq .Status "pruned"}}opacity: 0.5;{{else}}opacity: 0.85;{{end}}">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
-                        <div>
-                            <h3 style="margin: 0; color: #495057;">{{.Name}}</h3>
-                            {{if .HasConflict}}
-                            <div style="font-size: 0.85em; color: #dc3545; margin-top: 5px;">
-                                Conflicts with: {{range $i, $name := .ConflictsWith}}{{if $i}}, {{end}}{{$name}}{{end}}
-                            </div>
-                            {{end}}
-                        </div>
-                        <div style="display: flex; gap: 8px; align-items: center;">
-                            <span style="background: {{if eq .Status "rejected"}}#f5c6cb{{else if eq .Status "merged"}}#c3e6cb{{else if eq .Status "pruned"}}#dee2e6{{else}}#dee2e6{{end}}; padding: 4px 8px; border-radius: 4px; font-size: 0.85em;">
-                                {{.Status}}
-                            </span>
-                            {{if and $.View.ConflictInfo (eq .Status "pending")}}
-                            {{if ne $.View.InputRequest.Status "resolved"}}
-                            <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.ID}}/prune" style="margin: 0;" onsubmit="return confirm('Prune this variation? This will remove it from consideration.')">
-                                <button type="submit" style="padding: 4px 8px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">Prune</button>
-                            </form>
-                            {{end}}
-                            {{end}}
-                        </div>
-                    </div>
-                    <div>
-                        <strong>Approach:</strong>
-                        <p style="margin: 5px 0; color: #555;">{{.Approach}}</p>
-                    </div>
-                </div>
-                {{end}}
-            </div>
-            {{end}}
-
-            {{/* Proposed new variations (editable) */}}
-            {{if .VariationProposal}}
-            {{if .VariationProposal.Variations}}
-            <h3 style="color: #28a745; margin-bottom: 10px;">{{if .ExistingVariations}}New {{end}}Proposed Variations</h3>
-            {{end}}
-            <form id="approve-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/approve">
-            {{range $i, $v := .VariationProposal.Variations}}
-            <div class="variation-card" style="border: 2px solid #28a745; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: #f8f9fa;">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
-                    <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; margin: 0;">
-                        {{if ne $.View.InputRequest.Status "resolved"}}
-                        <input type="checkbox" name="variations" value="{{$i}}" checked class="variation-checkbox" style="width: 18px; height: 18px;" onchange="updateApproveButton()">
-                        {{end}}
-                        <h3 style="margin: 0;">{{$v.Name}}</h3>
-                    </label>
-                    <span style="background: #e9ecef; padding: 4px 8px; border-radius: 4px; font-size: 0.85em;">
-                        ~{{usd $v.EstimatedCostUSD}}
                     </span>
-                </div>
-
-                <div style="margin-bottom: 10px;">
-                    <strong>Approach:</strong>
-                    <p style="margin: 5px 0; color: #333;">{{$v.Approach}}</p>
-                </div>
-
-                <div style="background: #fff3cd; padding: 10px; border-radius: 4px;">
-                    <strong>Differentiation:</strong>
-                    <p style="margin: 5px 0; color: #666;">{{$v.Differentiation}}</p>
-                </div>
+                    {{end}}{{end}}
+                </span>
             </div>
-            {{end}}
+            <p class="card-note">
+                Mendel writes code for each approach you keep, and you compare the results
+                before anything is merged. Uncheck any that are not worth the money.
+            </p>
+
+            <form id="approve-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/approve">
+                <div class="stack">
+                    {{range $i, $v := .VariationProposal.Variations}}
+                    <label class="choice proposal">
+                        {{if $.View.Open}}
+                        <input type="checkbox" name="variations" value="{{$i}}" checked
+                               class="variation-checkbox" onchange="updateApproveButton()">
+                        {{end}}
+                        <span>
+                            <span class="row row-baseline row-tight">
+                                <span class="choice-title">{{$v.Name}}</span>
+                                <span class="badge badge-quiet">~{{usd $v.EstimatedCostUSD}}</span>
+                            </span>
+                            <span class="choice-note">{{$v.Approach}}</span>
+                            <span class="proposal-diff">
+                                <span class="eyebrow">How it differs</span>
+                                {{$v.Differentiation}}
+                            </span>
+                        </span>
+                    </label>
+                    {{end}}
+                </div>
             </form>
-            {{end}}
-
-            {{if and (not .VariationProposal.Variations) (not .ExistingVariations)}}
-            <p class="empty">No variations proposed.</p>
-            {{end}}
-
-            {{if and .ExistingVariations (not .VariationProposal.Variations)}}
-            <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-radius: 8px;">
-                <strong>Request new variations:</strong>
-                <p style="margin: 5px 0; color: #666;">Use the feedback form on the right to describe what additional variations you'd like to compare against the existing ones.</p>
-            </div>
-            {{end}}
         </div>
+        {{end}}{{end}}
+
+        {{if .ExistingVariations}}
+        <div class="card">
+            <div class="card-head">
+                <h2 class="card-title">Already built</h2>
+                <span class="badge badge-quiet">{{len .ExistingVariations}}</span>
+            </div>
+            <p class="card-note">
+                These have code already. They stay in the comparison unless you prune them.
+            </p>
+            <div class="stack-tight">
+                {{range .ExistingVariations}}
+                {{$sv := .StatusView}}
+                <div class="callout callout-quiet callout-{{$sv.Tone}}">
+                    <div class="row row-baseline row-tight">
+                        <a class="callout-title" href="/p/{{$.ProjectID}}/variations/{{.ID}}">{{.Name}}</a>
+                        <span class="badge badge-{{$sv.Tone}}">{{$sv.Label}}</span>
+                        {{if and $.View.ConflictInfo .Prunable $.View.Open}}
+                        <span class="row-spacer">
+                            <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.ID}}/prune"
+                                  onsubmit="return confirm('Prune {{.Name}}? It is removed from consideration.')">
+                                <button type="submit" class="btn btn-danger btn-sm">Prune</button>
+                            </form>
+                        </span>
+                        {{end}}
+                    </div>
+                    {{if .HasConflict}}
+                    <p class="callout-body text-sm">
+                        Conflicts with {{range $i, $name := .ConflictsWith}}{{if $i}}, {{end}}{{$name}}{{end}}.
+                    </p>
+                    {{end}}
+                    <p class="callout-body">{{.Approach}}</p>
+                </div>
+                {{end}}
+            </div>
+        </div>
+        {{end}}
+
+        {{if and (not .VariationProposal.Variations) (not .ExistingVariations)}}
+        <div class="card">
+            <div class="empty-block">
+                <div class="empty-title">No approaches proposed</div>
+                <p class="empty">Use the conversation to tell Mendel what you want it to try.</p>
+            </div>
+        </div>
+        {{end}}
 
         {{if .InputRequest.Details}}
         <div class="card">
-            <h2>Raw Proposal (JSON)</h2>
-            <details>
-                <summary style="cursor: pointer; color: #007bff;">View/Edit JSON</summary>
-                <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/roadmap">
-                    <textarea name="roadmap" style="width: 100%; height: 300px; font-family: monospace; font-size: 12px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; margin-top: 10px;">{{.InputRequest.Details}}</textarea>
-                    <button type="submit" style="margin-top: 10px; padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Save Changes</button>
-                </form>
+            <details class="disclosure">
+                <summary>Raw proposal (JSON)</summary>
+                <div class="disclosure-body">
+                    <p class="text-sm subtle">
+                        The proposal exactly as the agent produced it. Editing here is a last
+                        resort; the conversation is the usual way to change it.
+                    </p>
+                    <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/roadmap">
+                        <div class="field">
+                            <textarea name="roadmap" rows="14" class="input-mono">{{.InputRequest.Details}}</textarea>
+                        </div>
+                        <button type="submit" class="btn btn-secondary btn-sm">Save changes</button>
+                    </form>
+                </div>
             </details>
         </div>
         {{end}}
     </div>
 
-    {{/* Right column: Actions and messages */}}
-    <div style="flex: 1;">
+    <div class="stack">
         <div class="card">
-            <h2>Review Actions</h2>
+            <div class="card-head"><h2 class="card-title">Your decision</h2></div>
 
-            {{if ne .InputRequest.Status "resolved"}}
-            {{if .ConflictInfo}}
-            {{/* Conflict resolution mode */}}
-            <div style="padding: 12px; background: #f8d7da; border-radius: 4px; text-align: center; margin-bottom: 15px;">
-                <strong style="color: #721c24;">Resolve Conflicts First</strong>
-            </div>
-            <p style="font-size: 0.85em; color: #666; margin-bottom: 15px;">
-                Prune conflicting variations until no conflicts remain. You can also use the feedback form to request revised variations that avoid these conflicts.
-            </p>
-            <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/resolve-conflicts">
-                <button type="submit" style="width: 100%; padding: 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
-                    Conflicts Resolved - Proceed to Selection
-                </button>
-            </form>
-            <p style="font-size: 0.85em; color: #666; margin-top: 10px;">
-                Click when you've pruned enough variations to eliminate conflicts. The system will re-check for remaining conflicts.
-            </p>
-            {{else if .VariationProposal.Variations}}
-            <div style="margin-bottom: 15px; padding: 12px; background: #f8f9fa; border-radius: 4px; border: 1px solid #dee2e6;">
-                <div style="font-weight: bold; margin-bottom: 10px;">Comparison Requirements</div>
-                <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; cursor: pointer;">
-                    <input type="checkbox" name="requires_demo" form="approve-form" checked style="width: 16px; height: 16px;">
-                    <span>Requires clickable demos</span>
-                </label>
-                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                    <input type="checkbox" name="requires_production" form="approve-form" style="width: 16px; height: 16px;">
-                    <span>Requires production traffic</span>
-                </label>
-                <p style="font-size: 0.8em; color: #666; margin: 8px 0 0 0;">
-                    Production traffic enables A/B comparison with real users.
+            {{if .Open}}
+                {{if .ConflictInfo}}
+                <p class="card-note">
+                    Prune conflicting variations until none remain, then confirm. Mendel
+                    re-checks before moving on.
                 </p>
-            </div>
-            <button id="approve-button" type="submit" form="approve-form" style="width: 100%; padding: 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
-                Approve {{len .VariationProposal.Variations}} New Variation{{if ne (len .VariationProposal.Variations) 1}}s{{end}}
-            </button>
-            <p style="font-size: 0.85em; color: #666; margin-top: 15px;">
-                {{if .ExistingVariations}}
-                Approving will create the selected new variations and trigger code generation. Existing variations will be kept.
+                <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/resolve-conflicts">
+                    <button type="submit" class="btn btn-primary btn-block">Conflicts resolved &mdash; proceed</button>
+                </form>
+                {{else if .VariationProposal.Variations}}
+                <fieldset class="fieldset">
+                    <legend class="eyebrow">What counts as a comparison</legend>
+                    <label class="check">
+                        <input type="checkbox" name="requires_demo" form="approve-form" checked>
+                        <span>A clickable demo of each approach</span>
+                    </label>
+                    <label class="check">
+                        <input type="checkbox" name="requires_production" form="approve-form">
+                        <span>Real production traffic, split between them</span>
+                    </label>
+                    <p class="text-sm subtle">
+                        Production traffic gives a real A/B result and costs real money to run.
+                    </p>
+                </fieldset>
+
+                <button id="approve-button" type="submit" form="approve-form" class="btn btn-primary btn-block">
+                    Approve {{len .VariationProposal.Variations}} approach{{if ne (len .VariationProposal.Variations) 1}}es{{end}}
+                </button>
+                <p class="text-sm subtle">
+                    {{if .ExistingVariations}}
+                    Code generation starts for the approaches you keep. What is already built stays.
+                    {{else}}
+                    Code generation starts for each approach you keep.
+                    {{end}}
+                </p>
+                {{else if .ExistingVariations}}
+                <p class="empty">
+                    Nothing new to approve. Ask for more approaches in the conversation,
+                    then approve them here.
+                </p>
+                {{end}}
+            {{else}}
+                {{if eq .Resolution "approved"}}
+                <div class="callout callout-success">
+                    <p class="callout-title">Approved</p>
+                    <p class="callout-body">Code generation has started.</p>
+                    {{if .Hop}}
+                    <div class="actions">
+                        <a class="btn btn-secondary btn-sm" href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">Open the Hop</a>
+                    </div>
+                    {{end}}
+                </div>
+                {{else if eq .Resolution "rejected"}}
+                <div class="callout callout-failure">
+                    <p class="callout-title">Rejected</p>
+                    <p class="callout-body">Nothing was built from this proposal.</p>
+                </div>
                 {{else}}
-                Approving will create variations and trigger code generation for each selected approach.
+                {{template "decision-resolved" .}}
                 {{end}}
-            </p>
-            {{else if .ExistingVariations}}
-            <div style="padding: 12px; background: #e9ecef; border-radius: 4px; text-align: center;">
-                <strong>No new variations to approve</strong>
-            </div>
-            <p style="font-size: 0.85em; color: #666; margin-top: 15px;">
-                Use the feedback form below to request additional variations, then approve them when ready.
-            </p>
-            {{end}}
-            {{else}}
-            {{if eq .Resolution "approved"}}
-            <div style="padding: 15px; background: #d4edda; border-radius: 4px; text-align: center;">
-                <strong>Variations Approved</strong><br>
-                Code generation has been triggered.<br>
-                {{if .Hop}}
-                <a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">View Hop</a>
-                {{end}}
-            </div>
-            {{else if eq .Resolution "rejected"}}
-            <div style="padding: 15px; background: #f8d7da; border-radius: 4px; text-align: center;">
-                <strong>Proposal Rejected</strong><br>
-                <a href="/p/{{$.ProjectID}}/inputs">Back to Input Needed</a>
-            </div>
-            {{else}}
-            <div style="padding: 15px; background: #e2e3e5; border-radius: 4px; text-align: center;">
-                <strong>Input Request Resolved</strong>
-            </div>
-            {{end}}
             {{end}}
         </div>
 
         <div class="card">
-            <h2>Conversation</h2>
-            <div style="max-height: 250px; overflow-y: auto; padding: 10px; background: #f8f9fa; border-radius: 4px; margin-bottom: 15px;">
+            <div class="card-head"><h2 class="card-title">Conversation</h2></div>
+            <div class="msg-thread">
                 {{if .Messages}}
                 {{range .Messages}}
-                <div style="margin-bottom: 10px; padding: 8px; border-radius: 4px; {{if eq .Role "user"}}background: #cce5ff;{{else if eq .Role "agent"}}background: #d4edda;{{else}}background: #fff3cd;{{end}}">
-                    <div style="font-size: 0.8em; color: #666; margin-bottom: 4px;">
-                        <strong>{{if eq .Role "user"}}You{{else if eq .Role "agent"}}Agent{{else}}System{{end}}</strong>
-                        <span style="float: right;">{{.CreatedAt.Format "15:04"}}</span>
+                <div class="msg msg-{{.Role}}">
+                    <div class="row row-baseline row-tight">
+                        <span class="eyebrow">{{messageAuthor .Role}}</span>
+                        <span class="row-spacer text-xs subtle">{{.CreatedAt.Format "15:04"}}</span>
                     </div>
-                    <div style="white-space: pre-wrap;">{{.Content}}</div>
-                    {{if .TokensUsed}}<div style="font-size: 0.75em; color: #999;">Tokens: {{.TokensUsed}}</div>{{end}}
+                    <p class="pre-wrap">{{.Content}}</p>
                 </div>
                 {{end}}
                 {{else}}
-                <p class="empty">No messages yet.</p>
+                <p class="empty">Nothing said yet.</p>
                 {{end}}
             </div>
 
-            {{if ne .InputRequest.Status "resolved"}}
+            {{if .Open}}
             <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/message">
-                <textarea name="feedback" placeholder="Provide feedback on the variations..." style="width: 100%; height: 80px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical;"></textarea>
-                <div style="margin-top: 10px; display: flex; gap: 10px;">
-                    <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Send Feedback</button>
-                    <button type="button" onclick="document.getElementById('regenerate-form').submit()" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Regenerate</button>
+                <div class="field">
+                    <textarea name="feedback" rows="3" class="textarea-sm"
+                              placeholder="Ask for a different approach, or say what is missing."></textarea>
+                </div>
+                <div class="actions">
+                    <button type="submit" class="btn btn-primary btn-sm">Send</button>
+                    <button type="submit" form="regenerate-form" class="btn btn-secondary btn-sm">Start over</button>
                 </div>
             </form>
-            <form id="regenerate-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/regenerate" style="display: none;"></form>
+            <form id="regenerate-form" method="POST"
+                  action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/regenerate" hidden></form>
             {{end}}
         </div>
 
-        <div class="card">
-            <h2>Input Request Info</h2>
-            <table>
-                <tr>
-                    <th style="width: 80px;">Status</th>
-                    <td><span class="status status-{{.InputRequest.Status}}">{{.InputRequest.Status}}</span></td>
-                </tr>
-                {{if .Hop}}
-                <tr>
-                    <th>Hop</th>
-                    <td><a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">{{.Hop.Name}}</a></td>
-                </tr>
-                {{end}}
-                <tr>
-                    <th>Created</th>
-                    <td>{{.InputRequest.CreatedAt.Format "2006-01-02 15:04"}}</td>
-                </tr>
-                {{if .InputRequest.ResolvedAt}}
-                <tr>
-                    <th>Resolved</th>
-                    <td>{{.InputRequest.ResolvedAt.Format "2006-01-02 15:04"}}</td>
-                </tr>
-                {{end}}
-            </table>
-        </div>
+        <details class="disclosure">
+            <summary>Diagnostics</summary>
+            <div class="disclosure-body">
+                <dl class="kv">
+                    <dt>Status</dt><dd><code>{{.InputRequest.Status}}</code></dd>
+                    {{if .Hop}}<dt>Hop</dt><dd><a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">{{.Hop.Name}}</a></dd>{{end}}
+                    <dt>Raised</dt><dd class="subtle">{{.InputRequest.CreatedAt.Format "2 Jan 2006, 15:04"}}</dd>
+                    {{if .InputRequest.ResolvedAt}}
+                    <dt>Settled</dt><dd class="subtle">{{.InputRequest.ResolvedAt.Format "2 Jan 2006, 15:04"}}</dd>
+                    {{end}}
+                </dl>
+            </div>
+        </details>
     </div>
 </div>
 
 <script>
+// The approve button names how many approaches it will fund, so it has to track
+// the checkboxes. Disabling it at zero is the point: approving nothing silently
+// resolves the decision with no work started.
 function updateApproveButton() {
-    const checkboxes = document.querySelectorAll('.variation-checkbox');
     const button = document.getElementById('approve-button');
+    if (!button) return;
     const checked = document.querySelectorAll('.variation-checkbox:checked').length;
-
-    if (checked === 0) {
-        button.disabled = true;
-        button.style.background = '#6c757d';
-        button.textContent = 'Select variations to approve';
-    } else {
-        button.disabled = false;
-        button.style.background = '#28a745';
-        button.textContent = 'Approve ' + checked + ' Variation' + (checked !== 1 ? 's' : '');
-    }
-
-    // Update card borders
-    checkboxes.forEach(function(cb) {
-        const card = cb.closest('.variation-card');
-        if (cb.checked) {
-            card.style.borderColor = '#28a745';
-        } else {
-            card.style.borderColor = '#ddd';
-        }
-    });
+    button.disabled = checked === 0;
+    button.textContent = checked === 0
+        ? 'Select at least one approach'
+        : 'Approve ' + checked + ' approach' + (checked !== 1 ? 'es' : '');
 }
-
-// Initialize on page load
 document.addEventListener('DOMContentLoaded', updateApproveButton);
 </script>
 {{end}}

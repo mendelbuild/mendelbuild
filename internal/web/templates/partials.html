@@ -269,3 +269,64 @@ document.querySelectorAll('[data-meter-mark]').forEach(function (el) {
     <a class="tab{{if eq .SettingsTab "deployment"}} is-active{{end}}" href="/p/{{.ProjectID}}/deployment">Deployment</a>
 </div>
 {{end}}
+
+{{/*
+    decision-head is the opening of every Decision page: where you are, what is
+    being asked, and where it stands. Takes an *InputRequestDetailView.
+
+    All four Decision pages hand-rolled a "Back to Input Needed" link and a bare
+    <h1>, and none of them showed the Decision's ribbon -- so the one question
+    they exist to answer, "is this waiting on me?", could only be inferred from
+    which buttons were at the bottom.
+*/}}
+{{define "decision-head"}}
+<div class="page-head">
+    <nav class="breadcrumb">
+        <a href="/p/{{.ProjectID}}/inputs">Decisions</a>
+        <span class="breadcrumb-sep">/</span>
+        <span>{{.View.InputRequest.Title}}</span>
+    </nav>
+    <span class="page-kind">{{decisionKind .View.InputRequest.Kind}}</span>
+    <h1 class="page-title">{{.View.InputRequest.Title}}</h1>
+    <p class="page-lede">{{.View.Ask}}</p>
+</div>
+{{template "lifecycle-ribbon" .View.Ribbon}}
+{{end}}
+
+{{/*
+    decision-activity is the message history on a Decision page. Takes an
+    *InputRequestDetailView.
+
+    Four copies of this markup existed, differing only in their hex values.
+*/}}
+{{define "decision-activity"}}
+{{if .Messages}}
+<div class="card">
+    <div class="card-head"><h2 class="card-title">Activity</h2></div>
+    <div class="stack-tight">
+        {{range .Messages}}
+        <div class="msg msg-{{.Role}}">
+            <div class="row row-baseline row-tight">
+                <span class="eyebrow">{{messageAuthor .Role}}</span>
+                <span class="row-spacer text-xs subtle">{{.CreatedAt.Format "2 Jan 2006, 15:04"}}</span>
+            </div>
+            <p class="pre-wrap">{{.Content}}</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}
+{{end}}
+
+{{/*
+    decision-resolved is the closing state shared by the Decision pages.
+    Takes an *InputRequestDetailView.
+*/}}
+{{define "decision-resolved"}}
+<div class="callout callout-success">
+    <p class="callout-title">Settled</p>
+    <p class="callout-body">
+        {{if .Resolution}}{{.Resolution}}{{else}}This decision has been resolved and Mendel has moved on.{{end}}
+    </p>
+</div>
+{{end}}

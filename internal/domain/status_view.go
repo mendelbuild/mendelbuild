@@ -127,6 +127,20 @@ func DecisionResolution(resolution string) StatusView {
 	}
 }
 
+// MessageAuthor names who wrote a message on a Decision.
+func MessageAuthor(role string) string {
+	switch role {
+	case "system":
+		return "Mendel"
+	case "agent":
+		return "Agent"
+	case "user":
+		return "You"
+	default:
+		return role
+	}
+}
+
 // HopStatusView renders a Hop's status as a badge, for the places that list
 // many Hops at once and have no room for a full Ribbon. It reuses the Ribbon so
 // a Hop cannot describe itself one way in a table and another on its own page.

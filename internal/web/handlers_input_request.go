@@ -43,6 +43,29 @@ type InputRequestDetailView struct {
 	ObjectivesJSON             template.JS  // JSON map of objective ID to description
 	NeedsProductionCredentials bool         // requires_production but no credentials configured
 	HostingPlatforms           []HostingPlatformOption // For hosting_platform kind
+
+}
+
+// Ribbon states where this Decision stands and what it is asking of you.
+//
+// Every other detail page in the app opens with one; these did not, so the
+// question "is this waiting on me?" was answerable only by reading which
+// buttons happened to be at the bottom.
+//
+// Derived rather than assigned, so no page can be built without it.
+func (v *InputRequestDetailView) Ribbon() *RibbonView {
+	return ribbonView(domain.DecisionLifecycle(v.InputRequest))
+}
+
+// Ask is the plain-English statement of what this Decision wants, used as the
+// page lede.
+func (v *InputRequestDetailView) Ask() string {
+	return domain.DecisionAsk(v.InputRequest.Kind)
+}
+
+// Open reports whether the Decision still needs an answer.
+func (v *InputRequestDetailView) Open() bool {
+	return v.InputRequest.Status != domain.InputRequestStatusResolved
 }
 
 // HostingPlatformOption represents a hosting platform choice.
@@ -60,6 +83,25 @@ type ExistingVariationView struct {
 	Status      string
 	HasConflict bool     // True if this variation has migration conflicts
 	ConflictsWith []string // Names of other variations this conflicts with
+}
+
+// StatusView reads the variation's status as a word and a tone, so this list
+// and the Variation's own page cannot disagree about what its state means.
+//
+// A conflict outranks the status: a variation that built perfectly well and
+// cannot be merged alongside its siblings is the thing the reader is here to
+// act on, and showing it as an ordinary success would bury that.
+func (v ExistingVariationView) StatusView() domain.StatusView {
+	if v.HasConflict {
+		return domain.StatusView{Label: "Conflicts with another variation", Tone: domain.ToneFailure}
+	}
+	return domain.VariationStatusView(&domain.Variation{Status: domain.VariationStatus(v.Status)}, nil, nil)
+}
+
+// Prunable reports whether this variation can be taken out of consideration to
+// resolve a conflict.
+func (v ExistingVariationView) Prunable() bool {
+	return v.Status == string(domain.VariationStatusPending)
 }
 
 // VariationProposalView holds parsed variation proposal data.
@@ -101,6 +143,22 @@ type SelectionVariationView struct {
 	FilesChanged int                // Number of files changed vs main
 	Additions    int                // Lines added vs main
 	Deletions    int                // Lines deleted vs main
+}
+
+// StatusView reads this variation's status the same way its own page does.
+func (v SelectionVariationView) StatusView() domain.StatusView {
+	return domain.VariationStatusView(&domain.Variation{Status: domain.VariationStatus(v.Status)}, nil, nil)
+}
+
+// Selectable reports whether this variation can be chosen as the winner. Only
+// a built one can: a failed or already-eliminated variation is not a candidate.
+func (v SelectionVariationView) Selectable() bool {
+	return v.Status == string(domain.VariationStatusPending)
+}
+
+// HasDiffStat reports whether the size of the change is known.
+func (v SelectionVariationView) HasDiffStat() bool {
+	return v.FilesChanged > 0 || v.Additions > 0 || v.Deletions > 0
 }
 
 // VariationGrade holds a score with rationale for display.
@@ -451,7 +509,7 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 	}
 
 	data := map[string]interface{}{
-		"Title":     "Input: " + inputRequest.Title,
+		"Title":     inputRequest.Title,
 		"ProjectID": projectID,
 		"View":      view,
 	}

@@ -513,7 +513,7 @@ func TestSetupScreenDraftStates(t *testing.T) {
 		v.Ribbon = ribbonView(domain.OnboardingLifecycle(domain.OnboardingState{HasStrategy: true, Drafting: true}))
 
 		body := renderForTest(t, "setup_okrs.html", projectID, v)
-		for _, want := range []string{"Reading your brief", "setup-spinner", "window.location.reload"} {
+		for _, want := range []string{"Reading your brief", `class="spinner"`, "window.location.reload"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("waiting screen missing %q", want)
 			}
@@ -540,6 +540,67 @@ func TestSetupScreenDraftStates(t *testing.T) {
 		}
 		if !strings.Contains(body, v.Ribbon.Headline) {
 			t.Error("the ribbon should still say where the project stands")
+		}
+	})
+}
+
+// The comparison table is the most complex page in the app and had no template
+// test at all, so a bad field path in it would only ever have been found by
+// loading it. It also has to render in two very different states: mid-build,
+// when no winner can be picked, and finished, when one must be.
+func TestSelectionPageRendersBothStates(t *testing.T) {
+	projectID := uuid.New()
+	hop := &domain.Hop{ID: uuid.New(), Name: "google-oauth", Status: domain.HopStatusSelecting}
+
+	selection := &SelectionDataView{
+		HopID: hop.ID.String(), HopName: hop.Name,
+		Criteria: []string{"Simplicity", "Test coverage"},
+		Variations: []SelectionVariationView{
+			{ID: uuid.New().String(), Name: "oauth-a", Approach: "Signed cookie session.",
+				Status: string(domain.VariationStatusPending), CommitRef: "abcdef1234",
+				BranchURL: "https://github.com/x/y/tree/oauth-a", DiffURL: "https://github.com/x/y/compare/main...oauth-a",
+				DemoURL: "https://oauth-a.fly.dev", FilesChanged: 12, Additions: 340, Deletions: 22},
+			{ID: uuid.New().String(), Name: "oauth-b", Approach: "Stateless JWT.",
+				Status: string(domain.VariationStatusError)},
+		},
+	}
+
+	base := func(canSelect bool) *InputRequestDetailView {
+		return &InputRequestDetailView{
+			InputRequest: &domain.InputRequest{
+				ID: uuid.New(), ProjectID: projectID, Title: "Pick a winner for google-oauth",
+				Kind: domain.InputRequestKindVariationSelection, Status: domain.InputRequestStatusAssigned,
+			},
+			Hop: hop, SelectionData: selection, CanSelect: canSelect,
+			PendingCount: 1, FailedCount: 1, TotalCount: 2,
+		}
+	}
+
+	t.Run("ready to choose", func(t *testing.T) {
+		body := renderForTest(t, "input_request_selection.html", projectID, base(true))
+		for _, want := range []string{
+			"oauth-a", "oauth-b", "Simplicity", "Test coverage",
+			"Built and awaiting comparison", // the pending one, read through the Ribbon
+			"340", "Pick a winner",
+			`name="winner"`, // the radio that decides it
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("selection page missing %q", want)
+			}
+		}
+		// A failed variation is not a candidate, so it must not be offered as one.
+		if n := strings.Count(body, `name="winner"`); n != 1 {
+			t.Errorf("expected exactly one selectable variation, got %d radios", n)
+		}
+	})
+
+	t.Run("still building", func(t *testing.T) {
+		body := renderForTest(t, "input_request_selection.html", projectID, base(false))
+		if strings.Contains(body, `name="winner"`) {
+			t.Error("a winner must not be selectable while variations are still building")
+		}
+		if !strings.Contains(body, "Waiting for every variation to finish") {
+			t.Error("the page should say why no winner can be picked yet")
 		}
 	})
 }

@@ -131,7 +131,8 @@
             </form>
 
             {{with .ProdLogPanel}}
-            <details class="disclosure" {{if ne .Status "running"}}open{{end}}>
+            {{/* A finished deploy opens its log; a running one is streaming above. */}}
+            <details class="disclosure" {{if not .Live}}open{{end}}>
                 <summary>Deploy log</summary>
                 <div class="disclosure-body">{{template "log-tail" .}}</div>
             </details>

@@ -9,12 +9,10 @@
     <link rel="icon" type="image/png" sizes="200x200" href="/static/mendel-logo-200.png">
     <link rel="apple-touch-icon" href="/static/mendel-logo-200.png">
 
-    {{/* Three layers, loaded in dependency order: tokens define the
-         vocabulary, components apply it, legacy holds what pages still use
-         and is deleted page by page. See internal/web/static/css/. */}}
+    {{/* Two layers: tokens define the vocabulary, components apply it.
+         See internal/web/static/css/. */}}
     <link rel="stylesheet" href="/static/css/tokens.css">
     <link rel="stylesheet" href="/static/css/components.css">
-    <link rel="stylesheet" href="/static/css/legacy.css">
 
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
 </head>

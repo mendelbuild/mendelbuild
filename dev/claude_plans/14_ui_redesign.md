@@ -108,15 +108,17 @@ Two rules worth stating because they were the actual failures:
 - **Callouts and badges take a tone, and the tone comes from Go.** One `.callout`
   replaces the eleven hand-rolled boxes.
 
-### `legacy.css` — the debt, made visible
+### `legacy.css` — the debt, made visible, then paid
 
-Rules that pages still depend on but the component library replaces, quarantined
-in one file so the design system could land in one piece without rewriting every
-page in the same commit.
+Rules that pages still depended on but the component library replaced, put in one
+file so the design system could land in a single piece without rewriting every
+page in the same commit. The file only ever shrank: converting a page meant
+deleting the rules it was the last user of, so its line count was an honest
+measure of what was left — 186 lines, then 153, then none.
 
-**This file only shrinks.** Converting a page means deleting the rules it was the
-last user of. Its line count is the honest measure of how much of the rev is
-left; when it reaches zero, the conversion is done. Nothing may be added to it.
+**It has been deleted.** The handful of rules that turned out to be real
+components rather than debt — the draft-review blocks on the setup screens, the
+tuner's quality score — moved into `components.css` under their own heading.
 
 ## The page spine
 
@@ -190,15 +192,23 @@ and a draft that failed both otherwise read as "this project has no objectives".
 
 ## Enforcement
 
-Three lint tests in `internal/web/templates_test.go`, turned on repo-wide once
-`legacy.css` is empty. They are what make this a rev rather than a repaint:
+Four lint tests in `internal/web/template_lint_test.go`, passing repo-wide. They
+are what make this a rev rather than a repaint:
 
-1. no `style="` attribute in any template;
-2. no colour literal in any template;
-3. no `eq .Something.Status "…"` branch in any template.
-
-The third is the one that matters. It is the rule `lifecycle.go` already states
-in a comment, finally checkable.
+1. **No `style="` attribute in any template.** Absolute, deliberately: "just
+   this once, for a width" is how the last 683 accumulated. A computed length
+   has a way out — put it in a data attribute and let a script apply it, as the
+   budget meter does.
+2. **No colour literal.** Colours live in `tokens.css` and are referenced by
+   name. A page-specific `<style>` block is still allowed, but it must express
+   itself in tokens like everything else.
+3. **No `eq .Something.Status "…"` branch.** The rule `lifecycle.go` opens by
+   stating, finally checkable.
+4. **Every class used must exist in a stylesheet.** A class matching nothing
+   renders as unstyled markup, which looks like a layout bug and gets diagnosed
+   as one. This is also what stops a seventh tone being invented: `badge-danger`
+   is a class nobody defined, so it fails here. It found a real one on its first
+   run — `.stage-label` was in the ribbon markup and styled nowhere.
 
 ## Phases
 
@@ -208,13 +218,45 @@ in a comment, finally checkable.
   and the `renderPageFor` chrome helper.
 - **P2 — Shared partials.** Mostly folded into P1: ribbon, roadmap panel, log
   tail and requirements panel are converted.
-- **P3 — Page conversion**, in dependency order: Variation → Hop → roadmap →
-  strategy → deployment → settings → decisions. One commit each; each deletes
-  the `legacy.css` rules it was the last user of, and replaces raw-status
-  branches with tone.
-- **P4 — The IA move.** Overview page, settings tabs, costs page, breadcrumbs,
-  nav active state stamped by `navSection`.
-- **P5 — Turn on the lint tests**, delete `legacy.css`, update this document.
+- **P3 — Page conversion.** Done, in four commits: Variation and Hop; the IA
+  move; settings and deployment; the queue, OKR editor and setup screens; the
+  four decision pages.
+- **P4 — The IA move.** Done. Overview page, settings tabs, costs page,
+  breadcrumbs, nav active state stamped by `navSection`.
+- **P5 — Lint tests on, `legacy.css` deleted.** Done.
+
+### Where it ended up
+
+| | before | after |
+| --- | --- | --- |
+| inline `style="…"` attributes | 683 | **0** |
+| colour literals in templates | ~700 | **0** |
+| raw-status branches in templates | 47 | **0** |
+| `legacy.css` | 186 lines | **deleted** |
+
+## What moved into the domain
+
+The recurring shape of this work was that a template had been left to decide
+something it had no business deciding, and the fix was to move the decision into
+`internal/domain/`, where it is a few lines of Go with a test:
+
+- **`status_view.go`** — the statuses that are not lifecycles. A demo, a
+  revision, a deployment, a validation leg, a membership role, a message author:
+  each maps to a word and a `Tone`. Hop and Variation badges read from the
+  `Ribbon` itself, so a Variation cannot describe itself one way in a list and
+  another on its own page.
+- **`VariationActions`** — what may be done to a Variation right now, as
+  booleans with no URLs in them. The Variation page had ten branches on the
+  status string deciding which of five differently-coloured buttons to draw, and
+  two of them disagreed about `blocked`.
+- **`VariationLifecycle`, corrected** — a run that stops at its spend ceiling
+  sits in `blocked`, so the ribbon had been telling the reader to go and resolve
+  a credential that did not exist.
+- **`HostingDeployment.InFlight`** — nil-safe, so a project that has never
+  deployed is simply not deploying rather than a special case in the markup.
+- **`DecisionResolution`** — approved and rejected are both resolutions and are
+  not the same news. The queue had been colouring a rejection with the success
+  palette.
 
 ## Changes in P1
 
@@ -243,6 +285,26 @@ one OKR route, and the settings error path) never added the signed-in user, so
 they showed no account and no way to log out. Deriving chrome centrally means a
 new page cannot be born missing it.
 
+## Notable fixes that fell out
+
+Looking at rendered pages turned up things no test was asking about:
+
+- Five pages never added the signed-in user, so they showed no account and no
+  way to log out. `renderPageFor` derives it centrally.
+- The OKR editor carried its own stylesheet redefining `.btn-primary` in blue,
+  so the one page where you edit your objectives had different buttons from
+  everywhere else.
+- Required deployment credentials were read from a `deploy-config.yml` fetched
+  out of the user's repository — a file `.mendel/`'s rules do not permit, and one
+  that could disagree with what the chosen channel actually needed. They now come
+  from `hosting.RequiredCredentialsForCombo`, the same source that gates a demo.
+- Two modals and three visibility toggles ran on JavaScript that set
+  `style.display`. The modals are `:target` now, so their open state is in the
+  URL and survives a reload; the toggles use the `hidden` attribute.
+- The comparison table shipped two near-identical copies of a 100-line script,
+  one per branch of an `{{if}}`, each building grade badges from hardcoded hex.
+  One copy now lives in `static/js/selection.js` and uses badge classes.
+
 ## Verification
 
 ```bash
@@ -253,6 +315,14 @@ To review the design system without a database:
 
 ```bash
 MENDEL_STYLEGUIDE_OUT=/tmp/sg/index.html go test ./internal/web/ -run Styleguide
+```
+
+To look at every page in every state the suite constructs — including the ones
+that are awkward to reach by hand, like a run paused at its spend ceiling or a
+channel that failed validation:
+
+```bash
+MENDEL_PAGE_DUMP_DIR=/tmp/pages go test ./internal/web/
 ```
 
 Or, in a running server, visit `/styleguide`. Every component appears in every

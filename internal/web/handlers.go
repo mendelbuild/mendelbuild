@@ -75,6 +75,7 @@ var templateFuncs = template.FuncMap{
 	"decisionKind":       domain.DecisionKindLabel,
 	"decisionStatus":     domain.DecisionStatusView,
 	"decisionResolution": domain.DecisionResolution,
+	"messageAuthor":      domain.MessageAuthor,
 	"decisionWeight":   domain.DecisionImportance,
 	"usdPtr": func(f *float64) string {
 		if f == nil {

@@ -1,78 +1,43 @@
 {{define "page-content"}}
+{{template "decision-head" .}}
 {{with .View}}
-<div style="margin-bottom: 15px;">
-    <a href="/p/{{$.ProjectID}}/inputs">Back to Input Needed</a>
-</div>
-<h1>{{.InputRequest.Title}}</h1>
 
-<div class="card" style="margin-bottom: 20px;">
-    <h2 style="margin: 0 0 15px 0;">Select Demo Hosting Platform</h2>
+{{if .Open}}
+<div class="card">
+    <div class="card-head"><h2 class="card-title">Where should demos run?</h2></div>
+    <p class="card-note">
+        Mendel deploys each variation here so you can click through it before deciding
+        anything. Pick the one matching a cloud account you already have &mdash; you will be
+        asked for its credentials next.
+    </p>
 
     {{if .InputRequest.Details}}
-    <div style="margin-bottom: 20px; color: #555; white-space: pre-wrap;">{{.InputRequest.Details}}</div>
+    <div class="callout callout-progress">
+        <p class="callout-body pre-wrap">{{.InputRequest.Details}}</p>
+    </div>
     {{end}}
 
-    <p style="margin-bottom: 20px; color: #666;">
-        Choose where Mendel should deploy demos for this project. Each platform has different strengths -
-        pick one that matches your project's needs and your existing cloud accounts.
-    </p>
-</div>
-
-{{if ne .InputRequest.Status "resolved"}}
-<div class="card">
-    <h2 style="margin: 0 0 20px 0;">Available Platforms</h2>
-
     <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/select-hosting">
-        <div style="display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px;">
+        <div class="stack-tight">
             {{range .HostingPlatforms}}
-            <label style="display: flex; align-items: flex-start; gap: 12px; padding: 15px; border: 2px solid #e0e0e0; border-radius: 8px; cursor: pointer; transition: all 0.2s;"
-                   onmouseover="this.style.borderColor='#007bff'; this.style.background='#f8f9ff';"
-                   onmouseout="if(!this.querySelector('input').checked){this.style.borderColor='#e0e0e0'; this.style.background='white';}">
-                <input type="radio" name="platform" value="{{.ID}}" required
-                       style="margin-top: 4px;"
-                       onchange="document.querySelectorAll('label').forEach(l => {l.style.borderColor='#e0e0e0'; l.style.background='white';}); this.closest('label').style.borderColor='#007bff'; this.closest('label').style.background='#f8f9ff';">
-                <div>
-                    <div style="font-weight: 600; font-size: 1.1em; margin-bottom: 4px;">{{.Name}}</div>
-                    <div style="color: #666; font-size: 0.95em;">{{.Description}}</div>
-                </div>
+            <label class="choice">
+                <input type="radio" name="platform" value="{{.ID}}" required>
+                <span>
+                    <span class="choice-title">{{.Name}}</span>
+                    <span class="choice-note">{{.Description}}</span>
+                </span>
             </label>
             {{end}}
         </div>
-
-        <button type="submit" style="padding: 12px 24px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; font-size: 1em;">
-            Select Platform
-        </button>
+        <div class="actions">
+            <button type="submit" class="btn btn-primary">Use this platform</button>
+        </div>
     </form>
-
-    <p style="margin-top: 20px; font-size: 0.9em; color: #666;">
-        After selecting a platform, Mendel will prompt you for any required credentials (API keys, project IDs, etc.)
-        and generate deployment scripts for your repository.
-    </p>
 </div>
 {{else}}
-<div class="card" style="background: #d4edda; border: 1px solid #c3e6cb;">
-    <h2 style="margin: 0 0 10px 0; color: #155724;">Resolved</h2>
-    <p style="margin: 0; color: #155724;">
-        {{if .Resolution}}Selected platform: <strong>{{.Resolution}}</strong>{{else}}This request has been resolved.{{end}}
-    </p>
-</div>
+{{template "decision-resolved" .}}
 {{end}}
 
-{{/* Message history */}}
-{{if .Messages}}
-<div class="card" style="margin-top: 20px;">
-    <h2 style="margin: 0 0 15px 0;">Activity</h2>
-    {{range .Messages}}
-    <div style="padding: 10px; border-radius: 4px; margin-bottom: 10px; background: {{if eq .Role "system"}}#f8f9fa{{else if eq .Role "agent"}}#e7f3ff{{else}}#fff{{end}};">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-            <strong>{{if eq .Role "system"}}System{{else if eq .Role "agent"}}Agent{{else}}User{{end}}</strong>
-            <span style="font-size: 0.85em; color: #666;">{{.CreatedAt.Format "Jan 2, 2006 3:04 PM"}}</span>
-        </div>
-        <p style="margin: 0; white-space: pre-wrap;">{{.Content}}</p>
-    </div>
-    {{end}}
-</div>
-{{end}}
-
+{{template "decision-activity" .}}
 {{end}}
 {{end}}

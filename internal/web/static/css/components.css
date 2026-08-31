@@ -437,6 +437,14 @@ code {
 .swatch-warning  { background: var(--tone-warning); }
 .swatch-failure  { background: var(--tone-failure); }
 
+/* An outlined badge for something that does not exist yet -- a proposed Hop
+   among real ones. The dashed edge is the same "not reached" signal the
+   lifecycle stepper uses for an upcoming stage. */
+.badge-outline {
+    background: transparent;
+    border: 1px dashed currentColor;
+}
+
 /* Same shape, outlined: for a badge that must not compete with a filled one
    beside it, e.g. a count next to a status. */
 .badge-quiet {
@@ -575,6 +583,81 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
 /* Wide tables scroll inside their card rather than the page. */
 .table-scroll { overflow-x: auto; }
 
+/* ---- Comparison table ----------------------------------------------------
+   One column per variation, one row per thing being compared. The row header
+   is sticky because the whole point is reading across, and a criterion name
+   that scrolls away takes the meaning of the row with it. */
+.compare-wrap { position: relative; }
+.compare-scroll { overflow-x: auto; overflow-y: visible; }
+.compare {
+    border-collapse: collapse;
+    min-width: 100%;
+    font-size: var(--text-sm);
+}
+.compare th,
+.compare td {
+    padding: var(--sp-3) var(--sp-4);
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+    text-align: center;
+}
+.compare thead th {
+    background: var(--surface-sunken);
+    font-weight: 650;
+    border-bottom: 1px solid var(--line-strong);
+}
+.compare .row-header {
+    font-weight: 650;
+    text-align: left;
+    background: var(--surface-sunken);
+    min-width: 150px;
+    position: sticky;
+    left: 0;
+    z-index: 1;
+}
+/* The row that actually decides something. */
+.compare .select-row td { background: var(--tone-progress-bg); }
+.compare .select-row .row-header { background: var(--tone-progress-bg); color: var(--tone-progress-ink); }
+
+.compare-more {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    background: linear-gradient(to right, transparent, var(--surface-card) 40%);
+    padding: var(--sp-3) var(--sp-4) var(--sp-3) var(--sp-7);
+    pointer-events: none;
+    font-size: var(--text-xs);
+    color: var(--ink-3);
+}
+
+/* The one column of running text in a table of short values. */
+.compare .compare-prose {
+    white-space: normal;
+    text-align: left;
+    min-width: 220px;
+    max-width: 320px;
+    color: var(--ink-2);
+}
+
+/* A row for something that already exists, in a table about what is proposed.
+   It is context, not the decision. */
+.table tr.is-existing td { background: var(--surface-sunken); color: var(--ink-2); }
+
+.diffstat-add { color: var(--tone-success); font-weight: 600; }
+.diffstat-del { color: var(--tone-failure); font-weight: 600; }
+
+/* A cell whose value is still being fetched. */
+.cell-spinner {
+    width: 15px;
+    height: 15px;
+    border: 2px solid var(--line);
+    border-top-color: var(--tone-progress);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    display: inline-block;
+}
+
 /* ---- Key-value list ------------------------------------------------------
    Replaces the "Details" tables on the Hop and Variation pages. A definition
    list, because that is what it is. */
@@ -698,6 +781,45 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
     background: var(--tone-progress-bg);
 }
 .choice-title { font-weight: 650; }
+/* A proposal is a choice with more to read than a one-line label. */
+.choice.proposal { align-items: flex-start; }
+.proposal .choice-note { display: block; margin-top: var(--sp-1); }
+.proposal-diff {
+    display: block;
+    margin-top: var(--sp-3);
+    padding-top: var(--sp-2);
+    border-top: 1px solid var(--line);
+    font-size: var(--text-sm);
+    color: var(--ink-2);
+}
+.proposal-diff .eyebrow { display: block; margin-bottom: 2px; }
+
+/* A checkbox with a label beside it, in a column of them. */
+.check {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    cursor: pointer;
+    margin-bottom: var(--sp-2);
+    font-size: var(--text-sm);
+}
+.fieldset {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface-sunken);
+    padding: var(--sp-3) var(--sp-4);
+    margin: 0 0 var(--sp-4);
+}
+.fieldset legend { padding: 0 var(--sp-1); }
+.fieldset > :last-child { margin-bottom: 0; }
+
+/* A scrolling conversation in a sidebar card. */
+.msg-thread {
+    max-height: 280px;
+    overflow-y: auto;
+    margin-bottom: var(--sp-4);
+}
+.msg-thread > * + * { margin-top: var(--sp-2); }
 .choice-note { font-size: var(--text-sm); color: var(--ink-2); margin-top: 2px; }
 
 /* ==== 9. Lifecycle ribbon ================================================= */
@@ -871,6 +993,10 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
    rather than an option alongside the others. */
 .stage-upcoming .stage-dot { width: 11px; height: 11px; border-style: dashed; }
 .stage-skipped { opacity: 0.5; }
+/* A two-word stage label must not break across lines: half of "Comparing
+   results" sitting under the other half reads as two stages, not one. */
+.stage-label { white-space: nowrap; }
+
 .stage-note {
     font-size: var(--text-xs);
     font-weight: 400;
@@ -922,6 +1048,23 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
     cursor: grab;
     min-height: 420px;
 }
+
+/* ---- Decision messages --------------------------------------------------
+   Who said what, on a Decision. The author is what distinguishes these, so
+   that is what the treatment keys on: Mendel's own notes sit back, an agent's
+   are marked as coming from a machine that was asked, and yours read as
+   ordinary content. */
+.msg {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--radius-md);
+    padding: var(--sp-3) var(--sp-4);
+    background: var(--surface-card);
+}
+.msg p { margin: var(--sp-1) 0 0; }
+.msg-system { background: var(--surface-sunken); border-left-color: var(--tone-neutral); }
+.msg-agent  { border-left-color: var(--tone-progress); }
+.msg-user   { border-left-color: var(--brand); }
 
 /* ---- Log panel ----------------------------------------------------------- */
 .log {
@@ -1051,3 +1194,62 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
     gap: var(--sp-2);
     flex-wrap: wrap;
 }
+
+/* ==== 11. Draft review ====================================================
+
+   The first screens a new project sees, where Mendel shows what it made of the
+   brief and asks for a decision before anything is planned. Deliberately
+   plainer and wider-spaced than the rest of the app: the reader has not
+   learned any of Mendel's vocabulary yet, so there is nothing here to scan
+   for. */
+
+/* The agent's own account of how it read the brief. Set apart from the draft
+   itself, because it is commentary the user is checking, not content they are
+   editing. */
+.draft-notes {
+    background: var(--surface-sunken);
+    border-left: 3px solid var(--line-strong);
+    padding: var(--sp-4) var(--sp-4);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    margin-bottom: var(--sp-4);
+}
+.draft-notes h3 {
+    margin: 0 0 var(--sp-1);
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-3);
+}
+.draft-notes p, .draft-notes ul { margin: 0 0 var(--sp-3); }
+.draft-notes ul { padding-left: var(--sp-5); }
+.draft-notes li { margin-bottom: var(--sp-1); }
+.draft-notes > :last-child { margin-bottom: 0; }
+
+.draft-objective {
+    border-left: 4px solid var(--brand);
+    padding: 2px 0 2px var(--sp-4);
+    margin-bottom: var(--sp-6);
+}
+.draft-kr {
+    background: var(--surface-sunken);
+    border-radius: var(--radius-sm);
+    padding: var(--sp-3) var(--sp-4);
+    margin: var(--sp-3) 0;
+}
+.draft-kr .field { margin-bottom: var(--sp-3); }
+.draft-kr .field:last-child { margin-bottom: 0; }
+
+/* A score the tuner gave this line, shown before approval rather than after:
+   the point is to catch a vague key result while it is still cheap to fix. */
+.tune { font-size: var(--text-sm); color: var(--ink-2); margin-top: var(--sp-1); }
+.tune-badge {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: var(--radius-pill);
+    font-weight: 650;
+    margin-right: var(--sp-1);
+}
+.tune-excellent  { background: var(--tone-success-bg);  color: var(--tone-success-ink); }
+.tune-good       { background: var(--tone-progress-bg); color: var(--tone-progress-ink); }
+.tune-needs-work { background: var(--tone-waiting-bg);  color: var(--tone-waiting-ink); }
+.tune-poor       { background: var(--tone-failure-bg);  color: var(--tone-failure-ink); }
