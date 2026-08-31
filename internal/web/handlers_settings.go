@@ -1130,46 +1130,18 @@ func (s *Server) validateCloudRun(ctx context.Context, env map[string]string, mo
 // validateGKE deploys a hello-world pod to GKE, health checks it, and deletes it.
 func (s *Server) validateGKE(ctx context.Context, env map[string]string, mode string) error {
 	deploymentName := fmt.Sprintf("mendel-validate-%d", time.Now().Unix())
-	projectID := env["GCP_PROJECT_ID"]
-	clusterName := env["GKE_CLUSTER_NAME"]
-	zone := env["GKE_ZONE"]
 
-	// Write service account key to temp file
-	keyFile, err := os.CreateTemp("", "gcp-key-*.json")
+	// Validation proves the credentials work by doing what a real deployment
+	// does, through the same session — so a break in authentication shows up
+	// here rather than on the user's first demo.
+	session, err := newGKESession(ctx, env)
 	if err != nil {
-		return fmt.Errorf("failed to create key file: %w", err)
+		return err
 	}
-	defer os.Remove(keyFile.Name())
-	if _, err := keyFile.WriteString(env["GCP_SERVICE_ACCOUNT_KEY"]); err != nil {
-		keyFile.Close()
-		return fmt.Errorf("failed to write key file: %w", err)
-	}
-	keyFile.Close()
+	defer session.cleanup()
 
-	// Build environment
-	cmdEnv := os.Environ()
-	cmdEnv = append(cmdEnv, fmt.Sprintf("GOOGLE_APPLICATION_CREDENTIALS=%s", keyFile.Name()))
-
-	// Authenticate with service account
-	authCmd := exec.CommandContext(ctx, "gcloud", "auth", "activate-service-account", "--key-file", keyFile.Name())
-	authCmd.Env = cmdEnv
-	if output, err := authCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to authenticate: %s: %w", string(output), err)
-	}
-
-	// Set project
-	setProjectCmd := exec.CommandContext(ctx, "gcloud", "config", "set", "project", projectID)
-	setProjectCmd.Env = cmdEnv
-	if output, err := setProjectCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to set project: %s: %w", string(output), err)
-	}
-
-	// Get cluster credentials
-	getCredsCmd := exec.CommandContext(ctx, "gcloud", "container", "clusters", "get-credentials",
-		clusterName, "--zone", zone)
-	getCredsCmd.Env = cmdEnv
-	if output, err := getCredsCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to get cluster credentials: %s: %w", string(output), err)
+	if err := session.ensureNamespace(ctx); err != nil {
+		return err
 	}
 
 	// Create temp directory for manifests
@@ -1210,31 +1182,28 @@ spec:
 		return fmt.Errorf("failed to write manifest: %w", err)
 	}
 
-	// Ensure cleanup on exit
+	// Ensure cleanup on exit. Detached from ctx so a cancelled validation still
+	// removes what it created rather than leaving it in the user's cluster.
 	defer func() {
-		deleteCmd := exec.CommandContext(context.Background(), "kubectl", "delete", "deployment", deploymentName)
-		deleteCmd.Env = cmdEnv
+		deleteCmd := session.kubectl(context.Background(), "delete", "deployment", deploymentName, "--ignore-not-found")
 		deleteCmd.Run() // Best effort cleanup
 	}()
 
 	// Apply the deployment
-	applyCmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", tmpDir+"/deployment.yaml")
-	applyCmd.Env = cmdEnv
+	applyCmd := session.kubectl(ctx, "apply", "-f", tmpDir+"/deployment.yaml")
 	if output, err := applyCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to apply deployment: %s: %w", string(output), err)
+		return fmt.Errorf("failed to apply deployment: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 
 	// Wait for rollout
-	rolloutCmd := exec.CommandContext(ctx, "kubectl", "rollout", "status", "deployment/"+deploymentName, "--timeout=120s")
-	rolloutCmd.Env = cmdEnv
+	rolloutCmd := session.kubectl(ctx, "rollout", "status", "deployment/"+deploymentName, "--timeout=120s")
 	if output, err := rolloutCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("rollout failed: %s: %w", string(output), err)
+		return fmt.Errorf("rollout failed: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 
 	// For GKE, just verify the pod is running (no external URL without a LoadBalancer)
-	getPodCmd := exec.CommandContext(ctx, "kubectl", "get", "pods", "-l", "app="+deploymentName,
+	getPodCmd := session.kubectl(ctx, "get", "pods", "-l", "app="+deploymentName,
 		"-o", "jsonpath={.items[0].status.phase}")
-	getPodCmd.Env = cmdEnv
 	output, err := getPodCmd.Output()
 	if err != nil {
 		return fmt.Errorf("failed to get pod status: %w", err)

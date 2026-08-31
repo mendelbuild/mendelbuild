@@ -28,9 +28,16 @@ RUN curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cl
     ln -s /usr/local/google-cloud-sdk/bin/gcloud /usr/local/bin/gcloud && \
     ln -s /usr/local/google-cloud-sdk/bin/gsutil /usr/local/bin/gsutil && \
     rm google-cloud-cli-linux-x86_64.tar.gz && \
-    gcloud components install gke-gcloud-auth-plugin --quiet
+    gcloud components install gke-gcloud-auth-plugin --quiet && \
+    ln -s /usr/local/google-cloud-sdk/bin/gke-gcloud-auth-plugin /usr/local/bin/gke-gcloud-auth-plugin
 
-# Tell kubectl to use the gke-gcloud-auth-plugin
+# Tell kubectl to use the gke-gcloud-auth-plugin.
+#
+# The symlink above is what makes that possible: `gcloud container clusters
+# get-credentials` writes a kubeconfig that invokes the plugin by bare name, so
+# it has to resolve on PATH. Only gcloud and gsutil were linked into /usr/local/bin,
+# which left the plugin installed but invisible and every kubectl call against
+# GKE failing on a missing credential plugin.
 ENV USE_GKE_GCLOUD_AUTH_PLUGIN=True
 
 COPY --from=builder /app/mendel /usr/local/bin/mendel

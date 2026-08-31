@@ -19,6 +19,16 @@ import (
 // drifts with the market.
 const ContainerPort = 8080
 
+// Namespace is where Mendel's deployments live in a user's Kubernetes cluster.
+//
+// The cluster belongs to the user and may run anything else; keeping Mendel's
+// workloads in a namespace of their own means teardown deletes only what Mendel
+// created, and gives the per-Arm NetworkPolicy work a boundary to attach to.
+//
+// Like ContainerPort, this is a value Mendel chooses and announces rather than a
+// platform option that drifts.
+const Namespace = "mendel-apps"
+
 // DefaultPlatforms returns the default hosting platforms to seed on startup.
 // These can be refreshed via CLI to stay current with popular platforms.
 func DefaultPlatforms() []domain.HostingPlatform {
@@ -79,12 +89,47 @@ func DefaultPlatforms() []domain.HostingPlatform {
 			Slug:          "gke",
 			Name:          "Google Kubernetes Engine",
 			DeployerImage: "google/cloud-sdk:slim",
-			Instructions: `GKE Kubernetes deployment:
-- Use 'gcloud container' and 'kubectl' commands
-- Required env vars: GCP_PROJECT_ID, GCP_SERVICE_ACCOUNT_KEY (JSON), GKE_CLUSTER_NAME, GKE_ZONE
-- Deploy script should authenticate, get cluster credentials, and apply k8s manifests
-- Teardown script should delete the deployment/service resources
-- Use 'kubectl apply -f' for manifests or 'helm install' for Helm charts`,
+			Instructions: `Deploy to your own Google Kubernetes Engine cluster.
+
+Mendel needs a service account key with enough access to build images and apply
+workloads. Only you can mint that key, so run the following against your GCP
+project; Mendel does the rest. Substitute your own project ID for PROJECT.
+
+1. Enable the APIs Mendel uses:
+
+   gcloud services enable container.googleapis.com cloudbuild.googleapis.com \
+     artifactregistry.googleapis.com --project PROJECT
+
+2. Create a service account for Mendel:
+
+   gcloud iam service-accounts create mendel-deployer --project PROJECT \
+     --display-name "Mendel Deployer"
+
+3. Grant it the roles the deploy needs — cluster access, image build and push,
+   the Cloud Build staging bucket, and permission to act as the build's own
+   service account:
+
+   for ROLE in container.developer cloudbuild.builds.editor \
+     artifactregistry.writer storage.admin iam.serviceAccountUser; do
+     gcloud projects add-iam-policy-binding PROJECT \
+       --member serviceAccount:mendel-deployer@PROJECT.iam.gserviceaccount.com \
+       --role roles/$ROLE --condition None
+   done
+
+4. Create the key and paste its contents into GCP_SERVICE_ACCOUNT_KEY:
+
+   gcloud iam service-accounts keys create mendel-key.json \
+     --iam-account mendel-deployer@PROJECT.iam.gserviceaccount.com
+
+Then give Mendel these four values:
+- GCP_PROJECT_ID          your project ID
+- GCP_SERVICE_ACCOUNT_KEY the full contents of mendel-key.json
+- GKE_CLUSTER_NAME        the cluster to deploy into
+- GKE_ZONE                that cluster's location — a zone (us-central1-a) or a
+                          region (us-central1) for a regional cluster
+
+Mendel deploys into a namespace of its own, `+Namespace+`, creating it if
+absent, and removes the Deployment, Service and Secret it created on teardown.`,
 		},
 	}
 }

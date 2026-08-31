@@ -60,7 +60,11 @@ func teardownCommandFor(platformSlug, appName string) string {
 	case "cloud-run":
 		return fmt.Sprintf("gcloud run services delete %s --region us-central1 --quiet", appName)
 	case "gke":
-		return fmt.Sprintf("kubectl delete deployment,service %s", appName)
+		// The Secret holding the app's required values is named after the
+		// deployment and has to go with it; left behind, the user's cluster
+		// accumulates the secrets of every variation ever demoed.
+		return fmt.Sprintf("kubectl delete --namespace %s --ignore-not-found deployment,service,secret %s %s-env",
+			hosting.Namespace, appName, appName)
 	}
 	return ""
 }
@@ -672,6 +676,125 @@ spec:
 		hosting.ContainerPort)
 }
 
+// gkeSession is an authenticated, isolated CLI environment for one GKE operation.
+//
+// gcloud and kubectl both keep their state in files under the home directory. If
+// operations share those files, two deployments aimed at different clusters race
+// on one kubeconfig and whichever ran get-credentials last silently wins — so
+// each session points them at a directory of its own instead.
+type gkeSession struct {
+	env       []string
+	projectID string
+	namespace string
+	cleanup   func()
+}
+
+// newGKESession authenticates the service account and fetches cluster
+// credentials. The caller must call cleanup when finished.
+func newGKESession(ctx context.Context, env map[string]string) (*gkeSession, error) {
+	var missing []string
+	for _, name := range hosting.RequiredCredentialsForCombo(domain.DeployArtifactKubernetes, "gke") {
+		if strings.TrimSpace(env[name]) == "" {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("missing GKE credentials: %s", strings.Join(missing, ", "))
+	}
+
+	dir, err := os.MkdirTemp("", "mendel-gke-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create session directory: %w", err)
+	}
+	cleanup := func() { os.RemoveAll(dir) }
+
+	keyPath := filepath.Join(dir, "key.json")
+	if err := os.WriteFile(keyPath, []byte(env["GCP_SERVICE_ACCOUNT_KEY"]), 0600); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("failed to write service account key: %w", err)
+	}
+
+	projectID := env["GCP_PROJECT_ID"]
+	cmdEnv := append(os.Environ(),
+		"GOOGLE_APPLICATION_CREDENTIALS="+keyPath,
+		"CLOUDSDK_CONFIG="+filepath.Join(dir, "gcloud"),
+		"KUBECONFIG="+filepath.Join(dir, "kubeconfig"),
+		"CLOUDSDK_CORE_PROJECT="+projectID,
+	)
+
+	authCmd := exec.CommandContext(ctx, "gcloud", "auth", "activate-service-account", "--key-file", keyPath)
+	authCmd.Env = cmdEnv
+	if output, err := authCmd.CombinedOutput(); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("failed to authenticate service account: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+
+	// --location accepts either a zone or a region, so a regional cluster works
+	// through the same GKE_ZONE credential a zonal one uses.
+	getCreds := exec.CommandContext(ctx, "gcloud", "container", "clusters", "get-credentials",
+		env["GKE_CLUSTER_NAME"], "--location", env["GKE_ZONE"])
+	getCreds.Env = cmdEnv
+	if output, err := getCreds.CombinedOutput(); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("failed to get cluster credentials: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+
+	return &gkeSession{env: cmdEnv, projectID: projectID, namespace: hosting.Namespace, cleanup: cleanup}, nil
+}
+
+// kubectl builds a kubectl command scoped to Mendel's namespace.
+func (g *gkeSession) kubectl(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "kubectl", append([]string{"--namespace", g.namespace}, args...)...)
+	cmd.Env = g.env
+	return cmd
+}
+
+// ensureNamespace creates Mendel's namespace if the user's cluster lacks it.
+func (g *gkeSession) ensureNamespace(ctx context.Context) error {
+	check := exec.CommandContext(ctx, "kubectl", "get", "namespace", g.namespace)
+	check.Env = g.env
+	if err := check.Run(); err == nil {
+		return nil
+	}
+	create := exec.CommandContext(ctx, "kubectl", "create", "namespace", g.namespace)
+	create.Env = g.env
+	if output, err := create.CombinedOutput(); err != nil {
+		// A concurrent deployment may have created it since the check above.
+		if strings.Contains(string(output), "already exists") {
+			return nil
+		}
+		return fmt.Errorf("failed to create namespace %s: %s: %w", g.namespace, strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
+// buildImage builds workDir with Cloud Build and returns the pushed image
+// reference.
+//
+// The tag is unique per build. With a fixed tag the Deployment's pod spec is
+// byte-identical between deployments, so `kubectl apply` finds nothing to change
+// and never rolls the pods over — the cluster would keep serving the previous
+// variation's code from a container that merely shares its name.
+func (g *gkeSession) buildImage(ctx context.Context, deploymentName, workDir string) (string, error) {
+	imageName := fmt.Sprintf("gcr.io/%s/%s:%d", g.projectID, deploymentName, time.Now().Unix())
+
+	// Cloud Build streams logs from its default bucket, which only a project
+	// Viewer or Owner may read. A deployer service account holding just the
+	// roles it needs is neither, and gcloud then exits non-zero over the logs
+	// while the build itself succeeds. Writing logs to the project's own build
+	// bucket keeps them readable and makes the exit code mean what it says.
+	logDir := fmt.Sprintf("gs://%s_cloudbuild/mendel-logs", g.projectID)
+
+	buildCmd := exec.CommandContext(ctx, "gcloud", "builds", "submit",
+		"--gcs-log-dir", logDir, "--tag", imageName, ".")
+	buildCmd.Dir = workDir
+	buildCmd.Env = g.env
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("build failed: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return imageName, nil
+}
+
 // deployToGKE deploys a working directory to Google Kubernetes Engine under the given deployment name.
 func (s *Server) deployToGKE(
 	ctx context.Context,
@@ -682,46 +805,21 @@ func (s *Server) deployToGKE(
 	logMilestone func(string),
 	logInfo func(string),
 ) (string, error) {
-	projectID := env["GCP_PROJECT_ID"]
-	clusterName := env["GKE_CLUSTER_NAME"]
-	zone := env["GKE_ZONE"]
-
-	// Write service account key
-	keyFile, err := os.CreateTemp("", "gcp-key-*.json")
-	if err != nil {
-		return "", fmt.Errorf("failed to create key file: %w", err)
-	}
-	defer os.Remove(keyFile.Name())
-	keyFile.WriteString(env["GCP_SERVICE_ACCOUNT_KEY"])
-	keyFile.Close()
-
-	cmdEnv := os.Environ()
-	cmdEnv = append(cmdEnv, fmt.Sprintf("GOOGLE_APPLICATION_CREDENTIALS=%s", keyFile.Name()))
-
-	// Authenticate and get cluster credentials
 	logInfo("Getting GKE credentials...")
-	authCmd := exec.CommandContext(ctx, "gcloud", "auth", "activate-service-account", "--key-file", keyFile.Name())
-	authCmd.Env = cmdEnv
-	authCmd.CombinedOutput()
+	session, err := newGKESession(ctx, env)
+	if err != nil {
+		return "", err
+	}
+	defer session.cleanup()
 
-	setProjectCmd := exec.CommandContext(ctx, "gcloud", "config", "set", "project", projectID)
-	setProjectCmd.Env = cmdEnv
-	setProjectCmd.CombinedOutput()
-
-	getCredsCmd := exec.CommandContext(ctx, "gcloud", "container", "clusters", "get-credentials", clusterName, "--zone", zone)
-	getCredsCmd.Env = cmdEnv
-	if output, err := getCredsCmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("failed to get cluster credentials: %s: %w", string(output), err)
+	if err := session.ensureNamespace(ctx); err != nil {
+		return "", err
 	}
 
-	// Build image using Cloud Build
-	imageName := fmt.Sprintf("gcr.io/%s/%s:latest", projectID, deploymentName)
 	logMilestone("Building container image...")
-	buildCmd := exec.CommandContext(ctx, "gcloud", "builds", "submit", "--tag", imageName, ".")
-	buildCmd.Dir = workDir
-	buildCmd.Env = cmdEnv
-	if output, err := buildCmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("build failed: %s: %w", string(output), err)
+	imageName, err := session.buildImage(ctx, deploymentName, workDir)
+	if err != nil {
+		return "", err
 	}
 
 	// Put the app's required values in a Secret the Deployment reads from.
@@ -751,10 +849,9 @@ func (s *Server) deployToGKE(
 		}
 		secretFile.Close()
 
-		secretCmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", secretPath)
-		secretCmd.Env = cmdEnv
+		secretCmd := session.kubectl(ctx, "apply", "-f", secretPath)
 		if output, err := secretCmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("failed to apply secret: %s: %w", string(output), err)
+			return "", fmt.Errorf("failed to apply secret: %s: %w", strings.TrimSpace(string(output)), err)
 		}
 
 		envFrom = fmt.Sprintf("\n        envFrom:\n        - secretRef:\n            name: %s", secretName)
@@ -769,18 +866,23 @@ func (s *Server) deployToGKE(
 
 	// Apply deployment
 	logMilestone("Deploying to GKE...")
-	applyCmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", manifestPath)
-	applyCmd.Env = cmdEnv
+	applyCmd := session.kubectl(ctx, "apply", "-f", manifestPath)
 	if output, err := applyCmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("apply failed: %s: %w", string(output), err)
+		return "", fmt.Errorf("apply failed: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+
+	// Wait for the pods to come up before reporting a URL. Without this a
+	// failing image reads as a successful deploy that merely has no address yet.
+	rolloutCmd := session.kubectl(ctx, "rollout", "status", "deployment/"+deploymentName, "--timeout=180s")
+	if output, err := rolloutCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("rollout failed: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 
 	// Wait for external IP
 	logInfo("Waiting for external IP...")
-	for i := 0; i < 30; i++ {
-		ipCmd := exec.CommandContext(ctx, "kubectl", "get", "service", deploymentName,
+	for i := 0; i < 60; i++ {
+		ipCmd := session.kubectl(ctx, "get", "service", deploymentName,
 			"-o", "jsonpath={.status.loadBalancer.ingress[0].ip}")
-		ipCmd.Env = cmdEnv
 		ipOutput, _ := ipCmd.Output()
 		ip := strings.TrimSpace(string(ipOutput))
 		if ip != "" {
@@ -859,6 +961,7 @@ func (s *Server) runCloudTeardown(ctx context.Context, projectID, variationID uu
 
 	// Get required credentials
 	required := hosting.RequiredCredentialsForCombo(channel.ArtifactKind, channel.HostingPlatform.Slug)
+	creds := map[string]string{}
 	cmdEnv := os.Environ()
 	for _, name := range required {
 		cred, err := s.db.GetProjectCredential(ctx, projectID, name)
@@ -869,7 +972,22 @@ func (s *Server) runCloudTeardown(ctx context.Context, projectID, variationID uu
 		if err != nil {
 			continue
 		}
+		creds[name] = string(decrypted)
 		cmdEnv = append(cmdEnv, fmt.Sprintf("%s=%s", name, string(decrypted)))
+	}
+
+	// kubectl reads a kubeconfig, not environment variables, so exporting the
+	// GKE credentials is not enough to aim it anywhere. Inside a pod it would
+	// otherwise fall back to the in-cluster service account and run the delete
+	// against the cluster Mendel itself is running on. Authenticate first, and
+	// let the session's KUBECONFIG point the command at the user's cluster.
+	if channel.HostingPlatform.Slug == "gke" {
+		session, err := newGKESession(ctx, creds)
+		if err != nil {
+			return fmt.Errorf("teardown could not reach the cluster: %w", err)
+		}
+		defer session.cleanup()
+		cmdEnv = session.env
 	}
 
 	// Run the teardown command
