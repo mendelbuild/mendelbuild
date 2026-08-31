@@ -602,27 +602,34 @@ untested path. §16 items 3 and 4 are blocked until that lands.
 
 ---
 
-## 16. What I would build first
+## 16. Build order
 
-Deliberately not the whole design. Tier 1 alone is both the safest and the most
-demonstrable slice, and it requires solving none of the migration problem:
+The original order here was Tier 1 first, on the reasoning that it is the safest
+and most demonstrable slice. That was the wrong instinct. Tier 1 is a UI A/B
+test, which many tools do; **Tier 2 is the differentiating claim, and the one
+that can fail.** Proving it late risks building supporting machinery for a
+capability that turns out not to work.
 
-1. Experiment and Arm domain model, Assignment Unit declaration,
-   allocation over Assignment Units.
-2. Tier 1 classifier: declaration plus static analysis, default deny.
-3. Read-only DB role and NetworkPolicy enforcement for Tier 1 Arms.
-4. Gateway API `HTTPRoute` generation, k8s assignment filter, kill switch.
-5. OTLP ingest endpoint, token minting, contingency-table storage.
-6. Guardrail metrics and auto-rollback.
-7. Eval matrix showing Arms with intervals, and the decline surface.
+It also happens that the risky half is the unblocked half. A full end-to-end
+demonstration needs Kubernetes (§15), but that is the *routing* half. The
+migration half — classification, additive-only proof, the lint, the round-trip
+test, recorded schemas, the Mendel-side lock, `mendel_exp_` namespacing — is
+pure Go and Postgres, and can be proven now.
 
-Tier 2 — migrations, archive, recorded schemas, lock — is the second phase, and
-the design above exists so that phase does not require reopening phase one.
+**First: migration non-interference, proven against a real database.** One Hop,
+three Variations, three additive migrations applied concurrently to one
+database. All three sets of objects present and namespaced; mainline untouched;
+each Arm reading only its own. Then roll one back: its data archived and
+dropped, the other two and mainline unaffected, and the archive restoring. This
+is "multi-Arm with migrations" minus the traffic, and it is the part that
+decides whether any of the rest is worth building.
 
-**Item 5 is the one that can start today.** OTLP ingest, token minting and the
-contingency table depend on nothing in §15: no cluster, no database credential,
-no routing. Items 3 and 4 are blocked on Kubernetes (§15). Items 1 and 2
-can proceed, but item 2's static analysis needs a decision on how Mendel
-recognises a presentation-only file in an arbitrary repository — declared paths
-in `.mendel/`, cross-checked against a conservative extension allow-list, is the
-proposal.
+**Second: routing**, once there is a cluster to route in. Gateway API
+`HTTPRoute` generation, the cookie assigner, Arm deployment, kill switch, and
+the read-only role and NetworkPolicy enforcement from §4.1.
+
+**Third: measurement.** OTLP ingest, token minting, contingency-table storage,
+guardrail metrics, auto-rollback, and the eval matrix with intervals.
+
+Tier 1 falls out of Tier 2 rather than preceding it: an experiment that declares
+no migration is a Tier 1 experiment, and needs strictly less than the above.
