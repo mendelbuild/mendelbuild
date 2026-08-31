@@ -323,35 +323,85 @@ schema/migrations/   # SQL migration files
 
 ## Timestamps
 
-**Instants are `TIMESTAMPTZ`. Calendar dates are `DATE`. Never
-`TIMESTAMP`.**
+**A stored timestamp is an absolute instant. No time zone is stored, bound, or
+implied.** A row records *when something happened*, not what a clock somewhere
+read at the time. Which zone to display it in is a presentation question, and it
+is answered at the edges — in a template, or in the reader's browser — never in
+the database.
 
-A `timestamp without time zone` stores the digits of a clock face and forgets
-which clock. pgx writes a Go `time.Time` as its *local* wall clock and reads one
-back labelled *UTC*, so a value written and read on a host seven hours off UTC
-comes back seven hours wrong, silently. On a UTC host it is invisible — which is
-why this survived review and staging and only showed up on a laptop. It expired
-sessions late and made a thirty-second-old draft read as hours stale (see
-migration 035).
+In Postgres that means:
 
-- **An instant** — `created_at`, `expires_at`, `started_at`, anything you would
-  compare against `time.Now()` — is `TIMESTAMPTZ`.
-- **A calendar date** — `key_results.target_date`, `funding_sources.period_*` —
-  is `DATE`. "100 signups by 1 November" names a day, with no time and no zone.
-  Stored as an instant it becomes midnight UTC and renders as 31 October to any
-  reader west of UTC: an off-by-one on the date the row is about.
+| Kind of value | Column type | Why |
+| --- | --- | --- |
+| An instant — `created_at`, `expires_at`, `started_at`, anything compared against `time.Now()` | `TIMESTAMPTZ` | Stores a point in time, zone-independent |
+| A calendar date — `key_results.target_date`, `funding_sources.period_*` | `DATE` | Names a day; a day has no time and no zone |
+| Anything | **never** `TIMESTAMP` | Stores a clock reading that does not identify an instant |
 
-`internal/db/timestamp_semantics_test.go` enforces this, including a check that
-no column anywhere is a naive timestamp. Those tests cannot fail on a UTC host,
-so run them under a non-UTC zone when touching timestamp handling:
+### `TIMESTAMPTZ` does not store a time zone
+
+The name is the most misleading thing in this area, so be clear about it: a
+`timestamptz` column holds **no zone at all**. Postgres normalises the value to
+UTC on the way in and renders it in the reader's zone on the way out. The column
+is exactly the zone-independent absolute instant we want; the `TZ` in the name
+describes the *conversion behaviour*, not stored data.
+
+`TIMESTAMP WITHOUT TIME ZONE` is the one that binds a wall clock. It stores the
+digits of a clock face and forgets which clock, so the same row means different
+moments depending on who reads it. That is the thing to avoid, despite it being
+the type whose name sounds neutral.
+
+Write one instant three ways and the difference is plain — `timestamptz`
+collapses them to a single value, `timestamp` keeps three:
+
+```sql
+CREATE TEMP TABLE z (t TIMESTAMPTZ, n TIMESTAMP);
+INSERT INTO z VALUES ('2026-11-01 00:00:00+00', '2026-11-01 00:00:00+00');
+INSERT INTO z VALUES ('2026-10-31 17:00:00-07', '2026-10-31 17:00:00-07');
+INSERT INTO z VALUES ('2026-11-01 09:00:00+09', '2026-11-01 09:00:00+09');
+SELECT count(DISTINCT t), count(DISTINCT n) FROM z;   -- 1, 3
+```
+
+Both types are 8 bytes wide (`pg_column_size`), so `timestamptz` has nowhere to
+put a zone even if it wanted to. The offset in a literal is input, used to work
+out which instant is meant, and then discarded.
+
+Never add a column storing a zone name or a UTC offset beside a timestamp. If
+someone's zone genuinely matters — for scheduling, or "9am in their morning" —
+that is a property of the person or the event and belongs in its own column,
+with the instant still stored as `timestamptz`.
+
+### Why this is not theoretical
+
+Every timestamp column here was `TIMESTAMP` until migration 035. pgx writes a Go
+`time.Time` as its *local* wall clock and reads one back labelled *UTC*, so a
+value written and read on a host seven hours off UTC came back seven hours
+wrong, silently. It expired sessions late, and made a thirty-second-old draft
+read as hours stale so the UI reported a running job as failed.
+
+On a UTC host none of it is visible. The columns were declared this way in
+migration 001 and nothing caught it until a laptop did — not review, and not
+staging, which runs UTC and therefore never could.
+
+The one case that is *not* an instant is a calendar date. "100 signups by 1
+November" names a day. Stored as `timestamptz` it becomes midnight UTC and
+renders as 31 October to any reader west of UTC — an off-by-one on the date the
+row is about. That is what `DATE` is for.
+
+### Enforcement
+
+`internal/db/timestamp_semantics_test.go` checks the round trip, Go comparisons,
+the calendar day, and that no naive timestamp exists anywhere in the schema.
+
+These tests **cannot fail on a UTC host** — the same blind spot that let the bug
+ship — so run them under a non-UTC zone when touching timestamp handling:
 
 ```bash
 TZ=America/Los_Angeles go test ./internal/db/
 ```
 
-Prefer comparing times in SQL against `NOW()` rather than in Go against
-`time.Now()`. Both are correct now, but the SQL form keeps a single clock
-instead of two, so it does not drift if the app and database hosts disagree.
+Prefer comparing times in SQL against `NOW()` over Go against `time.Now()`. Both
+are correct now, but the SQL form uses one clock instead of two, so it does not
+drift if the app and database hosts disagree.
 
 ## Database Migrations
 
