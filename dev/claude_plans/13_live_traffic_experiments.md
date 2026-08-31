@@ -42,14 +42,23 @@ inherits this default.
 
 - **Experiment** — potentially multiple Variations from one Hop that are
   competing on live traffic.
-- **Experiment Unit** — one Variation within an experiment, plus mainline as the
-  control.
+- **Arm** — one Variation within an experiment, plus mainline as the control.
+  The standard term in A/B testing and clinical trials, and unambiguous inside
+  Mendel: nothing else here is an arm.
 - **Assignment Unit** — the thing traffic is divided by: user, session, request,
   tenant. Not implied, always declared.
-- **Allocation** — the share of Assignment Units each Experiment Unit receives.
+- **Allocation** — the share of Assignment Units each Arm receives.
 
 "10% of traffic" is incoherent without the Assignment Unit. Allocation is over
 Assignment Units, never over requests.
+
+Naming Arm and Assignment Unit took a couple of passes, so the reasoning is
+worth recording. A bare "Unit" was too vague, but "Experiment Unit" for the
+first concept is worse than vague: in experimental design an *experimental unit*
+is the entity being randomised — the second concept, not the first — so a reader
+with a statistics background would take it to mean exactly the opposite.
+"Variant" is out for a different reason: too close to Variation, which Mendel
+already uses for something specific.
 
 ---
 
@@ -128,11 +137,11 @@ A classifier is a belief about code. These are guarantees regardless of what the
 code does, and they are the reason Tier 1 is safe to ship even though the
 classifier will sometimes be wrong:
 
-- **Tier 1 Experiment Units get a read-only database role.** If classification was wrong and
+- **Tier 1 Arms get a read-only database role.** If classification was wrong and
   the code writes, it errors instead of corrupting a row.
-- **Tier 2 Experiment Units get grants scoped to what their migration added**, plus whatever
+- **Tier 2 Arms get grants scoped to what their migration added**, plus whatever
   mainline already writes for tables they legitimately share.
-- **Egress is restricted by NetworkPolicy**, so an Experiment Unit cannot reach Stripe or an
+- **Egress is restricted by NetworkPolicy**, so an Arm cannot reach Stripe or an
   SMTP host even if it tried.
 
 **Be precise about the limit:** a grant stops "wrote a table it never declared."
@@ -169,7 +178,7 @@ Six things, all required before admission:
    `.mendel/` declaration — the app tells Mendel what a "user" is rather than
    Mendel assuming.
 
-2. **Schema additions**, if any. Names, types, and which Experiment Unit reads them.
+2. **Schema additions**, if any. Names, types, and which Arm reads them.
 
 3. **Up and down migrations, with a test that exercises the whole cycle.**
    Not "the migration applies" — the full round trip in a throwaway schema:
@@ -200,8 +209,8 @@ by, and the denominator of the success metric. Mismatches are refusable
 mechanically:
 
 - Per-**event** assignment is invalid for any Variation writing per-Assignment-Unit durable
-  state (the same row gets written by two Experiment Units' logic), and invalid for any
-  user-scoped metric like conversion (one person sees both Experiment Units).
+  state (the same row gets written by two Arms' logic), and invalid for any
+  user-scoped metric like conversion (one person sees both Arms).
 - Therefore `assignment_unit: request` implies **no per-Assignment-Unit durable writes are
   admissible** — a derivation, not a separate rule.
 - **Tenant** matters for B2B: two people in one org seeing different UIs is its
@@ -231,7 +240,7 @@ resource kind and works across every conformant implementation.
 
 Gateway API can **match** on a header; it cannot **compute** the bucket. That
 step differs per platform, so it sits behind a narrow interface — *given a
-request, produce an Experiment Unit assignment and route to it* — with per-platform
+request, produce an Arm assignment and route to it* — with per-platform
 implementations. Lua stays out of the domain model.
 
 | Platform | Mechanism |
@@ -252,7 +261,7 @@ k8s first. Fly second — already supported, and `fly-replay` is unusually clean
 
 ## 7. Concurrency and schema drift
 
-Multiple Experiment Units of one Hop **must** run in parallel; that is the entire model. The
+Multiple Arms of one Hop **must** run in parallel; that is the entire model. The
 question is only independent experiments touching the same schema, and the
 answer must not assume Mendel is the only writer of the user's database.
 
@@ -278,7 +287,7 @@ accepted rather than closed; the re-read shrinks it to the width of one
 migration, and the alternative would be a lock the user's datastore may not
 offer.
 
-Additive-ness makes conflicts rare but not impossible: two Experiment Units both adding
+Additive-ness makes conflicts rare but not impossible: two Arms both adding
 `users.preferred_theme` with different types collide. Additive does not imply
 commutative when names coincide. See Open Question O1.
 
@@ -344,7 +353,7 @@ migrations get.
 
 ### What rollback does not undo
 
-A losing Experiment Unit that ran for three days placed real orders and sent real mail. Its
+A losing Arm that ran for three days placed real orders and sent real mail. Its
 column can be dropped; its side effects are permanent. That is what an
 experiment *is* — but the UI must not imply otherwise.
 
@@ -354,8 +363,8 @@ experiment *is* — but the UI must not imply otherwise.
 
 ### 10.1 Two tiers, and the first needs nothing from the app
 
-**Guardrails — free.** The gateway already labels every request by Experiment Unit. Error
-rate, status distribution, and latency percentiles per Experiment Unit cost nothing and
+**Guardrails — free.** The gateway already labels every request by Arm. Error
+rate, status distribution, and latency percentiles per Arm cost nothing and
 require zero app cooperation. These drive auto-rollback.
 
 **Business metrics — isolated provider.** The app constructs a **second
@@ -395,11 +404,11 @@ gateway's guardrail metrics point at the same endpoint.
 **Identity comes from the credential, never the payload.** A public OTLP
 endpoint that trusts a `mendel.variation` attribute is trivially forgeable —
 anyone could poison an experiment. Mendel mints a per-deployment bearer token,
-injects it as `OTEL_EXPORTER_OTLP_HEADERS`, and resolves (project, Experiment Unit)
+injects it as `OTEL_EXPORTER_OTLP_HEADERS`, and resolves (project, Arm)
 server-side. The resource attribute is a cross-check, not the source of truth.
 
 Cardinality protection at ingest: reject metric names outside the contract, cap
-attribute values, cap series per Experiment Unit. Otherwise one buggy generated app writes
+attribute values, cap series per Arm. Otherwise one buggy generated app writes
 unbounded rows into Mendel's database.
 
 ### 10.3 Storage: one shared database
@@ -408,7 +417,7 @@ unbounded rows into Mendel's database.
 (project_id, experiment_id, arm_id, metric_name, bucket_start, count, sum)
 ```
 
-A contingency table, not a telemetry store. Ten projects × 5 Experiment Units × 5 metrics at
+A contingency table, not a telemetry store. Ten projects × 5 Arms × 5 metrics at
 5-minute buckets is single-digit millions of rows per month — unremarkable for
 Postgres, rolled up to hourly after 24h if the fine grain is only needed for
 guardrail responsiveness. Per-project infrastructure would cost orders of
@@ -420,12 +429,12 @@ touching the app contract, since the endpoint is an env var.
 ### 10.4 Accumulate in memory, flush on an interval
 
 Ingest does **not** write to Postgres per OTLP request. Counts accumulate in
-memory keyed by `(project, experiment, experiment_unit, metric, bucket_start)`
+memory keyed by `(project, experiment, arm, metric, bucket_start)`
 and flush every 60s, upserting into the table above:
 
 ```sql
 INSERT INTO ... VALUES (...)
-ON CONFLICT (project_id, experiment_id, experiment_unit_id, metric_name, bucket_start)
+ON CONFLICT (project_id, experiment_id, arm_id, metric_name, bucket_start)
 DO UPDATE SET count = experiment_metrics.count + EXCLUDED.count,
               sum   = experiment_metrics.sum   + EXCLUDED.sum
 ```
@@ -448,7 +457,7 @@ is truncated on each flush — not a Postgres write per request.
 Independent of classification being right:
 
 - Maximum exposure ceiling per experiment.
-- Auto-rollback on error-rate or latency regression against the control Experiment Unit.
+- Auto-rollback on error-rate or latency regression against the control Arm.
 - Time cap and spend cap, the latter wired to the existing cost model.
 - A one-action kill switch returning 100% to mainline.
 
@@ -482,12 +491,13 @@ Recorded with what was rejected, for audit.
 | D10 | Identity from bearer token | Trust payload attributes | Otherwise experiment results are forgeable |
 | D11 | Archive to Mendel-owned storage, TTL'd | User-owned bucket | Lower setup burden; user bucket has no natural home off GCP |
 | D12 | Adversarial audit deferred | Include from the start | Expensive; marginal once static analysis + enforcement exist |
-| D13 | Experiment Units of a Hop run in parallel; drift handled by recorded schemas + lock | One experiment at a time | A blanket constraint breaks the core model |
+| D13 | Arms of a Hop run in parallel; drift handled by recorded schemas + lock | One experiment at a time | A blanket constraint breaks the core model |
 | D14 | Lock held in Mendel's database, not the user's | Advisory lock in the user's datastore | Not every datastore offers one; Mendel only needs to order itself |
 | D15 | Record touched-table schemas verbatim | Hash fingerprint | Schemas are small, and a mismatch should show *what* changed |
 | D16 | `mendel_exp_` prefix, renamed on promotion | Refuse on name collision | Commutative additions, and the schema documents which objects are experimental |
 | D17 | Accumulate in memory, flush every 60s | Postgres write per OTLP ingest | Write volume bounded by series count, not traffic; 60s of loss cannot move a conclusion |
-| D18 | Allocation derived from MDE and duration, mainline carries the brunt | Even split across Experiment Units | Minimises exposure while still reaching significance |
+| D18 | Allocation derived from MDE and duration, mainline carries the brunt | Even split across Arms | Minimises exposure while still reaching significance |
+| D19 | Mainline deploys during an experiment: carry on and annotate | Invalidate and restart | Unrelated merges are constant; restarting means nothing ever finishes |
 
 ---
 
@@ -511,14 +521,32 @@ can waive. Default on, since a waiver is a choice someone made and an omission
 is not.
 
 **Allocation (was O3).** The user decides, but Mendel proposes **mainline
-carrying the brunt of traffic**, with each Experiment Unit given the minimum
+carrying the brunt of traffic**, with each Arm given the minimum
 allocation that reaches significance within the target duration. This inverts
 the usual framing: allocation is *derived* from the MDE and the duration (§8)
 rather than picked, and the derivation is what Mendel shows the user.
 
+**Terminology (was O5).** The Variation-in-an-experiment is an **Arm** and the
+thing traffic is divided by is an **Assignment Unit**, for the reasons recorded
+in §2. "Experiment Unit" was tried and abandoned: it names, in conventional
+statistical usage, the concept it was not being applied to.
+
+**Mainline deploys mid-experiment (was O6).** Mainline is the control, and it
+will be deployed to while an experiment runs. Mendel **carries on and
+annotates**: the result records that the control changed underneath the
+comparison, with the commits and the time they landed, so a reader can judge
+whether the change plausibly moved the metric.
+
+Not restarting is the right default because unrelated merges are constant and
+invalidating on each would mean no experiment ever finishes. The stricter rule —
+blocking mainline changes that are *related* to what the experiment touches — is
+future work rather than a gap: the static analysis of §4 already computes what a
+Variation touches, so overlap with an incoming merge is computable when it is
+wanted. Until then the annotation makes the risk visible instead of silent.
+
 **Guardrail baseline (was O4).** Mendel proposes defaults for every statistical
 parameter — minimum sample before guardrails may fire, MDE, duration, stopping
-rule — and the user may override any of them. Until an Experiment Unit reaches
+rule — and the user may override any of them. Until an Arm reaches
 the minimum sample, guardrails cannot fire on a comparison; the absolute
 circuit-breakers in §11 still apply, since a hard error-rate ceiling needs no
 baseline to be exceeded.
@@ -527,33 +555,36 @@ baseline to be exceeded.
 
 ## 15. Open questions
 
-**O5 — Does "Experiment Unit" fight its own field?** In experimental design,
-*experimental unit* conventionally means the thing being randomised — which here
-is the **Assignment Unit**, the other concept. A reader with a statistics
-background will read the term backwards. "Assignment Unit" resolves the
-collision this document originally had, but if the pairing still reads
-awkwardly, "Variant" or "Experiment Variant" is the alternative for this concept.
+**O7 — Assignment when the key does not exist yet, or changes.** With
+`assignment_unit: user`, an anonymous visitor has no user id, so assignment must
+fall back to a cookie. When that visitor later logs in, their key changes from
+the anonymous cookie to a user id — and the hash of the new key may land them in
+a different Arm mid-journey.
 
-**O6 — What does a mainline deploy do to a running experiment?** Mainline is the
-control, and it will be deployed to mid-experiment when unrelated work merges.
-The control therefore changes underneath a comparison in flight. Options:
-invalidate and restart, carry on and annotate the result, or admit only
-non-overlapping changes while an experiment runs. This looks like the biggest
-unaddressed hole in the design.
+That is the dissonance case §5 asks the user to approve, arriving without anyone
+having changed a Variation. It also corrupts the statistics: one person counted
+in two Arms is not one observation in each. Options are to pin the assignment
+into the cookie at first contact and keep honouring it after login, to exclude
+pre-login traffic from `user`-keyed experiments entirely, or to treat login as
+the start of a fresh Assignment Unit and discard the pre-login half. Worth
+settling before Tier 1 ships, because it applies to the presentation
+experiments too.
+
+---
 
 ## 16. What I would build first
 
 Deliberately not the whole design. Tier 1 alone is both the safest and the most
 demonstrable slice, and it requires solving none of the migration problem:
 
-1. Experiment and Experiment Unit domain model, Assignment Unit declaration,
+1. Experiment and Arm domain model, Assignment Unit declaration,
    allocation over Assignment Units.
 2. Tier 1 classifier: declaration plus static analysis, default deny.
-3. Read-only DB role and NetworkPolicy enforcement for Tier 1 Experiment Units.
+3. Read-only DB role and NetworkPolicy enforcement for Tier 1 Arms.
 4. Gateway API `HTTPRoute` generation, k8s assignment filter, kill switch.
 5. OTLP ingest endpoint, token minting, contingency-table storage.
 6. Guardrail metrics and auto-rollback.
-7. Eval matrix showing Experiment Units with intervals, and the decline surface.
+7. Eval matrix showing Arms with intervals, and the decline surface.
 
 Tier 2 — migrations, archive, recorded schemas, lock — is the second phase, and
 the design above exists so that phase does not require reopening phase one.
