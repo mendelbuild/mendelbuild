@@ -498,6 +498,7 @@ Recorded with what was rejected, for audit.
 | D17 | Accumulate in memory, flush every 60s | Postgres write per OTLP ingest | Write volume bounded by series count, not traffic; 60s of loss cannot move a conclusion |
 | D18 | Allocation derived from MDE and duration, mainline carries the brunt | Even split across Arms | Minimises exposure while still reaching significance |
 | D19 | Mainline deploys during an experiment: carry on and annotate | Invalidate and restart | Unrelated merges are constant; restarting means nothing ever finishes |
+| D20 | Tier 1 assigns by a Mendel-set cookie; `user`/`tenant` wait for Tier 2 | Read an app-supplied user key in Tier 1 | No login-transition case to handle; the assigner is a hash and a Set-Cookie |
 
 ---
 
@@ -544,6 +545,24 @@ future work rather than a gap: the static analysis of §4 already computes what 
 Variation touches, so overlap with an incoming merge is computable when it is
 wanted. Until then the annotation makes the risk visible instead of silent.
 
+**Assignment when the key is absent or changes (was O7).** Resolved by the
+cheapest thing that is still honest: **Tier 1 assigns by a cookie Mendel sets on
+first contact**, and honours it thereafter no matter what else happens to the
+request. The assigner never reads an application key, never knows whether anyone
+is logged in, and has no key-transition case to handle. It is a hash and a
+`Set-Cookie`.
+
+The consequence is stated rather than hidden: the effective Assignment Unit is
+the **browser**, not the person. One human on a laptop and a phone is two
+Assignment Units. That is how most experimentation tooling behaves, and for
+presentation experiments it is fine.
+
+So Tier 1 offers only `device` (cookie-pinned) and `request` (no stickiness).
+`user` and `tenant` require reading a key the application supplies, which is
+what drags in the login-transition problem — so they arrive with Tier 2, where
+per-Assignment-Unit durable writes make honouring the declared key actually
+necessary. Nothing here forecloses them.
+
 **Guardrail baseline (was O4).** Mendel proposes defaults for every statistical
 parameter — minimum sample before guardrails may fire, MDE, duration, stopping
 rule — and the user may override any of them. Until an Arm reaches
@@ -553,22 +572,35 @@ baseline to be exceeded.
 
 ---
 
-## 15. Open questions
+## 15. Open questions — prerequisites, not design
 
-**O7 — Assignment when the key does not exist yet, or changes.** With
-`assignment_unit: user`, an anonymous visitor has no user id, so assignment must
-fall back to a cookie. When that visitor later logs in, their key changes from
-the anonymous cookie to a user id — and the hash of the new key may land them in
-a different Arm mid-journey.
+Both of these are blocking in a way the design questions were not, and neither
+is answerable by writing more of this document.
 
-That is the dissonance case §5 asks the user to approve, arriving without anyone
-having changed a Variation. It also corrupts the statistics: one person counted
-in two Arms is not one observation in each. Options are to pin the assignment
-into the cookie at first contact and keep honouring it after login, to exclude
-pre-login traffic from `user`-keyed experiments entirely, or to treat login as
-the start of a fresh Assignment Unit and discard the pre-login half. Worth
-settling before Tier 1 ships, because it applies to the presentation
-experiments too.
+**O8 — Does Mendel get administrative access to the user's application
+database?** §4.1 leans on a read-only role for Tier 1 Arms, and Tier 2 needs to
+apply migrations and grants. Creating a role requires admin rights on the user's
+database, and Mendel holds nothing of the sort today: `RequiredCredentialsForCombo`
+collects `FLY_API_TOKEN`, or `GCP_*` and `GKE_*` — platform credentials only.
+`project_env_vars` holds values the *app* reads; none of them let Mendel connect
+as an administrator.
+
+This is the largest unstated prerequisite in the design, and a real escalation
+of what a user is trusting Mendel with — the difference between "can deploy your
+code" and "can alter your database". Options: collect a DBA credential as a
+platform credential; require the user to pre-create the roles Mendel will use
+and hand over only those; or drop role-based enforcement and rely on static
+analysis alone, which §4.1 argues against for good reason.
+
+**O9 — There is no Kubernetes test bed.** The `gke` channel exists in
+`hosting_platforms` and `deployToGKE` is written, but staging has exactly one
+deployment channel — `fly-io`/`container` — and no GKE channel has ever been
+validated. So the k8s deploy path has never run against a real cluster, and
+routing, grants, and NetworkPolicy all target a platform nothing currently
+exercises. Building against it would be writing to an untested interface.
+
+The test project would need to move to GKE, or a second test project be created
+there, before §16 items 3 and 4 can be verified rather than merely written.
 
 ---
 
@@ -588,3 +620,11 @@ demonstrable slice, and it requires solving none of the migration problem:
 
 Tier 2 — migrations, archive, recorded schemas, lock — is the second phase, and
 the design above exists so that phase does not require reopening phase one.
+
+**Item 5 is the one that can start today.** OTLP ingest, token minting and the
+contingency table depend on nothing in §15: no cluster, no database credential,
+no routing. Items 3 and 4 are blocked on O8 and O9 respectively. Items 1 and 2
+can proceed, but item 2's static analysis needs a decision on how Mendel
+recognises a presentation-only file in an arbitrary repository — declared paths
+in `.mendel/`, cross-checked against a conservative extension allow-list, is the
+proposal.
