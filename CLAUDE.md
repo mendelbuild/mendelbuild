@@ -469,7 +469,14 @@ ALTER TABLE hops ALTER COLUMN commentary DROP NOT NULL;
 
 Final implementation plans for each phase are stored in `dev/claude_plans/` for future reference. These documents capture architectural decisions and implementation details.
 
-**At the end of each development phase**, write the plan to `dev/claude_plans/phase_XX.md` before moving on. The plan should include:
+**Every file in `dev/claude_plans/` takes a numbered prefix** — `NN_short_name.md`,
+using the next unused number — so the directory reads in the order the work
+happened. Forward-looking design docs are numbered the same way as retrospective
+phase write-ups; both are plans, and separating them by naming scheme only makes
+the sequence harder to follow.
+
+**At the end of each development phase**, write the plan up before moving on.
+The plan should include:
 - Overview of what was built
 - Key design decisions and rationale
 - New/modified files
