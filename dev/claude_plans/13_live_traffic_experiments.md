@@ -572,35 +572,33 @@ baseline to be exceeded.
 
 ---
 
-## 15. Open questions — prerequisites, not design
+## 15. Prerequisites
 
-Both of these are blocking in a way the design questions were not, and neither
-is answerable by writing more of this document.
+**Database access (was O8) — resolved.** Mendel wrote the application, so it
+knows how the application connects to its own database, and can recover the
+connection from the repository and the environment it already injects. Where
+that is not discoverable, it asks — through the same `requirements.json`
+mechanism that already collects secrets, which is exactly the shape of question
+it was built for.
 
-**O8 — Does Mendel get administrative access to the user's application
-database?** §4.1 leans on a read-only role for Tier 1 Arms, and Tier 2 needs to
-apply migrations and grants. Creating a role requires admin rights on the user's
-database, and Mendel holds nothing of the sort today: `RequiredCredentialsForCombo`
-collects `FLY_API_TOKEN`, or `GCP_*` and `GKE_*` — platform credentials only.
-`project_env_vars` holds values the *app* reads; none of them let Mendel connect
-as an administrator.
+One wrinkle to design around rather than assume away: the credential the
+*application* uses is usually not privileged enough to `CREATE ROLE` or `GRANT`,
+which is what §4.1's enforcement needs. So the sequence is: discover the app's
+connection, check whether it can create the roles Mendel wants, and if it
+cannot, request a privileged credential as a `secret` requirement, naming
+plainly what it is for. A user who declines gets Tier 1 with static analysis
+alone and a clear statement that enforcement is unavailable — not a silent
+downgrade.
 
-This is the largest unstated prerequisite in the design, and a real escalation
-of what a user is trusting Mendel with — the difference between "can deploy your
-code" and "can alter your database". Options: collect a DBA credential as a
-platform credential; require the user to pre-create the roles Mendel will use
-and hand over only those; or drop role-based enforcement and rely on static
-analysis alone, which §4.1 argues against for good reason.
+**Kubernetes (was O9) — in progress.** The `gke` channel exists in
+`hosting_platforms` and `deployToGKE` is written, but staging has only a
+`fly-io`/`container` channel and no GKE channel has ever been validated, so that
+code has never run against a real cluster. Routing, grants and NetworkPolicy all
+target a platform nothing currently exercises.
 
-**O9 — There is no Kubernetes test bed.** The `gke` channel exists in
-`hosting_platforms` and `deployToGKE` is written, but staging has exactly one
-deployment channel — `fly-io`/`container` — and no GKE channel has ever been
-validated. So the k8s deploy path has never run against a real cluster, and
-routing, grants, and NetworkPolicy all target a platform nothing currently
-exercises. Building against it would be writing to an untested interface.
-
-The test project would need to move to GKE, or a second test project be created
-there, before §16 items 3 and 4 can be verified rather than merely written.
+Being handled separately: the pong test project moves from Fly.io to GKE, which
+also exercises changing an existing project's deployment channel — itself an
+untested path. §16 items 3 and 4 are blocked until that lands.
 
 ---
 
@@ -623,7 +621,7 @@ the design above exists so that phase does not require reopening phase one.
 
 **Item 5 is the one that can start today.** OTLP ingest, token minting and the
 contingency table depend on nothing in §15: no cluster, no database credential,
-no routing. Items 3 and 4 are blocked on O8 and O9 respectively. Items 1 and 2
+no routing. Items 3 and 4 are blocked on Kubernetes (§15). Items 1 and 2
 can proceed, but item 2's static analysis needs a decision on how Mendel
 recognises a presentation-only file in an arbitrary repository — declared paths
 in `.mendel/`, cross-checked against a conservative extension allow-list, is the
