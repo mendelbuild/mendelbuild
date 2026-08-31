@@ -103,6 +103,30 @@ func MemberRole(role string) StatusView {
 	}
 }
 
+// DecisionStatusView renders a Decision's position for a queue, where there is
+// no room for its full Ribbon. Takes a value so a template can pass a row.
+func DecisionStatusView(ir InputRequest) StatusView {
+	r := DecisionLifecycle(&ir)
+	return StatusView{Label: r.Headline, Tone: r.Tone}
+}
+
+// DecisionResolution renders how a Decision was settled.
+//
+// Approved and rejected are both resolutions, and they are not the same news;
+// the queue used to colour a rejection with the success palette.
+func DecisionResolution(resolution string) StatusView {
+	switch resolution {
+	case "":
+		return StatusView{"Resolved", ToneSuccess}
+	case "approved":
+		return StatusView{"Approved", ToneSuccess}
+	case "rejected":
+		return StatusView{"Rejected", ToneFailure}
+	default:
+		return StatusView{resolution, ToneNeutral}
+	}
+}
+
 // HopStatusView renders a Hop's status as a badge, for the places that list
 // many Hops at once and have no room for a full Ribbon. It reuses the Ribbon so
 // a Hop cannot describe itself one way in a table and another on its own page.

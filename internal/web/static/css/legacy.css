@@ -18,8 +18,8 @@
    so using them forces a template to branch on a status string — the exact
    thing internal/domain/lifecycle.go exists to prevent. Every remaining user
    should read a domain.Tone and emit .badge-{tone} instead.
-   Users: strategy.html, hop_detail.html, variation_detail.html,
-          project_settings.html, dashboard.html, input_request_*.html */
+   Users: input_request_roadmap.html, input_request_selection.html,
+          input_request_variation.html */
 .status {
     display: inline-block;
     padding: 2px var(--sp-2);
@@ -37,43 +37,10 @@
 .status-neutral          { background: var(--tone-neutral-bg);  color: var(--tone-neutral-ink); }
 .status-selecting        { background: var(--tone-waiting-bg);  color: var(--tone-waiting-ink); }
 
-/* ---- .objective / .key-result -> .card + .kv + .badge ---------------------
-   Users: strategy.html, okr_editor.html, hop_detail.html */
-.objective {
-    border-left: 4px solid var(--tone-progress);
-    padding-left: var(--sp-4);
-    margin-bottom: var(--sp-5);
-}
-.key-result {
-    background: var(--surface-sunken);
-    border-radius: var(--radius-sm);
-    padding: var(--sp-3);
-    margin: var(--sp-2) 0;
-}
-.key-result .target {
-    font-family: var(--font-mono);
-    background: var(--tone-neutral-bg);
-    border-radius: var(--radius-sm);
-    padding: 1px 6px;
-}
-
-/* ---- .funding / .funding-item -> .metrics / .metric -----------------------
-   Users: strategy.html, hop_detail.html */
-.funding { display: flex; gap: var(--sp-5); flex-wrap: wrap; }
-.funding-item {
-    background: var(--tone-success-bg);
-    padding: var(--sp-4) var(--sp-5);
-    border-radius: var(--radius-md);
-    min-width: 150px;
-}
-.funding-item .amount { font-size: var(--text-xl); font-weight: 650; }
-.funding-item .type { color: var(--ink-2); font-size: var(--text-sm); }
-
 /* ---- bare <table> -> .table ----------------------------------------------
    Unclassed tables are still everywhere. Scoped to .card so the styleguide
    and converted pages are unaffected.
-   Users: strategy.html, hop_detail.html, variation_detail.html,
-          deployment_channel.html, project_settings.html, dashboard.html */
+   Users: input_request_*.html */
 .card table:not(.table):not(.log-table):not(.kv) {
     width: 100%;
     border-collapse: collapse;
@@ -102,7 +69,7 @@
 .card h3 { font-size: var(--text-base); font-weight: 650; margin: 0 0 var(--sp-2); }
 
 /* ---- .form-error -> .callout.callout-failure ------------------------------
-   Users: new_project.html, setup_okrs.html */
+   Users: setup_okrs.html */
 .form-error {
     padding: var(--sp-3) var(--sp-4);
     background: var(--tone-failure-bg);
@@ -117,7 +84,7 @@
    The first three screens a new project sees. Deliberately plainer and
    wider-spaced than the rest of the app: the reader has not learned any of
    Mendel's vocabulary yet, so there is nothing here to scan for.
-   Users: new_project.html, setup_okrs.html, input_request_roadmap.html */
+   Users: setup_okrs.html */
 .setup-lede {
     color: var(--ink-2);
     font-size: var(--text-md);
@@ -160,7 +127,7 @@
 /* ---- .tune-* -> .badge-{tone} --------------------------------------------
    A score the tuner gave this line, shown before approval rather than after:
    the point is to catch a vague key result while it is still cheap to fix.
-   Users: setup_okrs.html, okr_editor.html */
+   Users: setup_okrs.html */
 .tune { font-size: var(--text-sm); color: var(--ink-2); margin-top: var(--sp-1); }
 .tune-badge {
     display: inline-block;

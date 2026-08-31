@@ -29,10 +29,10 @@
 {{/* The draft runs in the background, because it takes longer than a request
      can safely be held open. Nothing here is interactive: the page re-checks
      itself and replaces this with the draft as soon as there is one. */}}
-<div class="card" style="text-align: center; padding: 44px 20px;">
+<div class="card card-roomy text-center">
     <div class="setup-spinner" aria-hidden="true"></div>
-    <h2 style="margin: 18px 0 8px 0;">Reading your brief</h2>
-    <p style="color: #666; margin: 0 auto; max-width: 46ch;">
+    <h2 class="card-title">Reading your brief</h2>
+    <p class="muted prose-narrow">
         Mendel is turning what you wrote into objectives and key results. This
         usually takes under a minute. You can leave this page and come back to
         it &mdash; the draft keeps going without you.
@@ -40,7 +40,7 @@
 </div>
 
 <noscript>
-    <p class="empty" style="text-align: center;">
+    <p class="empty text-center">
         This page refreshes itself every {{.PollSeconds}} seconds.
     </p>
 </noscript>
@@ -52,15 +52,15 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
 
 {{else if .DraftFailed}}
 <div class="card">
-    <h2 style="margin-top: 0;">Mendel could not draft your objectives</h2>
-    <p style="color: #555;">{{.DraftError}}</p>
-    <p style="color: #777; font-size: 0.9em; max-width: 62ch;">
+    <h2 class="card-title">Mendel could not draft your objectives</h2>
+    <p class="muted">{{.DraftError}}</p>
+    <p class="text-sm subtle prose">
         Your brief is saved, so trying again costs nothing but the time. If it
         keeps failing, you can write the objectives yourself instead &mdash;
         the rest of the setup works the same either way.
     </p>
-    <div style="display: flex; gap: 12px; align-items: center; margin-top: 18px;">
-        <form method="POST" action="/p/{{$.ProjectID}}/setup/okrs/redraft" data-redraft-form style="margin: 0;">
+    <div class="actions">
+        <form method="POST" action="/p/{{$.ProjectID}}/setup/okrs/redraft" data-redraft-form>
             <button type="submit" class="btn btn-primary" data-submit>Try again</button>
         </form>
         <a href="/p/{{$.ProjectID}}/okr" class="btn btn-secondary">Write them myself</a>
@@ -69,8 +69,8 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
 
 {{if .Project.Brief}}
 <div class="card">
-    <h2 style="margin-top: 0; font-size: 1em; color: #888; text-transform: uppercase; letter-spacing: 0.06em;">Your brief</h2>
-    <p style="margin: 0; white-space: pre-wrap;">{{derefString .Project.Brief}}</p>
+    <h2 class="eyebrow">Your brief</h2>
+    <p class="pre-wrap">{{derefString .Project.Brief}}</p>
 </div>
 {{end}}
 
@@ -101,7 +101,7 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
 {{end}}
 
 {{if .Funding}}
-<div class="card" style="padding: 14px 20px; margin-bottom: 20px;">
+<div class="card card-tight">
     <strong>{{usd .Funding.AmountUSD}}</strong> budgeted as &ldquo;{{.Funding.Name}}&rdquo;
     {{if .Funding.PeriodEnd}}through {{.Funding.PeriodEnd.Format "Jan 2, 2006"}}{{end}}.
     Every key result below is what that money is meant to buy.
@@ -110,12 +110,12 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
 
 <form method="POST" action="/p/{{$.ProjectID}}/setup/okrs/approve" data-approve-form>
     <div class="card">
-        <h2 style="margin-top: 0;">Objectives</h2>
+        <h2 class="card-title">Objectives</h2>
 
         {{if .Objectives}}
         {{range .Objectives}}
         <div class="draft-objective">
-            <div class="field" style="margin-bottom: 10px;">
+            <div class="field field-tight">
                 <label for="obj_{{.Objective.ID}}">Objective</label>
                 <span class="hint">Clear this box to drop this objective and its key results.</span>
                 <input type="text" id="obj_{{.Objective.ID}}" name="obj_{{.Objective.ID}}"
@@ -160,11 +160,11 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
         </div>
         {{end}}
 
-        <div style="display: flex; gap: 12px; align-items: center; margin-top: 24px;">
+        <div class="actions">
             <button type="submit" class="btn btn-primary" data-submit>Approve and plan the work</button>
             <a href="/p/{{$.ProjectID}}/okr" class="btn btn-secondary">Open the full OKR editor</a>
         </div>
-        <p style="color: #777; font-size: 0.88em; margin-top: 12px; max-width: 62ch;">
+        <p class="text-sm subtle prose">
             Approving draws up a roadmap &mdash; a sequence of Hops that advance
             these objectives &mdash; and puts it in your Input Needed queue for
             review. You can still change objectives afterwards in the OKR editor.
@@ -181,7 +181,7 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
 
 <form method="POST" action="/p/{{$.ProjectID}}/setup/okrs/revise" data-revise-form>
     <div class="card">
-        <h2 style="margin-top: 0;">Not quite right?</h2>
+        <h2 class="card-title">Not quite right?</h2>
         <div class="field">
             <label for="feedback">Tell Mendel what to change</label>
             <span class="hint">
@@ -189,11 +189,11 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
                 typed above is discarded, so approve those edits first if you
                 want to keep them.
             </span>
-            <textarea id="feedback" name="feedback" style="min-height: 90px;"
+            <textarea id="feedback" name="feedback" class="textarea-sm"
                       placeholder="These are aimed at growth, but there are no users yet. Focus on shipping something that works on a phone, and drop the retention targets."></textarea>
         </div>
         <button type="submit" class="btn btn-secondary" data-submit>Redraft objectives</button>
-        <span data-working style="display: none; color: #666; font-size: 0.92em; margin-left: 10px;">
+        <span data-working class="text-sm muted" hidden>
             Redrafting &mdash; this takes up to a minute.
         </span>
     </div>
@@ -211,7 +211,7 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
                 button.disabled = true;
                 button.textContent = form.hasAttribute('data-revise-form') ? 'Redrafting…' : 'Approving…';
             }
-            if (working) working.style.display = 'inline';
+            if (working) working.hidden = false;
         });
     });
 })();

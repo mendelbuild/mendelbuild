@@ -103,6 +103,15 @@ code {
 }
 
 .prose { max-width: var(--measure); }
+/* A narrower measure, for text centred under a heading where a full line
+   length would drift too far from the thing it explains. */
+.prose-narrow { max-width: 48ch; margin-left: auto; margin-right: auto; }
+
+.text-center { text-align: center; }
+.pre-wrap { white-space: pre-wrap; }
+/* A form that should not interrupt the line it sits on. `.actions form` covers
+   the common case; this is for a form inline within running content. */
+.inline { display: inline; }
 
 /* ---- Text utilities ------------------------------------------------------ */
 .muted     { color: var(--ink-2); }
@@ -233,6 +242,9 @@ code {
 }
 .card + .card { margin-top: var(--sp-4); }
 .card-flush { padding: 0; overflow: hidden; }
+.card-tight { padding: var(--sp-3) var(--sp-5); }
+/* Extra breathing room, for a card that is the only thing on the screen. */
+.card-roomy { padding: var(--sp-7) var(--sp-5); }
 
 .card-head {
     display: flex;
@@ -660,6 +672,8 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
 .field input:focus,
 .field textarea:focus { border-color: var(--tone-progress); }
 .field textarea { min-height: 120px; resize: vertical; line-height: var(--leading-body); }
+.field textarea.textarea-sm { min-height: 90px; }
+.field-tight { margin-bottom: var(--sp-3); }
 .input-mono { font-family: var(--font-mono); }
 .input-inline { width: auto; min-width: 260px; }
 

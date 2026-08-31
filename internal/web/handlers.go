@@ -72,7 +72,9 @@ var templateFuncs = template.FuncMap{
 	"validationStatus": domain.ValidationStatus,
 	"memberRole":       domain.MemberRole,
 	"hopStatus":        domain.HopStatusView,
-	"decisionKind":     domain.DecisionKindLabel,
+	"decisionKind":       domain.DecisionKindLabel,
+	"decisionStatus":     domain.DecisionStatusView,
+	"decisionResolution": domain.DecisionResolution,
 	"decisionWeight":   domain.DecisionImportance,
 	"usdPtr": func(f *float64) string {
 		if f == nil {

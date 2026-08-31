@@ -1,211 +1,144 @@
 {{define "page-content"}}
 <style>
-    .breadcrumbs {
-        margin-bottom: 15px;
-        font-size: 0.9em;
-    }
-    .breadcrumbs a {
-        color: #007bff;
-        text-decoration: none;
-    }
-    .breadcrumbs a:hover {
-        text-decoration: underline;
-    }
-    .breadcrumbs .separator {
-        color: #999;
-        margin: 0 8px;
-    }
+    /* Page-specific structure only. This block used to redefine .btn,
+       .btn-primary and .btn-secondary in blue, so the one page where you edit
+       your objectives had different buttons from everywhere else in the app.
+       Those are gone: the design system's buttons apply here like anywhere. */
     .okr-item {
-        background: white;
-        border-radius: 8px;
-        padding: 15px 20px;
-        margin-bottom: 15px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        background: var(--surface-card);
+        border: 1px solid var(--line);
+        border-left: 4px solid var(--tone-neutral);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-1);
+        padding: var(--sp-4) var(--sp-5);
+        margin-bottom: var(--sp-4);
         position: relative;
     }
-    .okr-item.objective {
-        border-left: 4px solid #007bff;
-    }
-    .okr-item.key-result {
-        border-left: 4px solid #28a745;
-        margin-left: 20px;
-    }
+    /* An objective and a key result are different kinds of thing, and the edge
+       says which without a label. */
+    .okr-item.objective   { border-left-color: var(--tone-progress); }
+    .okr-item.key-result  { border-left-color: var(--tone-success); margin-left: var(--sp-5); }
+
     .okr-header {
         display: flex;
         justify-content: space-between;
         align-items: flex-start;
-        gap: 10px;
+        gap: var(--sp-3);
     }
-    .okr-content {
-        flex: 1;
-    }
+    .okr-content { flex: 1; min-width: 0; }
     .okr-actions {
         display: flex;
-        gap: 8px;
+        gap: var(--sp-2);
         align-items: center;
         flex-shrink: 0;
     }
-    .action-btn {
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: 4px 8px;
-        border-radius: 4px;
-        font-size: 0.9em;
-    }
-    .action-btn.edit { color: #007bff; }
-    .action-btn.edit:hover { background: #e7f1ff; }
-    .action-btn.remove { color: #dc3545; }
-    .action-btn.remove:hover { background: #f8d7da; }
-    .edit-form {
-        display: none;
-        margin-top: 10px;
-    }
-    .edit-form.active {
-        display: block;
-    }
+
+    .edit-form { display: none; margin-top: var(--sp-3); }
+    .edit-form.active { display: block; }
     .edit-form input, .edit-form textarea {
         width: 100%;
-        padding: 8px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        margin-bottom: 8px;
+        padding: var(--sp-2) var(--sp-3);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-md);
+        margin-bottom: var(--sp-2);
         font-family: inherit;
-        font-size: inherit;
+        font-size: var(--text-base);
     }
-    .edit-form textarea {
-        min-height: 80px;
-        resize: vertical;
-    }
-    .edit-form .btn-group {
-        display: flex;
-        gap: 8px;
-    }
-    .btn {
-        padding: 8px 16px;
-        border-radius: 4px;
-        border: none;
-        cursor: pointer;
-        font-size: 0.9em;
-        white-space: nowrap;
-    }
-    .btn-primary {
-        background: #007bff;
-        color: white;
-    }
-    .btn-primary:hover { background: #0056b3; }
-    .btn-secondary {
-        background: #6c757d;
-        color: white;
-    }
-    .btn-secondary:hover { background: #545b62; }
-    .btn-success {
-        background: #28a745;
-        color: white;
-    }
-    .btn-success:hover { background: #1e7e34; }
+    .edit-form textarea { min-height: 80px; resize: vertical; }
+    .edit-form .btn-group { display: flex; gap: var(--sp-2); }
+
+    /* The tuner's reading of one line, shown before approval rather than after:
+       the point is to catch a vague key result while it is still cheap to fix.
+       Class names are set by the tuning script as well as the template, so they
+       stay as they are and take their colour from the tone tokens. */
     .quality-badge {
         display: inline-block;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 0.8em;
+        padding: 2px var(--sp-2);
+        border-radius: var(--radius-pill);
+        font-size: var(--text-xs);
+        font-weight: 600;
         cursor: help;
         white-space: nowrap;
+        background: var(--tone-neutral-bg);
+        color: var(--tone-neutral-ink);
     }
-    .quality-badge.high { background: #d4edda; color: #155724; }
-    .quality-badge.medium { background: #fff3cd; color: #856404; }
-    .quality-badge.low { background: #f8d7da; color: #721c24; }
+    .quality-badge.high   { background: var(--tone-success-bg); color: var(--tone-success-ink); }
+    .quality-badge.medium { background: var(--tone-waiting-bg); color: var(--tone-waiting-ink); }
+    .quality-badge.low    { background: var(--tone-failure-bg); color: var(--tone-failure-ink); }
+
     .quality-spinner {
         display: inline-block;
         width: 14px;
         height: 14px;
-        border: 2px solid #f3f3f3;
-        border-top: 2px solid #007bff;
+        border: 2px solid var(--line);
+        border-top-color: var(--tone-progress);
         border-radius: 50%;
         animation: spin 1s linear infinite;
         vertical-align: middle;
     }
-    @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-    }
-    .child-count {
-        color: #666;
-        font-size: 0.85em;
-        margin-left: 10px;
-    }
+
+    .child-count { color: var(--ink-3); font-size: var(--text-sm); margin-left: var(--sp-2); }
+
     .add-form {
-        background: #f8f9fa;
-        padding: 15px;
-        border-radius: 8px;
-        margin-top: 15px;
+        background: var(--surface-sunken);
+        border: 1px solid var(--line);
+        padding: var(--sp-4);
+        border-radius: var(--radius-md);
+        margin-top: var(--sp-4);
     }
-    .add-form h4 {
-        margin-top: 0;
-        margin-bottom: 10px;
-    }
-    .add-form-row {
-        display: flex;
-        gap: 10px;
-        align-items: flex-start;
-    }
+    .add-form h4 { margin: 0 0 var(--sp-2); font-size: var(--text-base); }
+    .add-form-row { display: flex; gap: var(--sp-3); align-items: flex-start; }
     .add-form-row input[type="text"],
+    .add-form-row input[type="date"],
+    .add-form-row select,
     .add-form-row textarea {
-        padding: 8px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
+        padding: var(--sp-2) var(--sp-3);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-md);
         font-family: inherit;
-        font-size: inherit;
+        font-size: var(--text-base);
     }
-    .add-form-row .description-field {
-        flex: 1;
-        min-width: 0;
-    }
-    .add-form-row .target-field {
-        width: 150px;
-        flex-shrink: 0;
-    }
-    .add-form-row .date-field {
-        width: 140px;
-        flex-shrink: 0;
-    }
-    .add-form-row textarea.description-field {
-        min-height: 60px;
-        resize: vertical;
-    }
+    .add-form-row .description-field { flex: 1; min-width: 0; }
+    .add-form-row .target-field { width: 150px; flex-shrink: 0; }
+    .add-form-row .date-field { width: 140px; flex-shrink: 0; }
+    .add-form-row textarea.description-field { min-height: 60px; resize: vertical; }
+
     .target-info {
-        font-family: monospace;
-        background: #e9ecef;
-        padding: 2px 6px;
-        border-radius: 3px;
-        margin-left: 10px;
+        font-family: var(--font-mono);
+        background: var(--tone-neutral-bg);
+        padding: 1px var(--sp-2);
+        border-radius: var(--radius-sm);
+        margin-left: var(--sp-2);
     }
-    .kr-meta {
-        font-size: 0.85em;
-        color: #666;
-        margin-top: 5px;
-    }
+    .kr-meta { font-size: var(--text-sm); color: var(--ink-3); margin-top: var(--sp-1); }
 </style>
 
 {{with .OKR}}
-<h1>Edit OKRs</h1>
-<h2>{{.Strategy.Name}}</h2>
-
-<!-- Breadcrumbs -->
-<div class="breadcrumbs">
-    <a href="/p/{{$.ProjectID}}/okr">OKRs</a>
-    {{range .Breadcrumbs}}
-    <span class="separator">/</span>
-    <a href="/p/{{$.ProjectID}}/okr/objectives/{{.ID}}">{{.Description}}</a>
-    {{end}}
-    {{if $.CurrentObjective}}
-    <span class="separator">/</span>
-    <span>{{$.CurrentObjective.Objective.Description}}</span>
-    {{end}}
+<div class="page-head">
+    <nav class="breadcrumb">
+        <a href="/p/{{$.ProjectID}}/strategy">Strategy</a>
+        <span class="breadcrumb-sep">/</span>
+        <a href="/p/{{$.ProjectID}}/okr">OKRs</a>
+        {{range .Breadcrumbs}}
+        <span class="breadcrumb-sep">/</span>
+        <a href="/p/{{$.ProjectID}}/okr/objectives/{{.ID}}">{{.Description}}</a>
+        {{end}}
+        {{if $.CurrentObjective}}
+        <span class="breadcrumb-sep">/</span>
+        <span>{{$.CurrentObjective.Objective.Description}}</span>
+        {{end}}
+    </nav>
+    <span class="page-kind">OKRs</span>
+    <h1 class="page-title">{{.Strategy.Name}}</h1>
+    <p class="page-lede">
+        Objectives say what this project is for; key results say how it will know.
+        Mendel scores each line as you write it &mdash; a vague key result is
+        cheapest to fix before anything is built against it.
+    </p>
 </div>
 
 <!-- Tuning Status (shown when tuning is in progress) -->
-<div id="tune-status" style="margin-bottom: 20px; display: none;">
+<div id="tune-status" class="callout callout-progress" hidden>
     <span class="quality-spinner"></span>
     <span id="tune-status-text">Analyzing OKR quality...</span>
 </div>
@@ -215,7 +148,7 @@
 <div class="card">
     <div class="okr-header">
         <div class="okr-content">
-            <h3 style="margin: 0;">
+            <h3 class="card-title">
                 <span class="objective-text-{{$.CurrentObjective.Objective.ID}}">{{$.CurrentObjective.Objective.Description}}</span>
             </h3>
         </div>
@@ -233,9 +166,9 @@
             <span class="quality-spinner"></span>
             {{end}}
             </span>
-            <button class="action-btn edit" onclick="toggleEdit('obj-{{$.CurrentObjective.Objective.ID}}')">Edit</button>
-            <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives/{{$.CurrentObjective.Objective.ID}}/delete" style="display:inline;" onsubmit="return confirm('Remove this objective and all its children?');">
-                <button type="submit" class="action-btn remove">Remove</button>
+            <button class="btn btn-ghost btn-sm" onclick="toggleEdit('obj-{{$.CurrentObjective.Objective.ID}}')">Edit</button>
+            <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives/{{$.CurrentObjective.Objective.ID}}/delete" class="inline" onsubmit="return confirm('Remove this objective and all its children?');">
+                <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
             </form>
         </div>
     </div>
@@ -250,7 +183,7 @@
     </div>
 
     <!-- Key Results for current objective -->
-    <h4 style="margin-top: 20px;">Key Results</h4>
+    <h4>Key Results</h4>
     {{range $.CurrentObjective.KeyResults}}
     <div class="okr-item key-result">
         <div class="okr-header">
@@ -275,9 +208,9 @@
                 <span class="quality-spinner"></span>
                 {{end}}
                 </span>
-                <button class="action-btn edit" onclick="toggleEdit('kr-{{.ID}}')">Edit</button>
-                <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives/{{$.CurrentObjective.Objective.ID}}/unlink-kr/{{.ID}}" style="display:inline;" onsubmit="return confirm('Remove this key result?');">
-                    <button type="submit" class="action-btn remove">Remove</button>
+                <button class="btn btn-ghost btn-sm" onclick="toggleEdit('kr-{{.ID}}')">Edit</button>
+                <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives/{{$.CurrentObjective.Objective.ID}}/unlink-kr/{{.ID}}" class="inline" onsubmit="return confirm('Remove this key result?');">
+                    <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
                 </form>
             </div>
         </div>
@@ -307,21 +240,21 @@
                 <input type="text" name="description" class="description-field" required placeholder="What will you measure?">
                 <input type="text" name="target_units" class="target-field" required placeholder="Target">
                 <input type="date" name="target_date" class="date-field">
-                <button type="submit" class="btn btn-success">Add Key Result</button>
+                <button type="submit" class="btn btn-primary">Add Key Result</button>
             </div>
         </form>
         {{if $.OKR.AvailableKRs}}
-        <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
-            <h4 style="margin-top: 0;">Or Link Existing Key Result</h4>
+        <div><hr class="divider">
+            <h4>Or link an existing key result</h4>
             <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives/{{$.CurrentObjective.Objective.ID}}/link-kr">
                 <div class="add-form-row">
-                    <select name="key_result_id" class="description-field" required style="padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    <select name="key_result_id" class="description-field" required>
                         <option value="">Select a key result...</option>
                         {{range $.OKR.AvailableKRs}}
                         <option value="{{.ID}}">{{.Description}} ({{.TargetUnits}})</option>
                         {{end}}
                     </select>
-                    <button type="submit" class="btn btn-primary">Link Key Result</button>
+                    <button type="submit" class="btn btn-secondary">Link Key Result</button>
                 </div>
             </form>
         </div>
@@ -343,7 +276,7 @@
         <div class="okr-header">
             <div class="okr-content">
                 <strong>
-                    <a href="/p/{{$.ProjectID}}/okr/objectives/{{.Objective.ID}}" style="color: inherit; text-decoration: none;">
+                    <a href="/p/{{$.ProjectID}}/okr/objectives/{{.Objective.ID}}" class="table-link">
                         <span class="objective-text-{{.Objective.ID}}">{{.Objective.Description}}</span>
                     </a>
                     {{if gt .ChildCount 0}}
@@ -365,9 +298,9 @@
                 <span class="quality-spinner"></span>
                 {{end}}
                 </span>
-                <button class="action-btn edit" onclick="toggleEdit('obj-{{.Objective.ID}}')">Edit</button>
-                <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives/{{.Objective.ID}}/delete" style="display:inline;" onsubmit="return confirm('Remove this objective?');">
-                    <button type="submit" class="action-btn remove">Remove</button>
+                <button class="btn btn-ghost btn-sm" onclick="toggleEdit('obj-{{.Objective.ID}}')">Edit</button>
+                <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives/{{.Objective.ID}}/delete" class="inline" onsubmit="return confirm('Remove this objective?');">
+                    <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
                 </form>
             </div>
         </div>
@@ -404,9 +337,9 @@
                     <span class="quality-spinner"></span>
                     {{end}}
                     </span>
-                    <button class="action-btn edit" onclick="toggleEdit('kr-{{.ID}}')">Edit</button>
-                    <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives/{{$objView.Objective.ID}}/unlink-kr/{{.ID}}" style="display:inline;" onsubmit="return confirm('Remove this key result?');">
-                        <button type="submit" class="action-btn remove">Remove</button>
+                    <button class="btn btn-ghost btn-sm" onclick="toggleEdit('kr-{{.ID}}')">Edit</button>
+                    <form method="POST" action="/p/{{$.ProjectID}}/okr/objectives/{{$objView.Objective.ID}}/unlink-kr/{{.ID}}" class="inline" onsubmit="return confirm('Remove this key result?');">
+                        <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
                     </form>
                 </div>
             </div>
@@ -438,13 +371,13 @@
             {{end}}
             <div class="add-form-row">
                 <textarea name="description" class="description-field" required placeholder="What do you want to achieve?"></textarea>
-                <button type="submit" class="btn btn-success">Add {{if $.CurrentObjective}}Sub-Objective{{else}}Objective{{end}}</button>
+                <button type="submit" class="btn btn-primary">Add {{if $.CurrentObjective}}Sub-Objective{{else}}Objective{{end}}</button>
             </div>
         </form>
     </div>
 </div>
 
-<div style="margin-top: 20px;">
+<div class="actions">
     <a href="/p/{{$.ProjectID}}/strategy" class="btn btn-secondary">Back to Strategy</a>
 </div>
 {{end}}
@@ -479,7 +412,7 @@ function tuneAllOKRs() {
     }
 
     const status = document.getElementById('tune-status');
-    status.style.display = 'block';
+    status.hidden = false;
     document.getElementById('tune-status-text').textContent =
         `Analyzing ${spinners.length} item${spinners.length > 1 ? 's' : ''}...`;
 
@@ -489,7 +422,7 @@ function tuneAllOKRs() {
     })
     .then(response => response.json())
     .then(data => {
-        status.style.display = 'none';
+        status.hidden = true;
 
         if (data.error) {
             console.error('Tuning error:', data.error);
@@ -515,7 +448,7 @@ function tuneAllOKRs() {
         }
     })
     .catch(error => {
-        status.style.display = 'none';
+        status.hidden = true;
         console.error('Tuning error:', error);
         // Replace spinners with error indicator
         spinners.forEach(s => {
