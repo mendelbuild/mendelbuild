@@ -128,12 +128,13 @@ const (
 // only a draft whose process actually went away trips it -- a deploy or a crash
 // mid-draft leaves the row claiming work that no goroutine is doing any more.
 //
-// Whether a draft has passed this point is decided in SQL, never here. The
-// timestamp columns are `timestamp without time zone`: pgx writes a time.Time
-// as its local wall clock and reads one back labelled UTC, so comparing a
-// scanned timestamp against time.Now() is wrong by the machine's UTC offset --
-// which made a 36-second-old draft look hours stale on a machine seven hours
-// off UTC. The database is the only clock that sees both sides consistently.
+// Whether a draft has passed this point is decided in SQL, against NOW().
+//
+// It has to be a single clock, and the database's is the one both the web
+// process and any future worker share. Comparing a stored timestamp against the
+// app process's own clock reintroduces skew between them -- which is a smaller
+// version of the bug migration 035 fixed, where the two sides did not even
+// agree on a time zone.
 const DraftStaleAfter = 6 * time.Minute
 
 // OKRsApproved reports whether a human has signed off on this Strategy's OKRs.

@@ -76,7 +76,7 @@ func (db *DB) Migrate(ctx context.Context) error {
 	_, err = db.Pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS _migrations (
 			name TEXT PRIMARY KEY,
-			applied_at TIMESTAMP NOT NULL DEFAULT NOW()
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)
 	`)
 	if err != nil {

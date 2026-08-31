@@ -24,8 +24,8 @@ CREATE TABLE projects (
     -- was actually asked for.
     brief TEXT,
 
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 --------------------------------------------------------------------------------
@@ -39,8 +39,8 @@ CREATE TABLE project_credentials (
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     encrypted_value BYTEA NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(project_id, name)
 );
 
@@ -57,8 +57,8 @@ CREATE TABLE users (
     name TEXT,
     picture_url TEXT,
     google_id TEXT UNIQUE,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_users_email ON users(email);
@@ -70,7 +70,7 @@ CREATE TABLE project_members (
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'member')),
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(project_id, user_id)
 );
 
@@ -82,8 +82,8 @@ CREATE TABLE sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token_hash BYTEA NOT NULL UNIQUE,
-    expires_at TIMESTAMP NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_sessions_token ON sessions(token_hash);
@@ -107,7 +107,7 @@ CREATE TABLE strategies (
     -- objectives below are still an unreviewed agent draft. An agent-written
     -- objective and a human-approved one are indistinguishable in the
     -- objectives table, so this cannot be derived.
-    okrs_approved_at TIMESTAMP,
+    okrs_approved_at TIMESTAMPTZ,
 
     -- Where this strategy's draft is up to [added in 034]: 'drafting', 'ready',
     -- or 'failed'. Not derivable -- a strategy with no objectives looks the
@@ -116,7 +116,7 @@ CREATE TABLE strategies (
     -- rather than polled forever.
     draft_status TEXT NOT NULL DEFAULT 'ready',
     draft_error TEXT,
-    draft_started_at TIMESTAMP,
+    draft_started_at TIMESTAMPTZ,
 
     -- What the drafting agent said about its own draft [added in 032]:
     -- how it read the brief, what it filled in, what it could not tell.
@@ -124,8 +124,8 @@ CREATE TABLE strategies (
     -- was built on are the first thing worth re-reading.
     draft_notes JSONB,
 
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     CONSTRAINT strategies_draft_status_valid
         CHECK (draft_status IN ('drafting', 'ready', 'failed'))
@@ -150,10 +150,10 @@ CREATE TABLE objectives (
     tune_score REAL,      -- Quality score 0.0-1.0
     tune_feedback TEXT,   -- Brief feedback on clarity, specificity
 
-    deleted_at TIMESTAMP,  -- Soft delete timestamp [added in 007]
+    deleted_at TIMESTAMPTZ,  -- Soft delete timestamp [added in 007]
 
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 --------------------------------------------------------------------------------
@@ -177,16 +177,16 @@ CREATE TABLE key_results (
     --   - measurement horizon if applicable (e.g., "per week", "7-day rolling")
     target_units TEXT NOT NULL,
 
-    target_date TIMESTAMP,  -- When we expect to hit target
+    target_date DATE,  -- The day we expect to hit target (a date, not an instant)
 
     -- OKR quality tuning feedback from AI [added in 007]
     tune_score REAL,      -- Quality score 0.0-1.0
     tune_feedback TEXT,   -- Brief feedback on measurability, clarity
 
-    deleted_at TIMESTAMP,  -- Soft delete timestamp [added in 007]
+    deleted_at TIMESTAMPTZ,  -- Soft delete timestamp [added in 007]
 
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 --------------------------------------------------------------------------------
@@ -198,7 +198,7 @@ CREATE TABLE key_results (
 CREATE TABLE objective_key_result_pairs (
     objective_id UUID NOT NULL REFERENCES objectives(id),
     key_result_id UUID NOT NULL REFERENCES key_results(id),
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (objective_id, key_result_id)
 );
 
@@ -213,7 +213,7 @@ CREATE TABLE key_result_history (
     key_result_id UUID NOT NULL REFERENCES key_results(id),
 
     measured_value REAL NOT NULL,
-    measured_at TIMESTAMP NOT NULL,
+    measured_at TIMESTAMPTZ NOT NULL,
 
     -- Optional: source of measurement (for debugging/auditing)
     source TEXT
@@ -245,8 +245,8 @@ CREATE TABLE funding_sources (
     period_start DATE,
     period_end DATE,
 
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     CONSTRAINT funding_sources_period_ordered
         CHECK (period_start IS NULL OR period_end IS NULL OR period_start <= period_end)
@@ -269,7 +269,7 @@ CREATE TABLE funding_success_criteria (
     -- Optional weight if some KRs matter more than others for this funding
     weight REAL DEFAULT 1.0,
 
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     CONSTRAINT funding_success_criteria_unique UNIQUE (funding_source_id, key_result_id)
 );
@@ -315,8 +315,8 @@ CREATE TABLE hops (
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'active', 'selecting', 'completed', 'rejected', 'abandoned')),
 
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- DAG edges: which Hops must complete before this one can start?
@@ -339,8 +339,8 @@ CREATE TABLE budget_allocations (
 
     limit_usd REAL NOT NULL CHECK (limit_usd >= 0),  -- Spend ceiling for this Hop [030]
 
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Actual spend lives in cost_entries at the end of this file [030]. The old
@@ -428,8 +428,8 @@ CREATE TABLE variations (
         CHECK (status IN ('creating', 'pending', 'blocked', 'migrating', 'active', 'draining',
                           'error', 'terminated', 'pruned', 'selected', 'merged', 'rejected')),
 
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Variation lifecycle history: timestamped state transitions
@@ -439,7 +439,7 @@ CREATE TABLE variation_state_history (
 
     from_status TEXT,
     to_status TEXT NOT NULL,
-    transitioned_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    transitioned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- Optional context for the transition
     reason TEXT
@@ -457,7 +457,7 @@ CREATE INDEX idx_variation_history ON variation_state_history(variation_id, tran
 CREATE TABLE variation_logs (
     id UUID PRIMARY KEY,
     variation_id UUID NOT NULL REFERENCES variations(id) ON DELETE CASCADE,
-    logged_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    logged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     level TEXT NOT NULL CHECK (level IN ('info', 'milestone', 'error', 'heartbeat')),
     message TEXT NOT NULL,
     source_type TEXT NOT NULL DEFAULT 'codegen' CHECK (source_type IN ('codegen', 'demo', 'fix')),
@@ -479,13 +479,13 @@ CREATE TABLE demo_instances (
     variation_id UUID NOT NULL REFERENCES variations(id),
     url TEXT NOT NULL,
     teardown_instructions TEXT NOT NULL,  -- shell commands to stop the demo
-    started_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    stopped_at TIMESTAMP,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    stopped_at TIMESTAMPTZ,
     status TEXT NOT NULL DEFAULT 'starting',  -- starting, running, stopped, error
     process_info JSONB,  -- pid, port, container_id, etc - whatever is needed for teardown
     error_message TEXT,  -- populated if status = 'error'
     suggested_fix TEXT,  -- LLM-suggested fix prompt when status = 'error' [added in 012]
-    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_demo_instances_variation ON demo_instances(variation_id);
@@ -595,8 +595,8 @@ CREATE TABLE hosting_platforms (
     name TEXT NOT NULL,                  -- "Fly.io", "Google Cloud Run", "Vercel"
     deployer_image TEXT NOT NULL,        -- Docker image with /bin/sh (e.g., "alpine:latest")
     instructions TEXT NOT NULL,          -- AI prompt fragment for generating deploy scripts
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX idx_hosting_platforms_slug ON hosting_platforms(slug);
@@ -739,10 +739,10 @@ CREATE TABLE variation_migrations (
     notes TEXT,                       -- Where to find migration files in user's CODE repo [added in 011]
 
     -- Execution state
-    applied_at TIMESTAMP,
-    reverted_at TIMESTAMP,
+    applied_at TIMESTAMPTZ,
+    reverted_at TIMESTAMPTZ,
 
-    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 --------------------------------------------------------------------------------
@@ -828,13 +828,13 @@ CREATE TABLE input_requests (
     status TEXT NOT NULL DEFAULT 'needs_assignment' CHECK (status IN ('needs_assignment', 'assigned', 'accepted', 'resolved')),
 
     assigned_to TEXT,      -- Identifier for agent or user; format TBD
-    assigned_at TIMESTAMP,
+    assigned_at TIMESTAMPTZ,
 
     accepted_by TEXT,      -- Identifier for agent or user; format TBD
-    accepted_at TIMESTAMP,
+    accepted_at TIMESTAMPTZ,
 
     resolved_by TEXT,      -- Identifier for agent or user; format TBD
-    resolved_at TIMESTAMP,
+    resolved_at TIMESTAMPTZ,
 
     resolution TEXT,       -- The actual input/decision provided
     rationale TEXT,        -- Why this input was provided (for decisions)
@@ -847,8 +847,8 @@ CREATE TABLE input_requests (
     -- For variation_selection: stores LLM-computed evaluation scores
     cache JSONB,
 
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_input_requests_status ON input_requests(status);
@@ -876,7 +876,7 @@ CREATE TABLE input_request_messages (
     -- Token usage for agent messages (for budget tracking)
     tokens_used INTEGER,
 
-    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_input_request_messages_input_request ON input_request_messages(input_request_id, created_at);
@@ -900,8 +900,8 @@ CREATE TABLE repositories (
     -- Repository config (repo_type specific)
     config JSONB,
 
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 ALTER TABLE variations
@@ -923,8 +923,8 @@ CREATE TABLE ecosystems (
     -- Ecosystem configuration details (ecosystem_type specific)
     config JSONB,
 
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 ALTER TABLE variations
@@ -942,8 +942,8 @@ CREATE TABLE traffic_allocations (
     id UUID PRIMARY KEY,
     hop_id UUID NOT NULL REFERENCES hops(id),
     bucket_salt TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Individual allocation slices (base from 001_initial)
@@ -969,7 +969,7 @@ ALTER TABLE traffic_allocation_slices ADD CONSTRAINT traffic_allocation_slices_v
     FOREIGN KEY (variation_id) REFERENCES variations(id) ON DELETE CASCADE;
 
 -- Add created_at column
-ALTER TABLE traffic_allocation_slices ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT NOW();
+ALTER TABLE traffic_allocation_slices ADD COLUMN created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 -- Add unique constraints for deterministic bucketing
 ALTER TABLE traffic_allocation_slices ADD CONSTRAINT traffic_allocation_slices_allocation_variation_key
@@ -986,9 +986,9 @@ CREATE TABLE traffic_allocation_envoy_configs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     config_yaml TEXT NOT NULL,
-    generated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    applied_at TIMESTAMP,             -- null until user confirms deployment
-    superseded_at TIMESTAMP           -- set when newer config is applied
+    generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    applied_at TIMESTAMPTZ,             -- null until user confirms deployment
+    superseded_at TIMESTAMPTZ           -- set when newer config is applied
 );
 
 CREATE INDEX idx_traffic_allocation_envoy_configs_project ON traffic_allocation_envoy_configs(project_id);

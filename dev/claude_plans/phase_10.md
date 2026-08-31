@@ -87,23 +87,54 @@ Everything else the ribbon needs — has a strategy, has objectives, has an open
 roadmap review, has Hops, has Variations, has a repository — is derived in one
 query (`GetOnboardingState`) from rows that already exist.
 
+### Postscript: the timestamp bug was schema-wide
+
+The staleness bug below turned out not to be local to this feature. An audit
+found **57 naive `timestamp without time zone` columns** against 26 already
+correct — and a second live instance of the same bug: `sessions.expires_at` was
+compared against `time.Now()` in `auth.go`, so sessions outlived their expiry by
+the host's UTC offset. The sweeper (`DELETE ... WHERE expires_at < NOW()`) was
+correct, because both sides of that comparison were in the database's frame; the
+per-request check was not. The two paths quietly disagreed.
+
+Migration 035 converts the schema. The conversion is **not** blanket, which a
+probe settled before writing it:
+
+| Written | Naive column | `TIMESTAMPTZ` |
+| --- | --- | --- |
+| `time.Now()` | −7h drift | round-trips exactly |
+| a parsed calendar date | renders `2026-11-01` | renders `2026-10-31` |
+
+So instants become `TIMESTAMPTZ` (56 columns) and `key_results.target_date`
+becomes `DATE`, matching `funding_sources.period_start/end`, which were already
+right. Making that column `TIMESTAMPTZ` would have introduced an off-by-one on
+the very date the key result is about.
+
+`internal/db/timestamp_semantics_test.go` guards all of it, including a check
+that no naive timestamp exists anywhere. The guards were verified to fail
+against the old types before being kept — a test that cannot fail is not a
+guard. They also cannot fail on a UTC host, which is how the bug reached
+production in the first place, so the rule in CLAUDE.md says to run them under a
+non-UTC zone.
+
 ### Staleness is judged in SQL, never in Go
 
 A draft whose process dies — a deploy mid-draft — leaves a row saying
 `drafting` that nothing is working on. `draft_started_at` lets that be
 recognised, so the screen offers a retry instead of polling forever.
 
-That comparison happens in SQL, and the reason is a bug this caught during
-testing. The timestamp columns are `timestamp without time zone`: pgx writes a
-`time.Time` as its **local wall clock** but reads one back labelled **UTC**. So
-`time.Now().Sub(*s.DraftStartedAt)` is wrong by the machine's UTC offset — on a
-machine seven hours off UTC, a draft thirty seconds old read as seven hours
-stale, and the page showed "the draft did not finish" while the draft was
-running. The database is the only clock that sees both sides consistently.
+That comparison happens in SQL, and the reason is the bug described above: with
+naive timestamp columns, `time.Now().Sub(*s.DraftStartedAt)` was wrong by the
+machine's UTC offset, so a draft thirty seconds old read as seven hours stale and
+the page said "the draft did not finish" while it was running.
+
+Migration 035 makes the Go form correct too, but the SQL form is kept. It uses
+one clock instead of two, so it does not drift if the app and database hosts
+disagree — a smaller version of the same failure.
 
 `internal/db/onboarding_queries_test.go` covers this against real SQL, and the
-draft tests pass under UTC, US Pacific and Tokyo. A unit test over Go structs
-cannot catch it, which is exactly why the logic does not live there.
+draft tests pass under UTC, US Pacific, Tokyo and Sydney. A unit test over Go
+structs cannot catch it, which is exactly why the logic does not live there.
 
 ### The repository is asked for after approval, not before
 

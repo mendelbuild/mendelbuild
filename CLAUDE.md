@@ -321,6 +321,38 @@ internal/
 schema/migrations/   # SQL migration files
 ```
 
+## Timestamps
+
+**Instants are `TIMESTAMPTZ`. Calendar dates are `DATE`. Never
+`TIMESTAMP`.**
+
+A `timestamp without time zone` stores the digits of a clock face and forgets
+which clock. pgx writes a Go `time.Time` as its *local* wall clock and reads one
+back labelled *UTC*, so a value written and read on a host seven hours off UTC
+comes back seven hours wrong, silently. On a UTC host it is invisible — which is
+why this survived review and staging and only showed up on a laptop. It expired
+sessions late and made a thirty-second-old draft read as hours stale (see
+migration 035).
+
+- **An instant** — `created_at`, `expires_at`, `started_at`, anything you would
+  compare against `time.Now()` — is `TIMESTAMPTZ`.
+- **A calendar date** — `key_results.target_date`, `funding_sources.period_*` —
+  is `DATE`. "100 signups by 1 November" names a day, with no time and no zone.
+  Stored as an instant it becomes midnight UTC and renders as 31 October to any
+  reader west of UTC: an off-by-one on the date the row is about.
+
+`internal/db/timestamp_semantics_test.go` enforces this, including a check that
+no column anywhere is a naive timestamp. Those tests cannot fail on a UTC host,
+so run them under a non-UTC zone when touching timestamp handling:
+
+```bash
+TZ=America/Los_Angeles go test ./internal/db/
+```
+
+Prefer comparing times in SQL against `NOW()` rather than in Go against
+`time.Now()`. Both are correct now, but the SQL form keeps a single clock
+instead of two, so it does not drift if the app and database hosts disagree.
+
 ## Database Migrations
 
 **Never edit existing migrations.** Once a migration is committed, treat it as immutable. To change the schema:
