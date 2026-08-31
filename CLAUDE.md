@@ -54,6 +54,37 @@ When passing JSON data to HTML templates for use in JavaScript:
 
 ## Core Design Principles
 
+### Mendel's Tech Choices Say Nothing About the User's
+
+Mendel is a Go binary and a Postgres database. A user's project is whatever they
+chose, or whatever an infrastructure Hop built for them — MySQL, SQLite, Mongo,
+DynamoDB, or a storage engine they wrote themselves. **Mendel's own stack is not
+evidence about theirs**, and reaching for what is familiar from inside this
+codebase is how the assumption gets in.
+
+This has bitten more than once:
+
+- The live-experiment machinery verified migrations by applying them inside a
+  transaction and rolling back — which works because *Postgres* has
+  transactional DDL. MySQL auto-commits it. The check was not portable and did
+  not say so.
+- Deployment declared `internal_port = 8080` because that is what Mendel serves
+  on, while code generation was told a port was "typically 8080 or 3000". The
+  generated app chose 3000 and was unreachable.
+
+When writing anything that touches the user's project, ask what happens if they
+are on a datastore, language or platform Mendel does not use. Then pick one:
+
+1. **Put the assumption behind an interface**, with the concrete choice as one
+   implementation, so a second is an addition rather than a rewrite.
+2. **Decline explicitly**, naming the thing that is unsupported. "Mendel does
+   not know a safe way to do this against MySQL yet" is a good answer; silently
+   doing something Postgres-shaped is not.
+
+Never the third option of assuming and finding out in production. Declining is a
+designed outcome here, not a failure — the same principle that lets Mendel
+refuse a Variation it cannot run safely.
+
 ### Minimize User Repository Dependencies on Mendel
 
 User repositories should have **minimal to no awareness** of Mendel. This applies to:

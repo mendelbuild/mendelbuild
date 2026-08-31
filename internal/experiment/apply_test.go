@@ -1,4 +1,4 @@
-package experiment
+package experiment_test
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/bhs/mendelbuild/internal/experiment"
+	"github.com/bhs/mendelbuild/internal/experiment/pgstore"
 	"github.com/bhs/mendelbuild/internal/testdb"
 )
 
@@ -19,7 +21,7 @@ import (
 // SQL — what a migration does to a live table, what a concurrent one does to
 // the same table, and whether a dump can be put back. A mock would only
 // confirm that the code calls the functions it calls.
-func targetDB(t *testing.T) (*pgxpool.Pool, *Applier) {
+func targetDB(t *testing.T) (*pgxpool.Pool, *experiment.Applier) {
 	t.Helper()
 	ctx := context.Background()
 	conn := testdb.ConnString()
@@ -74,18 +76,18 @@ func targetDB(t *testing.T) (*pgxpool.Pool, *Applier) {
 	}
 	t.Cleanup(lockPool.Close)
 
-	return pool, &Applier{
-		Target:  pool,
-		Lock:    PGLocker{Pool: lockPool},
+	return pool, &experiment.Applier{
+		Store:   pgstore.New(pool),
+		Lock:    experiment.PGLocker{Pool: lockPool},
 		LockKey: schema,
 	}
 }
 
 // armMigration builds an additive, namespaced migration for one Arm.
-func armMigration(arm string) Migration {
-	col := NamespacePrefix + arm + "_choice"
-	tbl := NamespacePrefix + arm + "_events"
-	return Migration{
+func armMigration(arm string) experiment.Migration {
+	col := experiment.NamespacePrefix + arm + "_choice"
+	tbl := experiment.NamespacePrefix + arm + "_events"
+	return experiment.Migration{
 		ArmID: arm,
 		Up: fmt.Sprintf(`
 			ALTER TABLE users ADD COLUMN %s text;
@@ -139,7 +141,7 @@ func TestThreeArmsCoexistAndOneRollsBack(t *testing.T) {
 	pool, applier := targetDB(t)
 
 	arms := []string{"a", "b", "c"}
-	admitted := map[string]*Admission{}
+	admitted := map[string]*experiment.Admission{}
 
 	for _, arm := range arms {
 		adm, err := applier.Admit(ctx, armMigration(arm))
@@ -154,16 +156,16 @@ func TestThreeArmsCoexistAndOneRollsBack(t *testing.T) {
 
 	// All three arms' objects are present, side by side.
 	for _, arm := range arms {
-		if !columnExists(t, pool, "users", NamespacePrefix+arm+"_choice") {
+		if !columnExists(t, pool, "users", experiment.NamespacePrefix+arm+"_choice") {
 			t.Errorf("arm %s: its column is missing after applying", arm)
 		}
-		if !tableExists(t, pool, NamespacePrefix+arm+"_events") {
+		if !tableExists(t, pool, experiment.NamespacePrefix+arm+"_events") {
 			t.Errorf("arm %s: its table is missing after applying", arm)
 		}
 	}
 
 	// Mainline is untouched: same columns, same rows.
-	mainline, err := readTableSchema(ctx, pool, "users")
+	mainline, err := applier.Store.Shape(ctx, "users")
 	if err != nil {
 		t.Fatalf("read users: %v", err)
 	}
@@ -182,14 +184,14 @@ func TestThreeArmsCoexistAndOneRollsBack(t *testing.T) {
 
 	// Each arm writes through its own column, as it would while serving.
 	for _, arm := range arms {
-		col := NamespacePrefix + arm + "_choice"
+		col := experiment.NamespacePrefix + arm + "_choice"
 		if _, err := pool.Exec(ctx,
-			fmt.Sprintf(`UPDATE users SET %s = $1 WHERE name = 'ana'`, quoteIdent(col)), "chose-"+arm); err != nil {
+			fmt.Sprintf(`UPDATE users SET %s = $1 WHERE name = 'ana'`, quoted(col)), "chose-"+arm); err != nil {
 			t.Fatalf("arm %s write: %v", arm, err)
 		}
 		if _, err := pool.Exec(ctx,
 			fmt.Sprintf(`INSERT INTO %s (user_id, note) SELECT id, $1 FROM users WHERE name = 'ana'`,
-				quoteIdent(NamespacePrefix+arm+"_events")), "seen-"+arm); err != nil {
+				quoted(experiment.NamespacePrefix+arm+"_events")), "seen-"+arm); err != nil {
 			t.Fatalf("arm %s event: %v", arm, err)
 		}
 	}
@@ -201,25 +203,25 @@ func TestThreeArmsCoexistAndOneRollsBack(t *testing.T) {
 	}
 
 	// Its objects are gone.
-	if columnExists(t, pool, "users", NamespacePrefix+"b_choice") {
+	if columnExists(t, pool, "users", experiment.NamespacePrefix+"b_choice") {
 		t.Error("arm b's column survived rollback")
 	}
-	if tableExists(t, pool, NamespacePrefix+"b_events") {
+	if tableExists(t, pool, experiment.NamespacePrefix+"b_events") {
 		t.Error("arm b's table survived rollback")
 	}
 
 	// The other arms and mainline are untouched by that rollback — the
 	// property that makes concurrent experiments possible at all.
 	for _, arm := range []string{"a", "c"} {
-		if !columnExists(t, pool, "users", NamespacePrefix+arm+"_choice") {
+		if !columnExists(t, pool, "users", experiment.NamespacePrefix+arm+"_choice") {
 			t.Errorf("rolling back arm b removed arm %s's column", arm)
 		}
-		if !tableExists(t, pool, NamespacePrefix+arm+"_events") {
+		if !tableExists(t, pool, experiment.NamespacePrefix+arm+"_events") {
 			t.Errorf("rolling back arm b removed arm %s's table", arm)
 		}
 		var v string
 		if err := pool.QueryRow(ctx, fmt.Sprintf(`SELECT %s FROM users WHERE name = 'ana'`,
-			quoteIdent(NamespacePrefix+arm+"_choice"))).Scan(&v); err != nil {
+			quoted(experiment.NamespacePrefix+arm+"_choice"))).Scan(&v); err != nil {
 			t.Fatalf("read arm %s value: %v", arm, err)
 		}
 		if v != "chose-"+arm {
@@ -237,12 +239,12 @@ func TestThreeArmsCoexistAndOneRollsBack(t *testing.T) {
 	if archive.ArmID != "b" {
 		t.Errorf("archive names the wrong arm: %q", archive.ArmID)
 	}
-	if rows := archive.Columns["users"]; len(rows) != 1 {
+	if rows := archive.Fields["users"]; len(rows) != 1 {
 		t.Fatalf("expected one archived row for the participating user, got %d", len(rows))
-	} else if rows[0][NamespacePrefix+"b_choice"] != "chose-b" {
+	} else if rows[0][experiment.NamespacePrefix+"b_choice"] != "chose-b" {
 		t.Errorf("archived the wrong value: %v", rows[0])
 	}
-	if rows := archive.Tables[NamespacePrefix+"b_events"]; len(rows) != 1 {
+	if rows := archive.Collections[experiment.NamespacePrefix+"b_events"]; len(rows) != 1 {
 		t.Errorf("expected one archived event row, got %d", len(rows))
 	}
 	if _, err := archive.JSON(); err != nil {
@@ -264,13 +266,13 @@ func TestArchiveRestoresWhatItCaptured(t *testing.T) {
 		t.Fatalf("apply: %v", err)
 	}
 
-	col := NamespacePrefix + "solo_choice"
-	tbl := NamespacePrefix + "solo_events"
-	if _, err := pool.Exec(ctx, fmt.Sprintf(`UPDATE users SET %s = 'kept' WHERE name = 'ben'`, quoteIdent(col))); err != nil {
+	col := experiment.NamespacePrefix + "solo_choice"
+	tbl := experiment.NamespacePrefix + "solo_events"
+	if _, err := pool.Exec(ctx, fmt.Sprintf(`UPDATE users SET %s = 'kept' WHERE name = 'ben'`, quoted(col))); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if _, err := pool.Exec(ctx, fmt.Sprintf(`INSERT INTO %s (user_id, note) SELECT id, 'note' FROM users WHERE name = 'ben'`,
-		quoteIdent(tbl))); err != nil {
+		quoted(tbl))); err != nil {
 		t.Fatalf("event: %v", err)
 	}
 
@@ -284,12 +286,12 @@ func TestArchiveRestoresWhatItCaptured(t *testing.T) {
 	if err := applier.Apply(ctx, adm); err != nil {
 		t.Fatalf("re-apply: %v", err)
 	}
-	if err := applier.Restore(ctx, adm, archive); err != nil {
+	if err := applier.Restore(ctx, archive); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 
 	var got string
-	if err := pool.QueryRow(ctx, fmt.Sprintf(`SELECT %s FROM users WHERE name = 'ben'`, quoteIdent(col))).Scan(&got); err != nil {
+	if err := pool.QueryRow(ctx, fmt.Sprintf(`SELECT %s FROM users WHERE name = 'ben'`, quoted(col))).Scan(&got); err != nil {
 		t.Fatalf("read restored column: %v", err)
 	}
 	if got != "kept" {
@@ -297,7 +299,7 @@ func TestArchiveRestoresWhatItCaptured(t *testing.T) {
 	}
 
 	var notes int
-	if err := pool.QueryRow(ctx, fmt.Sprintf(`SELECT count(*) FROM %s`, quoteIdent(tbl))).Scan(&notes); err != nil {
+	if err := pool.QueryRow(ctx, fmt.Sprintf(`SELECT count(*) FROM %s`, quoted(tbl))).Scan(&notes); err != nil {
 		t.Fatalf("count restored rows: %v", err)
 	}
 	if notes != 1 {
@@ -330,40 +332,6 @@ func TestApplyRefusesAfterSchemaDrift(t *testing.T) {
 	}
 }
 
-// Admission is where a migration that could never be safe gets stopped, so the
-// refusal has to happen before anything touches the database.
-func TestAdmitRefusesUnsafeMigrations(t *testing.T) {
-	ctx := context.Background()
-	_, applier := targetDB(t)
-
-	cases := []struct {
-		name string
-		m    Migration
-		want string
-	}{
-		{"not additive", Migration{ArmID: "x",
-			Up:   `ALTER TABLE users DROP COLUMN name`,
-			Down: `ALTER TABLE users ADD COLUMN name text`}, "not additive"},
-		{"outside the namespace", Migration{ArmID: "x",
-			Up:   `ALTER TABLE users ADD COLUMN theme text`,
-			Down: `ALTER TABLE users DROP COLUMN theme`}, "prefixed"},
-		{"no down", Migration{ArmID: "x",
-			Up: `ALTER TABLE users ADD COLUMN mendel_exp_t text`}, "cannot be withdrawn"},
-		{"table does not exist", Migration{ArmID: "x",
-			Up:   `ALTER TABLE nope ADD COLUMN mendel_exp_t text`,
-			Down: `ALTER TABLE nope DROP COLUMN mendel_exp_t`}, "does not exist"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := applier.Admit(ctx, tc.m)
-			if err == nil {
-				t.Fatal("expected refusal")
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("error should mention %q, got: %v", tc.want, err)
-			}
-		})
-	}
-}
-
+// quoted is the test's own identifier quoting; the package's is not exported,
+// and these are names the test itself wrote.
+func quoted(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }

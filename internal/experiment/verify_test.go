@@ -1,16 +1,18 @@
-package experiment
+package experiment_test
 
 import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/bhs/mendelbuild/internal/experiment"
 )
 
-// The reason the affirmative judgment is empirical rather than textual: this
-// migration only adds a table, and the deny-list and the patterns both pass it,
-// but applying it changes how mainline's own DELETEs behave. Reading SQL cannot
-// see that. Reading the catalogue can.
-func TestVerifyCatchesBehaviourTextLooksAdditive(t *testing.T) {
+// Why the affirmative judgment is empirical rather than textual: this migration
+// only creates a table, and both the deny-list and any reading of the SQL pass
+// it — but applying it changes how mainline's own DELETEs behave. Reading SQL
+// cannot see that. Reading the catalogue can.
+func TestVerifySeesWhatTextCannot(t *testing.T) {
 	ctx := context.Background()
 	pool, applier := targetDB(t)
 
@@ -18,65 +20,50 @@ func TestVerifyCatchesBehaviourTextLooksAdditive(t *testing.T) {
 		t.Fatalf("seed orders: %v", err)
 	}
 
-	m := Migration{
-		ArmID: "cascade",
-		Up: `CREATE TABLE mendel_exp_receipts (
-			id      serial PRIMARY KEY,
-			user_id uuid REFERENCES users(id) ON DELETE CASCADE
-		)`,
-		Down: `DROP TABLE mendel_exp_receipts`,
+	up := `CREATE TABLE mendel_exp_receipts (
+		id      serial PRIMARY KEY,
+		user_id uuid REFERENCES users(id) ON DELETE CASCADE
+	)`
+
+	if reasons := applier.Store.Forbidden(up); len(reasons) != 0 {
+		t.Fatalf("the deny-list should not object to a CREATE TABLE: %v", reasons)
 	}
 
-	// Nothing textual objects: it creates one namespaced table.
-	if reasons := Forbidden(m.Up); len(reasons) != 0 {
-		t.Fatalf("deny-list should not object to a CREATE TABLE: %v", reasons)
-	}
-	v := Classify(m.Up)
-	if !v.Additive {
-		t.Fatalf("patterns should not object either: %v", v.Reasons)
-	}
-
-	// And the catalogue records the new constraint, cascading deletes from a
-	// table mainline owns. It is additive in the catalogue's terms, which is
-	// the honest answer — so what this test pins is that the constraint is
-	// *seen*, and therefore available to the reviewing agent and the user.
-	delta, err := applier.VerifyAdditive(ctx, m)
+	delta, err := applier.Store.VerifySpeculatively(ctx, up)
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	var sawCascade bool
-	for _, added := range delta.Added {
-		if strings.Contains(added, "constraint") && strings.Contains(added, "mendel_exp_receipts") {
-			sawCascade = true
+
+	var sawConstraint bool
+	for _, o := range delta.Added {
+		if o.Kind == experiment.ObjectConstraint && o.Collection == "mendel_exp_receipts" {
+			sawConstraint = true
 		}
 	}
-	if !sawCascade {
-		t.Errorf("the new foreign key should appear in the delta, got %v", delta.Added)
+	if !sawConstraint {
+		t.Errorf("the cascading foreign key should appear in the delta, got %v", delta.Added)
 	}
 }
 
-// Verification must leave nothing behind: it runs the migration to find out
-// what it does, and rolls back whatever that was.
+// Verification runs the migration to find out what it does, and undoes
+// whatever that was.
 func TestVerifyLeavesNothingBehind(t *testing.T) {
 	ctx := context.Background()
 	pool, applier := targetDB(t)
 
-	m := armMigration("probe")
-	if _, err := applier.VerifyAdditive(ctx, m); err != nil {
+	if _, err := applier.Store.VerifySpeculatively(ctx, armMigration("probe").Up); err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-
-	if columnExists(t, pool, "users", NamespacePrefix+"probe_choice") {
+	if columnExists(t, pool, "users", experiment.NamespacePrefix+"probe_choice") {
 		t.Error("verification committed its column")
 	}
-	if tableExists(t, pool, NamespacePrefix+"probe_events") {
+	if tableExists(t, pool, experiment.NamespacePrefix+"probe_events") {
 		t.Error("verification committed its table")
 	}
 }
 
-// A migration that removes something must be caught by what it did, not by
-// what it looked like — this is the layer that has to hold when a statement
-// slips past the deny-list.
+// The layer that has to hold when a statement slips past the deny-list: a
+// change is judged by what it did, not by what it looked like.
 func TestVerifyRefusesRemovalAndChange(t *testing.T) {
 	ctx := context.Background()
 	pool, applier := targetDB(t)
@@ -86,10 +73,9 @@ func TestVerifyRefusesRemovalAndChange(t *testing.T) {
 	}
 
 	t.Run("removal", func(t *testing.T) {
-		// Phrased so the deny-list's ^DROP anchor does not match, which is
+		// Leading whitespace so the deny-list's ^DROP anchor does not match —
 		// exactly the kind of gap the empirical layer exists to close.
-		delta, err := applier.VerifyAdditive(ctx, Migration{
-			Up: "\n\t\t\tALTER TABLE users DROP nickname"})
+		delta, err := applier.Store.VerifySpeculatively(ctx, "\n\t\tALTER TABLE users DROP nickname")
 		if err != nil {
 			t.Fatalf("verify: %v", err)
 		}
@@ -102,8 +88,7 @@ func TestVerifyRefusesRemovalAndChange(t *testing.T) {
 	})
 
 	t.Run("type change", func(t *testing.T) {
-		delta, err := applier.VerifyAdditive(ctx, Migration{
-			Up: `ALTER TABLE users ALTER COLUMN nickname TYPE varchar(10)`})
+		delta, err := applier.Store.VerifySpeculatively(ctx, `ALTER TABLE users ALTER COLUMN nickname TYPE varchar(10)`)
 		if err != nil {
 			t.Fatalf("verify: %v", err)
 		}
@@ -116,34 +101,33 @@ func TestVerifyRefusesRemovalAndChange(t *testing.T) {
 	})
 }
 
-// CREATE INDEX CONCURRENTLY cannot run inside a transaction, so verification
-// strips it. The index that results is the same one, which is what makes that
+// CREATE INDEX CONCURRENTLY cannot run inside a transaction, so the adapter
+// strips it for verification. The same index results, which is what makes the
 // substitution honest.
 func TestVerifyHandlesConcurrentIndexes(t *testing.T) {
 	ctx := context.Background()
 	_, applier := targetDB(t)
 
-	delta, err := applier.VerifyAdditive(ctx, Migration{
-		Up: `CREATE INDEX CONCURRENTLY mendel_exp_users_name ON users (name)`})
+	delta, err := applier.Store.VerifySpeculatively(ctx,
+		`CREATE INDEX CONCURRENTLY mendel_exp_users_name ON users (name)`)
 	if err != nil {
 		t.Fatalf("a concurrent index build should verify: %v", err)
 	}
 	if !delta.PurelyAdditive() || len(delta.Added) != 1 {
 		t.Fatalf("expected exactly one addition, got added=%v removed=%v", delta.Added, delta.Removed)
 	}
-	if !strings.Contains(delta.Added[0], "mendel_exp_users_name") {
+	if delta.Added[0].Name != "mendel_exp_users_name" {
 		t.Errorf("the index should be the addition, got %v", delta.Added)
 	}
 }
 
-// A migration that does not apply is refused here rather than at deploy time,
+// A migration that does not apply is reported here rather than at deploy time,
 // when it would take a live table with it.
 func TestVerifyReportsMigrationsThatDoNotApply(t *testing.T) {
 	ctx := context.Background()
 	_, applier := targetDB(t)
 
-	_, err := applier.VerifyAdditive(ctx, Migration{
-		Up: `ALTER TABLE users ADD COLUMN mendel_exp_x nonexistent_type`})
+	_, err := applier.Store.VerifySpeculatively(ctx, `ALTER TABLE users ADD COLUMN mendel_exp_x nonexistent_type`)
 	if err == nil {
 		t.Fatal("expected the broken migration to be reported")
 	}
@@ -152,15 +136,15 @@ func TestVerifyReportsMigrationsThatDoNotApply(t *testing.T) {
 	}
 }
 
-// Admission runs the empirical check, so a migration that is textually
-// innocuous and behaviourally destructive is refused there too.
+// Admission runs the empirical check, so a change that is textually innocuous
+// and behaviourally destructive is refused there too.
 func TestAdmitRefusesOnEmpiricalEvidence(t *testing.T) {
 	ctx := context.Background()
 	_, applier := targetDB(t)
 
-	_, err := applier.Admit(ctx, Migration{
+	_, err := applier.Admit(ctx, experiment.Migration{
 		ArmID: "sneaky",
-		Up:    "\n\t\t\tALTER TABLE users DROP name",
+		Up:    "\n\t\tALTER TABLE users DROP name",
 		Down:  `ALTER TABLE users ADD COLUMN name text`,
 	})
 	if err == nil {
@@ -177,19 +161,15 @@ func TestAdmitRefusesEmptyMigrations(t *testing.T) {
 	ctx := context.Background()
 	_, applier := targetDB(t)
 
-	_, err := applier.Admit(ctx, Migration{
-		ArmID: "noop",
-		Up:    `SELECT 1`,
-		Down:  `SELECT 1`,
-	})
+	_, err := applier.Admit(ctx, experiment.Migration{ArmID: "noop", Up: `SELECT 1`, Down: `SELECT 1`})
 	if err == nil || !strings.Contains(err.Error(), "changes nothing") {
 		t.Errorf("expected a refusal naming the empty change, got: %v", err)
 	}
 }
 
-// The primary key requirement is checked at admission, when refusing is cheap,
-// rather than at rollback, when the data is already on its way out.
-func TestAdmitRefusesTableWithoutPrimaryKey(t *testing.T) {
+// Checked at admission, when refusing is cheap, rather than at rollback, when
+// the data is already on its way out.
+func TestAdmitRefusesCollectionWithoutIdentity(t *testing.T) {
 	ctx := context.Background()
 	pool, applier := targetDB(t)
 
@@ -197,7 +177,7 @@ func TestAdmitRefusesTableWithoutPrimaryKey(t *testing.T) {
 		t.Fatalf("seed keyless table: %v", err)
 	}
 
-	_, err := applier.Admit(ctx, Migration{
+	_, err := applier.Admit(ctx, experiment.Migration{
 		ArmID: "keyless",
 		Up:    `ALTER TABLE events ADD COLUMN mendel_exp_tag text`,
 		Down:  `ALTER TABLE events DROP COLUMN mendel_exp_tag`,
@@ -207,5 +187,52 @@ func TestAdmitRefusesTableWithoutPrimaryKey(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no primary key") || !strings.Contains(err.Error(), "restorable") {
 		t.Errorf("the reason should explain that the data could not be put back, got: %v", err)
+	}
+}
+
+// An object outside the experiment namespace is caught from the catalogue
+// rather than from parsing, so it is caught however the migration was phrased.
+func TestAdmitRefusesUnnamespacedObjects(t *testing.T) {
+	ctx := context.Background()
+	_, applier := targetDB(t)
+
+	_, err := applier.Admit(ctx, experiment.Migration{
+		ArmID: "bare",
+		Up:    `ALTER TABLE users ADD COLUMN preferred_theme text`,
+		Down:  `ALTER TABLE users DROP COLUMN preferred_theme`,
+	})
+	if err == nil {
+		t.Fatal("expected refusal")
+	}
+	if !strings.Contains(err.Error(), experiment.NamespacePrefix) {
+		t.Errorf("the reason should name the required prefix, got: %v", err)
+	}
+}
+
+// unsupportedStore stands for a datastore that cannot verify speculatively —
+// MySQL's position, since it commits DDL immediately.
+type unsupportedStore struct{ experiment.Datastore }
+
+func (unsupportedStore) Kind() string { return "mysql" }
+func (unsupportedStore) Capabilities() experiment.Capabilities {
+	return experiment.Capabilities{SpeculativeApply: false, StructuralDiff: true}
+}
+
+// Mendel runs on Postgres; its users need not. A datastore that cannot support
+// an experiment safely is declined by name, rather than having something
+// Postgres-shaped done to it.
+func TestUnsupportedDatastoreIsDeclinedByName(t *testing.T) {
+	applier := &experiment.Applier{Store: unsupportedStore{}}
+
+	_, err := applier.Admit(context.Background(), experiment.Migration{
+		ArmID: "x", Up: `ALTER TABLE users ADD COLUMN mendel_exp_a text`, Down: `x`})
+	if err == nil {
+		t.Fatal("expected the unsupported datastore to be declined")
+	}
+	if !strings.Contains(err.Error(), "mysql") {
+		t.Errorf("the refusal should name the datastore, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "undo it without a trace") {
+		t.Errorf("the refusal should explain what is missing, got: %v", err)
 	}
 }
