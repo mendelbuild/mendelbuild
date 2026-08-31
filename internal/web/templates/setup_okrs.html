@@ -1,16 +1,80 @@
 {{define "page-content"}}
 {{with .View}}
+{{/* Until the draft lands, the strategy still carries its placeholder name and
+     there is nothing to say Mendel understood. Lead with the project instead of
+     announcing a draft that does not exist yet. */}}
+{{if or .Drafting .DraftFailed}}
+<h1>{{.Project.Name}}</h1>
+<p class="setup-lede">
+    {{if .Drafting}}Mendel is drafting the objectives for this project. Nothing
+    is planned or built until you have seen them and approved them.
+    {{else}}Setting up this project. Mendel needs objectives before it can plan
+    any work.{{end}}
+</p>
+{{else}}
 <h1>{{.Strategy.Name}}</h1>
 <p class="setup-lede">
     Here is what Mendel understood you to be asking for. Edit anything that is
     wrong, then approve it &mdash; nothing gets planned or built until you do.
 </p>
+{{end}}
 
 {{template "lifecycle-ribbon" .Ribbon}}
 
 {{if .Error}}
 <div class="form-error">{{.Error}}</div>
 {{end}}
+
+{{if .Drafting}}
+{{/* The draft runs in the background, because it takes longer than a request
+     can safely be held open. Nothing here is interactive: the page re-checks
+     itself and replaces this with the draft as soon as there is one. */}}
+<div class="card" style="text-align: center; padding: 44px 20px;">
+    <div class="setup-spinner" aria-hidden="true"></div>
+    <h2 style="margin: 18px 0 8px 0;">Reading your brief</h2>
+    <p style="color: #666; margin: 0 auto; max-width: 46ch;">
+        Mendel is turning what you wrote into objectives and key results. This
+        usually takes under a minute. You can leave this page and come back to
+        it &mdash; the draft keeps going without you.
+    </p>
+</div>
+
+<noscript>
+    <p class="empty" style="text-align: center;">
+        This page refreshes itself every {{.PollSeconds}} seconds.
+    </p>
+</noscript>
+<script>
+// Poll rather than push: there is one thing to wait for, it takes well under a
+// minute, and a reload is simpler than a channel held open through the ingress.
+setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
+</script>
+
+{{else if .DraftFailed}}
+<div class="card">
+    <h2 style="margin-top: 0;">Mendel could not draft your objectives</h2>
+    <p style="color: #555;">{{.DraftError}}</p>
+    <p style="color: #777; font-size: 0.9em; max-width: 62ch;">
+        Your brief is saved, so trying again costs nothing but the time. If it
+        keeps failing, you can write the objectives yourself instead &mdash;
+        the rest of the setup works the same either way.
+    </p>
+    <div style="display: flex; gap: 12px; align-items: center; margin-top: 18px;">
+        <form method="POST" action="/p/{{$.ProjectID}}/setup/okrs/redraft" data-redraft-form style="margin: 0;">
+            <button type="submit" class="btn btn-primary" data-submit>Try again</button>
+        </form>
+        <a href="/p/{{$.ProjectID}}/okr" class="btn btn-secondary">Write them myself</a>
+    </div>
+</div>
+
+{{if .Project.Brief}}
+<div class="card">
+    <h2 style="margin-top: 0; font-size: 1em; color: #888; text-transform: uppercase; letter-spacing: 0.06em;">Your brief</h2>
+    <p style="margin: 0; white-space: pre-wrap;">{{derefString .Project.Brief}}</p>
+</div>
+{{end}}
+
+{{else}}
 
 {{if .Notes}}
 <div class="draft-notes">
@@ -152,5 +216,7 @@
     });
 })();
 </script>
+{{end}}{{/* end of the drafting / failed / ready branch */}}
+
 {{end}}
 {{end}}

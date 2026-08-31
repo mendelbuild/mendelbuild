@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 )
 
 const strategistSystemPrompt = `You turn a plain-English project brief into a strategy Mendel can plan against: a small set of Objectives, each measured by Key Results with dates.
@@ -43,6 +45,20 @@ Beyond that:
 - If the feedback conflicts with something you believe matters, do what they asked and record your concern in open_questions rather than quietly ignoring them.
 - If the feedback is too vague to act on, say what you would need to know in open_questions instead of guessing at length.`
 
+// errUnusableDraft is a response that satisfied the schema but not the point.
+// Two shapes have been seen in practice: every field present and blank, and a
+// half-finished generation -- one objective, no strategy name, and JSON
+// fragments leaking into a string value. Both are retryable; a transport or
+// parsing failure is not.
+var errUnusableDraft = errors.New("the model returned an unusable draft")
+
+// emptyRetryNudge is appended on the second attempt. Kept separate from the
+// first prompt so an ordinary draft is not shaped by an instruction written for
+// a failure that usually does not happen.
+const emptyRetryNudge = `Your previous attempt came back as a stub -- blank fields, or the literal word "placeholder" where the content should have been. That is not a draft, and there is a person waiting on it to start their project.
+
+Write the actual objectives this time, in real words about this specific project. If the brief genuinely leaves something open, say so in assumptions or open_questions; that is never a reason to return a stub.`
+
 // Strategist drafts a strategy -- objectives, key results, and a budget label --
 // from the plain-English brief a user writes when creating a project.
 type Strategist struct {
@@ -66,13 +82,13 @@ func (s *Strategist) DraftStrategy(ctx context.Context, brief StrategyBrief) (*D
 
 %s
 
-Fill in every field. Return 2 to 4 objectives, each with 2 to 3 key results, that
-the person who wrote this brief would recognize as what they asked for. An empty
-objectives list is not an answer: a brief this size always supports a first pass,
-and anything the brief left open belongs in assumptions and open_questions, not
-in a blank response.`, string(briefJSON))
+Write 2 to 4 objectives for this project, each with 2 to 3 key results, that the
+person who wrote the brief would recognize as what they asked for. Write the real
+thing: this goes straight to them for approval, and it is the plan their money
+gets spent against. Where the brief left something open, say what you assumed --
+that belongs in assumptions and open_questions.`, string(briefJSON))
 
-	return s.send(ctx, strategistSystemPrompt, userMessage)
+	return s.sendWithRetry(ctx, strategistSystemPrompt, userMessage)
 }
 
 // ReviseStrategy redrafts a strategy from the user's feedback on the previous
@@ -96,7 +112,34 @@ func (s *Strategist) ReviseStrategy(ctx context.Context, brief StrategyBrief, cu
 
 Act on the feedback and leave alone what it did not touch.`, string(payloadJSON))
 
-	return s.send(ctx, strategistReviseSystemPrompt, userMessage)
+	return s.sendWithRetry(ctx, strategistReviseSystemPrompt, userMessage)
+}
+
+// sendWithRetry makes one more attempt when the model returns an empty draft.
+//
+// That happens intermittently -- the response satisfies the schema with every
+// field blank -- and it is worth a second try rather than a dead end, because
+// the user is sitting in front of a spinner and the alternative is asking them
+// to click a retry button that does exactly this.
+//
+// Only an empty draft is retried. A transport error or a malformed response is
+// reported as-is; retrying those would just double the wait before the same
+// failure. Spend from both attempts is summed, because both were paid for.
+func (s *Strategist) sendWithRetry(ctx context.Context, system, userMessage string) (*DraftedStrategy, Spend, error) {
+	drafted, spend, err := s.send(ctx, system, userMessage)
+	if !errors.Is(err, errUnusableDraft) {
+		return drafted, spend, err
+	}
+
+	retried, retrySpend, retryErr := s.send(ctx, system, userMessage+"\n\n"+emptyRetryNudge)
+	spend.Tokens.Add(retrySpend.Tokens)
+	if spend.Model == "" {
+		spend.Model = retrySpend.Model
+	}
+	if retryErr != nil {
+		return nil, spend, retryErr
+	}
+	return retried, spend, nil
 }
 
 func (s *Strategist) send(ctx context.Context, system, userMessage string) (*DraftedStrategy, Spend, error) {
@@ -119,21 +162,48 @@ func (s *Strategist) send(ctx context.Context, system, userMessage string) (*Dra
 		return nil, resp.Spend(), fmt.Errorf("parse response: %w (content: %s)", err, content)
 	}
 	drafted := wrapped.Strategy
-	if isEmptyDraft(drafted) {
+	if len(drafted.Objectives) == 0 {
 		var bare DraftedStrategy
 		if err := json.Unmarshal([]byte(content), &bare); err == nil {
 			drafted = bare
 		}
 	}
-	if isEmptyDraft(drafted) {
-		return nil, resp.Spend(), fmt.Errorf("the model returned no objectives (stop reason %q, content: %s)", resp.StopReason, content)
+	if defect := draftDefect(drafted); defect != "" {
+		return nil, resp.Spend(), wrapUnusableDraft(defect, resp.StopReason, content)
 	}
 
 	return &drafted, resp.Spend(), nil
 }
 
-// isEmptyDraft reports whether a parse produced nothing usable. A strategy with
-// no objectives is not a strategy, whatever else came back with it.
-func isEmptyDraft(d DraftedStrategy) bool {
-	return len(d.Objectives) == 0
+// wrapUnusableDraft attaches the diagnostic detail to the retryable sentinel.
+// The reason and the raw content both go in because the alternative --
+// "drafting failed" -- tells whoever reads the log nothing about why.
+func wrapUnusableDraft(reason, stopReason, content string) error {
+	return fmt.Errorf("%w: %s (stop reason %q, content: %s)",
+		errUnusableDraft, reason, stopReason, content)
+}
+
+// draftDefect names what is wrong with a draft, or "" if it is usable.
+//
+// Each of these is something the prompt asks for unconditionally, so its
+// absence means the generation went wrong rather than that the brief was thin.
+// Catching them here costs one retry; letting them through puts a review screen
+// titled "Initial strategy" in front of someone, with one vague objective on it
+// and nothing to say Mendel got it wrong.
+func draftDefect(d DraftedStrategy) string {
+	if len(d.Objectives) == 0 {
+		return "no objectives"
+	}
+	if strings.TrimSpace(d.StrategyName) == "" {
+		return "no strategy name"
+	}
+	for i, obj := range d.Objectives {
+		if strings.TrimSpace(obj.Description) == "" {
+			return fmt.Sprintf("objective %d has no description", i+1)
+		}
+		if len(obj.KeyResults) == 0 {
+			return fmt.Sprintf("objective %d has no key results", i+1)
+		}
+	}
+	return ""
 }

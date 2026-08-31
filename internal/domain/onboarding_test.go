@@ -100,3 +100,33 @@ func TestOnboardingMentionsRepositoryWhenMissing(t *testing.T) {
 		t.Error("with a repository connected, the next action must not ask for one")
 	}
 }
+
+// TestOnboardingDraftStates: a running draft is Mendel's move and a failed one
+// is yours. Before these existed the ribbon called both "this project has no
+// objectives yet", which is true of both and useful for neither.
+func TestOnboardingDraftStates(t *testing.T) {
+	drafting := OnboardingState{HasStrategy: true, Drafting: true}
+	r := OnboardingLifecycle(drafting)
+	if r.WaitingOn != ActorMendel {
+		t.Errorf("a running draft is Mendel's move, got %q", r.WaitingOn)
+	}
+	if r.Tracks[0].Current().Key != OnboardingStageOKRs {
+		t.Error("a running draft sits at the objectives stage")
+	}
+
+	failed := OnboardingState{HasStrategy: true, DraftFailed: true}
+	r = OnboardingLifecycle(failed)
+	if r.WaitingOn != ActorYou {
+		t.Errorf("a failed draft is your move, got %q", r.WaitingOn)
+	}
+	if r.Tone != ToneFailure {
+		t.Errorf("a failed draft should read as a failure, got tone %q", r.Tone)
+	}
+
+	// A redraft of an existing draft is still Mendel working, not a draft
+	// sitting ready for approval.
+	redrafting := OnboardingState{HasStrategy: true, HasDraftOKRs: true, Drafting: true}
+	if OnboardingLifecycle(redrafting).WaitingOn != ActorMendel {
+		t.Error("a redraft over existing objectives is still Mendel's move")
+	}
+}

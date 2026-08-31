@@ -103,12 +103,57 @@ type Strategy struct {
 	// strategies that were never drafted, such as those loaded from JSON.
 	DraftNotes json.RawMessage `json:"draft_notes,omitempty"`
 
+	// Where the background draft is up to. Drafting takes 30-45 seconds, longer
+	// than an HTTP request may safely block, so it runs detached and the review
+	// screen polls these.
+	DraftStatus    StrategyDraftStatus `json:"draft_status"`
+	DraftError     *string             `json:"draft_error,omitempty"`
+	DraftStartedAt *time.Time          `json:"draft_started_at,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// StrategyDraftStatus is where a strategy's background draft stands.
+type StrategyDraftStatus string
+
+const (
+	StrategyDraftDrafting StrategyDraftStatus = "drafting"
+	StrategyDraftReady    StrategyDraftStatus = "ready"
+	StrategyDraftFailed   StrategyDraftStatus = "failed"
+)
+
+// DraftStaleAfter is how long a draft may sit in 'drafting' before it is
+// presumed dead. Comfortably longer than the drafting call's own timeout, so
+// only a draft whose process actually went away trips it -- a deploy or a crash
+// mid-draft leaves the row claiming work that no goroutine is doing any more.
+//
+// Whether a draft has passed this point is decided in SQL, never here. The
+// timestamp columns are `timestamp without time zone`: pgx writes a time.Time
+// as its local wall clock and reads one back labelled UTC, so comparing a
+// scanned timestamp against time.Now() is wrong by the machine's UTC offset --
+// which made a 36-second-old draft look hours stale on a machine seven hours
+// off UTC. The database is the only clock that sees both sides consistently.
+const DraftStaleAfter = 6 * time.Minute
+
 // OKRsApproved reports whether a human has signed off on this Strategy's OKRs.
 func (s *Strategy) OKRsApproved() bool { return s.OKRsApprovedAt != nil }
+
+// DraftErrorText is what to show the user about a failed draft.
+//
+// A draft that was lost with its process has no recorded error, so it needs its
+// own explanation rather than a blank one. The caller passes whether the
+// database judged it stale; see DraftStaleAfter for why that judgement is not
+// made here.
+func (s *Strategy) DraftErrorText(stale bool) string {
+	if s.DraftError != nil && *s.DraftError != "" {
+		return *s.DraftError
+	}
+	if stale {
+		return "The draft stopped without finishing — most likely Mendel restarted while it was running."
+	}
+	return "Mendel could not draft objectives from your brief."
+}
 
 // StrategyDraftNotes is the drafting agent's commentary on a drafted strategy.
 //

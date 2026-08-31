@@ -457,3 +457,57 @@ func TestSetupScreenEditsRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// TestSetupScreenDraftStates renders the two states the review screen shows
+// while there is no draft to review. The important guarantee is negative: while
+// a draft is running or has failed, the approve form must not be on the page.
+// Rendering it would let someone approve a strategy with no objectives, or with
+// the leftovers of a previous attempt.
+func TestSetupScreenDraftStates(t *testing.T) {
+	projectID := uuid.New()
+	brief := "A trip planner for weekend hikers."
+
+	base := func() SetupOKRView {
+		return SetupOKRView{
+			Project:     &domain.Project{ID: projectID, Name: "trailkit", Brief: &brief},
+			Strategy:    &domain.Strategy{ID: uuid.New(), Name: "Initial strategy"},
+			PollSeconds: 3,
+		}
+	}
+
+	t.Run("drafting", func(t *testing.T) {
+		v := base()
+		v.Drafting = true
+		v.Ribbon = domain.OnboardingLifecycle(domain.OnboardingState{HasStrategy: true, Drafting: true})
+
+		body := renderForTest(t, "setup_okrs.html", projectID, v)
+		for _, want := range []string{"Reading your brief", "setup-spinner", "window.location.reload"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("waiting screen missing %q", want)
+			}
+		}
+		if strings.Contains(body, "/setup/okrs/approve") {
+			t.Error("the approve form must not render while a draft is still running")
+		}
+	})
+
+	t.Run("failed", func(t *testing.T) {
+		v := base()
+		v.DraftFailed = true
+		v.DraftError = "the model returned no objectives"
+		v.Ribbon = domain.OnboardingLifecycle(domain.OnboardingState{HasStrategy: true, DraftFailed: true})
+
+		body := renderForTest(t, "setup_okrs.html", projectID, v)
+		for _, want := range []string{v.DraftError, "/setup/okrs/redraft", "Try again", brief} {
+			if !strings.Contains(body, want) {
+				t.Errorf("failure screen missing %q", want)
+			}
+		}
+		if strings.Contains(body, "/setup/okrs/approve") {
+			t.Error("the approve form must not render after a failed draft")
+		}
+		if !strings.Contains(body, v.Ribbon.Headline) {
+			t.Error("the ribbon should still say where the project stands")
+		}
+	})
+}

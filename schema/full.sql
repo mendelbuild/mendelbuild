@@ -109,6 +109,15 @@ CREATE TABLE strategies (
     -- objectives table, so this cannot be derived.
     okrs_approved_at TIMESTAMP,
 
+    -- Where this strategy's draft is up to [added in 034]: 'drafting', 'ready',
+    -- or 'failed'. Not derivable -- a strategy with no objectives looks the
+    -- same whether a background draft is running, has failed, or never ran.
+    -- draft_started_at lets a draft whose process died be recognised as stale
+    -- rather than polled forever.
+    draft_status TEXT NOT NULL DEFAULT 'ready',
+    draft_error TEXT,
+    draft_started_at TIMESTAMP,
+
     -- What the drafting agent said about its own draft [added in 032]:
     -- how it read the brief, what it filled in, what it could not tell.
     -- Kept after approval -- when a hop overruns, the assumptions the plan
@@ -116,7 +125,10 @@ CREATE TABLE strategies (
     draft_notes JSONB,
 
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT strategies_draft_status_valid
+        CHECK (draft_status IN ('drafting', 'ready', 'failed'))
 );
 
 --------------------------------------------------------------------------------

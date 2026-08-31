@@ -36,9 +36,12 @@ func (db *DB) CreateProjectWithStrategy(ctx context.Context, name, brief, strate
 		return uuid.Nil, uuid.Nil, fmt.Errorf("insert project: %w", err)
 	}
 
+	// Starts in 'drafting': the caller kicks the draft off as soon as this
+	// returns, and the review screen must not be able to observe a moment where
+	// the strategy looks like one that simply has no objectives.
 	if _, err = tx.Exec(ctx, `
-		INSERT INTO strategies (id, project_id, name, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $4)
+		INSERT INTO strategies (id, project_id, name, draft_status, draft_started_at, created_at, updated_at)
+		VALUES ($1, $2, $3, 'drafting', $4, $4, $4)
 	`, strategyID, projectID, strategyName, now); err != nil {
 		return uuid.Nil, uuid.Nil, fmt.Errorf("insert strategy: %w", err)
 	}
@@ -63,6 +66,43 @@ func (db *DB) RenameStrategy(ctx context.Context, strategyID uuid.UUID, name str
 	_, err := db.Pool.Exec(ctx, `
 		UPDATE strategies SET name = $2, updated_at = NOW() WHERE id = $1
 	`, strategyID, name)
+	return err
+}
+
+// BeginStrategyDraft marks a strategy as being drafted right now, clearing any
+// error from a previous attempt. Returns false if a draft is already running,
+// so a double-submitted retry cannot start a second one against the same rows.
+func (db *DB) BeginStrategyDraft(ctx context.Context, strategyID uuid.UUID) (bool, error) {
+	tag, err := db.Pool.Exec(ctx, `
+		UPDATE strategies
+		SET draft_status = 'drafting', draft_error = NULL,
+		    draft_started_at = NOW(), updated_at = NOW()
+		WHERE id = $1
+		  AND (draft_status <> 'drafting'
+		       OR draft_started_at IS NULL
+		       OR draft_started_at < NOW() - make_interval(secs => $2))
+	`, strategyID, domain.DraftStaleAfter.Seconds())
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// FinishStrategyDraft records how a draft ended. A non-nil draftErr leaves the
+// strategy in 'failed' with the message, for the review screen to show.
+func (db *DB) FinishStrategyDraft(ctx context.Context, strategyID uuid.UUID, draftErr error) error {
+	if draftErr != nil {
+		msg := draftErr.Error()
+		_, err := db.Pool.Exec(ctx, `
+			UPDATE strategies SET draft_status = 'failed', draft_error = $2, updated_at = NOW()
+			WHERE id = $1
+		`, strategyID, msg)
+		return err
+	}
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE strategies SET draft_status = 'ready', draft_error = NULL, updated_at = NOW()
+		WHERE id = $1
+	`, strategyID)
 	return err
 }
 
@@ -191,9 +231,21 @@ func (db *DB) GetOnboardingState(ctx context.Context, projectID uuid.UUID) (doma
 			EXISTS (SELECT 1 FROM repositories r
 			        WHERE r.project_id = $1
 			          AND COALESCE(r.url, '') <> ''
-			          AND COALESCE(r.config->>'auth_token', '') <> '')
-	`, projectID).Scan(&st.HasStrategy, &st.HasDraftOKRs, &st.OKRsApproved,
-		&st.RoadmapPending, &st.HasHops, &st.HasVariations, &st.RepoConnected)
+			          AND COALESCE(r.config->>'auth_token', '') <> ''),
+			EXISTS (SELECT 1 FROM strategies s
+			        WHERE s.project_id = $1 AND s.draft_status = 'drafting'
+			          AND s.draft_started_at IS NOT NULL
+			          AND s.draft_started_at >= NOW() - make_interval(secs => $2)),
+			EXISTS (SELECT 1 FROM strategies s
+			        WHERE s.project_id = $1
+			          AND (s.draft_status = 'failed'
+			               OR (s.draft_status = 'drafting'
+			                   AND (s.draft_started_at IS NULL
+			                        OR s.draft_started_at < NOW() - make_interval(secs => $2)))))
+	`, projectID, domain.DraftStaleAfter.Seconds()).Scan(
+		&st.HasStrategy, &st.HasDraftOKRs, &st.OKRsApproved,
+		&st.RoadmapPending, &st.HasHops, &st.HasVariations, &st.RepoConnected,
+		&st.Drafting, &st.DraftFailed)
 	if err != nil {
 		return st, fmt.Errorf("load onboarding state: %w", err)
 	}

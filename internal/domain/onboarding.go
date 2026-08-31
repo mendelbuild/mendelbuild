@@ -38,6 +38,12 @@ type OnboardingState struct {
 	HasHops        bool // The roadmap was approved and Hops were created
 	HasVariations  bool // Work on the first Hop has begun
 	RepoConnected  bool // Repository URL and auth token are configured
+
+	// The background OKR draft. Drafting is Mendel's move, and a failed draft
+	// is the user's -- without these the ribbon would call both of them
+	// "this project has no objectives yet" and leave the user guessing which.
+	Drafting    bool
+	DraftFailed bool
 }
 
 // Complete reports whether onboarding is over and the ribbon should retire.
@@ -65,6 +71,18 @@ func OnboardingLifecycle(st OnboardingState) Ribbon {
 		r.Tone, r.WaitingOn = ToneWaiting, ActorYou
 		r.Headline = "Tell Mendel what you want to build"
 		r.NextAction = "Describe the project, when you need it, and what you are willing to spend. Mendel drafts objectives from that."
+
+	case st.Drafting:
+		r.Tracks = track(1, ToneProgress)
+		r.Tone, r.WaitingOn = ToneProgress, ActorMendel
+		r.Headline = "Drafting your objectives"
+		r.NextAction = "Mendel is turning your brief into objectives and key results. This takes up to a minute; the page updates on its own."
+
+	case st.DraftFailed:
+		r.Tracks = track(1, ToneFailure)
+		r.Tone, r.WaitingOn = ToneFailure, ActorYou
+		r.Headline = "The draft did not finish"
+		r.NextAction = "Mendel could not draft objectives from your brief. Try again, or write them yourself in the OKR editor."
 
 	case !st.HasDraftOKRs:
 		r.Tracks = track(1, ToneWaiting)

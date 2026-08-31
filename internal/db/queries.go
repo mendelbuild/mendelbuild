@@ -279,7 +279,8 @@ func (db *DB) GetProjectReadiness(ctx context.Context, projectID uuid.UUID) (dom
 // GetStrategiesByProject retrieves all strategies for a project.
 func (db *DB) GetStrategiesByProject(ctx context.Context, projectID uuid.UUID) ([]domain.Strategy, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, project_id, parent_id, name, okrs_approved_at, draft_notes, created_at, updated_at
+		SELECT id, project_id, parent_id, name, okrs_approved_at, draft_notes,
+		       draft_status, draft_error, draft_started_at, created_at, updated_at
 		FROM strategies WHERE project_id = $1
 		ORDER BY name
 	`, projectID)
@@ -292,7 +293,8 @@ func (db *DB) GetStrategiesByProject(ctx context.Context, projectID uuid.UUID) (
 	for rows.Next() {
 		var s domain.Strategy
 		if err := rows.Scan(&s.ID, &s.ProjectID, &s.ParentID, &s.Name, &s.OKRsApprovedAt,
-			&s.DraftNotes, &s.CreatedAt, &s.UpdatedAt); err != nil {
+			&s.DraftNotes, &s.DraftStatus, &s.DraftError, &s.DraftStartedAt,
+			&s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, err
 		}
 		strategies = append(strategies, s)
@@ -378,10 +380,12 @@ func (db *DB) GetFundingSourcesByStrategy(ctx context.Context, strategyID uuid.U
 func (db *DB) GetStrategy(ctx context.Context, id uuid.UUID) (*domain.Strategy, error) {
 	var s domain.Strategy
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, project_id, parent_id, name, okrs_approved_at, draft_notes, created_at, updated_at
+		SELECT id, project_id, parent_id, name, okrs_approved_at, draft_notes,
+		       draft_status, draft_error, draft_started_at, created_at, updated_at
 		FROM strategies WHERE id = $1
 	`, id).Scan(&s.ID, &s.ProjectID, &s.ParentID, &s.Name, &s.OKRsApprovedAt,
-		&s.DraftNotes, &s.CreatedAt, &s.UpdatedAt)
+		&s.DraftNotes, &s.DraftStatus, &s.DraftError, &s.DraftStartedAt,
+		&s.CreatedAt, &s.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}

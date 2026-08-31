@@ -483,6 +483,23 @@
         .tune-needs-work{ background: #fff3cd; color: #856404; }
         .tune-poor      { background: #f8d7da; color: #721c24; }
 
+        /* A draft in progress. One thing is happening and it takes under a
+           minute, so this is a plain indeterminate spinner rather than a
+           progress bar that would have to invent a percentage. */
+        .setup-spinner {
+            display: inline-block;
+            width: 34px;
+            height: 34px;
+            border: 3px solid #e3e3e3;
+            border-top-color: #0D4D2D;
+            border-radius: 50%;
+            animation: setup-spin 0.9s linear infinite;
+        }
+        @keyframes setup-spin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) {
+            .setup-spinner { animation-duration: 3s; }
+        }
+
         .settings-warning {
             background: #fff3cd;
             border: 1px solid #ffc107;

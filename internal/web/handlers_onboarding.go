@@ -39,6 +39,11 @@ import (
 // a spinner -- but a request that hangs forever is worse than one that fails.
 const setupTimeout = 3 * time.Minute
 
+// setupPollSeconds is how often the review screen re-checks a running draft.
+// Short enough to feel responsive on a call that takes 30-45 seconds, long
+// enough not to hammer the database while someone watches.
+const setupPollSeconds = 3
+
 // SetupOKRView holds the drafted-OKR review screen.
 type SetupOKRView struct {
 	Project    *domain.Project
@@ -48,6 +53,13 @@ type SetupOKRView struct {
 	Funding    *domain.FundingSource
 	Ribbon     domain.Ribbon
 	Error      string
+
+	// Drafting and DraftFailed are mutually exclusive with showing the draft:
+	// the screen is a spinner, an error with a retry, or the objectives.
+	Drafting     bool
+	DraftFailed  bool
+	DraftError   string
+	PollSeconds  int // How soon the waiting page should re-check
 }
 
 // SetupObjectiveView is one drafted objective with its key results.
@@ -139,16 +151,16 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		budgetUSD = v
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
-	defer cancel()
+	ctx := r.Context()
 
 	var ownerID *uuid.UUID
-	if user := UserFromContext(r.Context()); user != nil && s.authEnabled {
+	if user := UserFromContext(ctx); user != nil && s.authEnabled {
 		ownerID = &user.ID
 	}
 
 	// The strategy is named by the drafting agent, but it needs a name now: the
-	// row exists before the agent runs so the draft's spend has somewhere to go.
+	// row exists before the agent runs so the draft's spend has somewhere to go,
+	// and so there is a page to send the browser to while the draft runs.
 	projectID, strategyID, err := s.db.CreateProjectWithStrategy(ctx, form.Name, form.Brief, "Initial strategy", ownerID)
 	if err != nil {
 		s.renderNewProject(w, r, form, "Could not create the project: "+err.Error())
@@ -165,16 +177,41 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		brief.DeadlineISO = deadline.Format("2006-01-02")
 	}
 
-	if err := s.draftStrategy(ctx, projectID, strategyID, brief, deadline, budgetUSD, nil, ""); err != nil {
-		// The project exists and is reachable; say so rather than pretending
-		// nothing happened, and point at the screen that can retry the draft.
-		s.renderNewProject(w, r, form, fmt.Sprintf(
-			"Mendel created the project but could not draft objectives for it: %v. Open it at /p/%s/setup/okrs to try again.",
-			err, projectID))
-		return
-	}
+	// CreateProjectWithStrategy already marked the strategy 'drafting', so the
+	// review screen shows the waiting state from the very first render.
+	s.startDraft(projectID, strategyID, brief, deadline, budgetUSD, nil, "")
 
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/setup/okrs", projectID), http.StatusSeeOther)
+}
+
+// startDraft runs a drafting call detached from the request that asked for it.
+//
+// Drafting takes 30-45 seconds against the model. An HTTP request cannot safely
+// block that long -- the GCE ingress in front of the app closes the connection
+// at 30 -- and the first version of this flow did exactly that, so a user got a
+// gateway error while their project was drafted perfectly well behind it.
+//
+// The goroutine takes its own context: the request's is cancelled the moment
+// the redirect is written.
+func (s *Server) startDraft(projectID, strategyID uuid.UUID, brief agent.StrategyBrief,
+	deadline *time.Time, budgetUSD float64, current *agent.DraftedStrategy, feedback string) {
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
+		defer cancel()
+
+		err := s.draftStrategy(ctx, projectID, strategyID, brief, deadline, budgetUSD, current, feedback)
+		if err != nil {
+			log.Printf("setup: drafting for project %s failed: %v", projectID, err)
+		}
+		// Recorded on its own context: if the draft failed because ctx expired,
+		// that same context cannot be used to write down that it did.
+		finish, cancelFinish := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancelFinish()
+		if ferr := s.db.FinishStrategyDraft(finish, strategyID, err); ferr != nil {
+			log.Printf("setup: could not record draft outcome for project %s: %v", projectID, ferr)
+		}
+	}()
 }
 
 // draftStrategy runs the drafting agent and replaces the strategy's draft OKRs
@@ -408,40 +445,55 @@ func (s *Server) renderSetupOKRs(ctx context.Context, w http.ResponseWriter, r *
 		return
 	}
 
-	objectives, err := s.db.GetRootObjectives(ctx, strategy.ID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	objViews := make([]SetupObjectiveView, 0, len(objectives))
-	for _, obj := range objectives {
-		krs, _ := s.db.GetKeyResultsByObjective(ctx, obj.ID)
-		objViews = append(objViews, SetupObjectiveView{Objective: obj, KeyResults: krs})
-	}
-
-	var funding *domain.FundingSource
-	if sources, err := s.db.GetFundingSourcesByStrategy(ctx, strategy.ID); err == nil && len(sources) > 0 {
-		funding = &sources[0]
-	}
-
 	state, err := s.db.GetOnboardingState(ctx, projectID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	// Drafting and DraftFailed come from the onboarding state, which decides
+	// staleness in SQL. See domain.DraftStaleAfter for why that judgement must
+	// not be made against Go's clock.
+	view := SetupOKRView{
+		Project:     project,
+		Strategy:    &strategy,
+		Ribbon:      domain.OnboardingLifecycle(state),
+		Error:       errMsg,
+		Drafting:    state.Drafting,
+		DraftFailed: state.DraftFailed,
+		PollSeconds: setupPollSeconds,
+	}
+	if view.DraftFailed {
+		stale := strategy.DraftStatus == domain.StrategyDraftDrafting
+		view.DraftError = strategy.DraftErrorText(stale)
+	}
+
+	// A running or failed draft has nothing to show: the objectives are either
+	// not written yet or are the leftovers of a previous attempt, and rendering
+	// stale rows under a "here is your draft" heading would be a lie.
+	if !view.Drafting && !view.DraftFailed {
+		objectives, err := s.db.GetRootObjectives(ctx, strategy.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		objViews := make([]SetupObjectiveView, 0, len(objectives))
+		for _, obj := range objectives {
+			krs, _ := s.db.GetKeyResultsByObjective(ctx, obj.ID)
+			objViews = append(objViews, SetupObjectiveView{Objective: obj, KeyResults: krs})
+		}
+		view.Objectives = objViews
+		view.Notes = strategy.Notes()
+
+		if sources, err := s.db.GetFundingSourcesByStrategy(ctx, strategy.ID); err == nil && len(sources) > 0 {
+			view.Funding = &sources[0]
+		}
+	}
+
 	data := map[string]interface{}{
 		"Title":     "Review objectives",
 		"ProjectID": projectID.String(),
-		"View": SetupOKRView{
-			Project:    project,
-			Strategy:   &strategy,
-			Notes:      strategy.Notes(),
-			Objectives: objViews,
-			Funding:    funding,
-			Ribbon:     domain.OnboardingLifecycle(state),
-			Error:      errMsg,
-		},
+		"View":      view,
 	}
 	s.addUserToData(r, data)
 	if err := renderPage(w, "setup_okrs.html", data); err != nil {
@@ -462,8 +514,7 @@ func (s *Server) handleReviseSetupOKRs(w http.ResponseWriter, r *http.Request) {
 	}
 	feedback := strings.TrimSpace(r.FormValue("feedback"))
 
-	ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
-	defer cancel()
+	ctx := r.Context()
 
 	project, err := s.db.GetProject(ctx, projectID)
 	if err != nil {
@@ -487,12 +538,58 @@ func (s *Server) handleReviseSetupOKRs(w http.ResponseWriter, r *http.Request) {
 	// current draft back out of the database rather than out of the form: the
 	// user may have edited fields without saving them, and asking the agent to
 	// revise text the user has since changed produces a confusing result.
+	//
+	// Read before the status flips, so a redraft still knows what it replaces.
 	current := s.currentDraft(ctx, &strategy)
 
-	if err := s.draftStrategy(ctx, projectID, strategy.ID, brief, deadline, budgetUSD, current, feedback); err != nil {
-		http.Redirect(w, r, fmt.Sprintf("/p/%s/setup/okrs?error=%s", projectID,
-			"Mendel could not revise the draft: "+err.Error()), http.StatusSeeOther)
+	// Claim the draft first. If another one is already running, say so rather
+	// than starting a second agent call against the same rows.
+	started, err := s.db.BeginStrategyDraft(ctx, strategy.ID)
+	if err != nil {
+		http.Error(w, "could not start the draft: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if started {
+		s.startDraft(projectID, strategy.ID, brief, deadline, budgetUSD, current, feedback)
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/setup/okrs", projectID), http.StatusSeeOther)
+}
+
+// handleRedraftSetupOKRs retries a draft that failed, from the original brief.
+func (s *Server) handleRedraftSetupOKRs(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	project, err := s.db.GetProject(ctx, projectID)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+	strategies, err := s.db.GetStrategiesByProject(ctx, projectID)
+	if err != nil || len(strategies) == 0 {
+		http.Error(w, "no strategy found", http.StatusNotFound)
+		return
+	}
+	strategy := strategies[0]
+	if strategy.OKRsApproved() {
+		http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs", projectID), http.StatusSeeOther)
+		return
+	}
+
+	brief, deadline, budgetUSD := s.rebuildBrief(ctx, project, &strategy)
+
+	started, err := s.db.BeginStrategyDraft(ctx, strategy.ID)
+	if err != nil {
+		http.Error(w, "could not start the draft: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if started {
+		s.startDraft(projectID, strategy.ID, brief, deadline, budgetUSD, nil, "")
 	}
 
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/setup/okrs", projectID), http.StatusSeeOther)
@@ -575,6 +672,20 @@ func (s *Server) handleApproveSetupOKRs(w http.ResponseWriter, r *http.Request) 
 	strategy := strategies[0]
 	if strategy.OKRsApproved() {
 		http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs", projectID), http.StatusSeeOther)
+		return
+	}
+
+	// The approve form is not rendered while a draft is running, but a tab left
+	// open from before a redraft can still submit it. Approving there would
+	// freeze objectives that are about to be replaced, and would race the
+	// drafting goroutine's delete-and-reinsert.
+	state, err := s.db.GetOnboardingState(ctx, projectID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if state.Drafting {
+		http.Redirect(w, r, fmt.Sprintf("/p/%s/setup/okrs", projectID), http.StatusSeeOther)
 		return
 	}
 

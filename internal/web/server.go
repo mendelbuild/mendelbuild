@@ -659,6 +659,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/setup/okrs", s.handleSetupOKRs)
 		r.Post("/setup/okrs/approve", s.handleApproveSetupOKRs)
 		r.Post("/setup/okrs/revise", s.handleReviseSetupOKRs)
+		r.Post("/setup/okrs/redraft", s.handleRedraftSetupOKRs)
 
 		// OKR Editor routes
 		r.Get("/okr", s.handleOKREditor)

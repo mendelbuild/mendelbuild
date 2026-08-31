@@ -41,29 +41,69 @@ The failure path is handled instead of avoided: if drafting fails, the form
 comes back with the user's own text still in it and a link to the setup screen
 of the project that does now exist, rather than a silently orphaned row.
 
-### Drafting is synchronous; roadmap proposal is not
+### Nothing slow happens inside a request
 
-The OKR draft runs inline in `POST /new`. There is nothing to show the user until
-it finishes, it takes ~10-30s, and running it in the request means a failure
-lands on their form rather than stranding them on a page polling for a draft that
-will never arrive.
+Both agent calls in this flow — the OKR draft and the roadmap proposal — run in
+goroutines on their own `context.Background()`, because the request context dies
+with the redirect. The browser is redirected immediately and the destination
+page polls.
 
-Roadmap proposal, after approval, is the opposite: it takes tens of seconds and
-has nothing to say to the request that triggered it. It runs in a goroutine on
-its own `context.Background()` — the request context dies with the redirect — and
-the user lands on the Input Needed queue, which polls while the ribbon says
-"Mendel is working".
+**This was not the original design, and the first version shipped broken.** The
+draft ran inline in `POST /new`. Local testing passed: the Go server sets no
+write timeout, so a 35-second request completed fine. Staging did not, because
+the app sits behind a GCE Ingress whose backend service defaults to a **30
+second** timeout. A user creating a project got a gateway error at 30s while the
+draft completed perfectly well behind it — the project existed, fully drafted,
+with nothing in the UI to say so.
 
-### Only one piece of onboarding state is stored
+Two lessons worth keeping:
+
+- "The server has no timeout" is not the same as "the request has no timeout".
+  Every proxy between the browser and the process has an opinion, and the
+  tightest one wins. Checking the Go server's own settings answered the wrong
+  question.
+- Raising the ingress timeout would have hidden this rather than fixed it. A
+  request held open for 35 seconds is a dead page with a spinner the browser
+  draws, no progress, and nothing to come back to if it is closed. The work
+  belongs in the background whatever the proxy allows.
+
+The review screen therefore has three states — drafting, failed, ready — and
+polls itself every 3 seconds while a draft is running.
+
+### Two pieces of onboarding state are stored; the rest is derived
 
 `strategies.okrs_approved_at` is persisted because it is not derivable: an
 objective written by an agent and one a human has signed off on are identical
 rows, and only the second should let a roadmap be built against it.
 
+`strategies.draft_status` is persisted for the same reason. Once drafting moved
+to the background, "no objectives yet" stopped being one situation and became
+three — a draft is running, a draft failed, or none was ever started — which the
+rows cannot tell apart. The review screen must show a spinner, an error with a
+retry, or the draft, and guessing wrong means either an immortal spinner or an
+approve button over an empty strategy.
+
 Everything else the ribbon needs — has a strategy, has objectives, has an open
 roadmap review, has Hops, has Variations, has a repository — is derived in one
-query (`GetOnboardingState`) from rows that already exist. There is no
-`onboarding_stage` column to drift out of sync with reality.
+query (`GetOnboardingState`) from rows that already exist.
+
+### Staleness is judged in SQL, never in Go
+
+A draft whose process dies — a deploy mid-draft — leaves a row saying
+`drafting` that nothing is working on. `draft_started_at` lets that be
+recognised, so the screen offers a retry instead of polling forever.
+
+That comparison happens in SQL, and the reason is a bug this caught during
+testing. The timestamp columns are `timestamp without time zone`: pgx writes a
+`time.Time` as its **local wall clock** but reads one back labelled **UTC**. So
+`time.Now().Sub(*s.DraftStartedAt)` is wrong by the machine's UTC offset — on a
+machine seven hours off UTC, a draft thirty seconds old read as seven hours
+stale, and the page showed "the draft did not finish" while the draft was
+running. The database is the only clock that sees both sides consistently.
+
+`internal/db/onboarding_queries_test.go` covers this against real SQL, and the
+draft tests pass under UTC, US Pacific and Tokyo. A unit test over Go structs
+cannot catch it, which is exactly why the logic does not live there.
 
 ### The repository is asked for after approval, not before
 
@@ -86,22 +126,65 @@ an amount, a period, and the Key Results the money is meant to buy.
 It also means deadline and budget need no separate storage — a redraft
 reconstructs the agent's brief from `projects.brief` plus that funding source.
 
-### A silently empty draft is a bug, not an outcome
+### A schema-valid draft is not necessarily a usable one
 
-`json.Unmarshal` ignores unknown fields, so a response that does not match the
-wrapper parses without error and leaves the struct zeroed. Observed in practice:
-the model returned a schema-valid object with every field empty, and the flow
-"succeeded" into a project with no objectives and no explanation.
+Structured output guarantees the shape of the answer, not that there is an
+answer in it. Two failures came from assuming otherwise, and both reached a
+user before being caught.
 
-`Strategist.send` now rejects a draft with no objectives outright, reporting the
-stop reason and the raw content, and still returns the Spend so the call is
-billed. It also accepts the bare strategy object as well as the wrapper, since
-both shapes have been seen.
+**Empty.** `json.Unmarshal` ignores unknown fields, so a response that does not
+match the wrapper parses without error and leaves the struct zeroed. The model
+returned a schema-valid object with every field blank, and the flow "succeeded"
+into a project with no objectives and no explanation.
 
-The prompt was the underlying cause: the original closing instruction produced an
-empty object on every attempt (4/4). Naming the expected shape and stating that
-an empty objectives list is not an answer fixed it (3/3 full drafts). Both
-changes were kept — the prompt so it works, the guard so a regression is loud.
+**Half-finished.** Later, in a batch of six drafts, one came back with a single
+objective, no strategy name, no summary, and JSON fragments leaking into a
+target value (`">= 1 working end-to-end poll creation flow,},"`). It passed a
+check that only counted objectives. A user would have got a review screen
+titled "Initial strategy" with one vague objective on it and nothing saying
+anything had gone wrong.
+
+So `draftDefect` now rejects a draft missing anything the prompt asks for
+unconditionally: no objectives, no strategy name, an objective with no
+description, or an objective with no key results. Each is evidence the
+generation went wrong rather than that the brief was thin.
+
+An unusable draft is retried **once**, with an added instruction naming what was
+missing, and the spend from both attempts is summed — both were paid for. Only
+this failure is retried; a transport error or a malformed response is reported
+as-is, since retrying those just doubles the wait before the same failure.
+
+### The prompt was inviting the stub
+
+The failures had a tell: `"assumptions": ["placeholder"]`, `"summary":
+"placeholder"`. The model was not failing to answer, it was filling in a form.
+
+The instruction it was given began **"Fill in every field."** That is
+form-filling language, and it was added by an earlier fix for the empty-draft
+problem — so the remedy for one failure was plausibly causing the next. Rewording
+it to describe the work instead of the shape ("Write 2 to 4 objectives... Write
+the real thing: this goes straight to them for approval, and it is the plan their
+money gets spent against") is the only change between these two measurements:
+
+| Prompt | Result |
+| --- | --- |
+| "Fill in every field" | 5/8 concurrent, 1/3 sequential — **6 of 11 usable** |
+| "Write the real thing" | **8 of 8 usable**, one recovered by the retry |
+
+Both batches ran eight-at-a-time against the same brief, minutes apart, so
+server-side conditions were comparable. Eight is not a rate, and this failure has
+already fooled a small sample once in this project's history — an earlier "3/3"
+here meant nothing, and the very next attempt after it failed. Treat the table as
+directional.
+
+All three mechanisms are kept, because each covers what the others do not:
+
+- **the prompt**, so the common case works
+- **the gate** (`draftDefect`), so a bad generation cannot reach a user quietly
+- **the retry**, so the usual remedy happens without the user having to ask —
+  in the eight-draft run it silently rescued one draft
+- and, behind those, the **failure screen**, so the residual case is a clear
+  message and a working retry button rather than a broken page
 
 ## New files
 
@@ -131,13 +214,26 @@ changes were kept — the prompt so it works, the guard so a regression is loud.
 - `internal/web/templates/` — dashboard entry point, inputs queue ribbon and
   polling, strategy page ribbon, shared setup CSS in the layout
 
-## Schema changes (032)
+## Schema changes
+
+Migration 032:
 
 ```sql
 ALTER TABLE projects   ADD COLUMN brief TEXT;              -- the user's own words
 ALTER TABLE strategies ADD COLUMN okrs_approved_at TIMESTAMP;  -- draft vs. approved
 ALTER TABLE strategies ADD COLUMN draft_notes JSONB;       -- the agent's own commentary
 ```
+
+Migration 034, when drafting moved to the background:
+
+```sql
+ALTER TABLE strategies ADD COLUMN draft_status TEXT NOT NULL DEFAULT 'ready';
+ALTER TABLE strategies ADD COLUMN draft_error TEXT;
+ALTER TABLE strategies ADD COLUMN draft_started_at TIMESTAMP;
+```
+
+`draft_status` defaults to `'ready'`, so strategies that predate this — and any
+loaded from a JSON file — are never mistaken for a draft in flight.
 
 `draft_notes` holds what the drafting agent said about its draft: how it read the
 brief, what it filled in, what it could not tell, and whether the scope looks
@@ -149,21 +245,28 @@ worth re-reading.
 
 ```
 GET  /new                          form
-POST /new                          create project + strategy
-                                   → Strategist.DraftStrategy
-                                   → ReplaceDraftOKRs, RenameStrategy, draft notes
-                                   → funding source + links to every KR
-                                   → OKRTuner scores the draft
-                                   → redirect to setup/okrs
-GET  /p/{id}/setup/okrs            draft + notes + tuner feedback, inline editable
-POST /p/{id}/setup/okrs/revise     Strategist.ReviseStrategy with the user's
-                                   feedback, replacing the draft
+POST /new                          create project + strategy (draft_status='drafting')
+                                   → goroutine: Strategist.DraftStrategy
+                                   → redirect to setup/okrs immediately (~10ms)
+GET  /p/{id}/setup/okrs            drafting → spinner, polls every 3s
+                                   failed   → error + "Try again"
+                                   ready    → draft, notes, tuner feedback, editable
+POST /p/{id}/setup/okrs/revise     claim the draft, then redraft in a goroutine
+POST /p/{id}/setup/okrs/redraft    retry a failed draft from the original brief
 POST /p/{id}/setup/okrs/approve    persist inline edits
                                    → okrs_approved_at
                                    → "Connect a repository" request if needed
                                    → goroutine: proposeRoadmapForStrategy
                                    → redirect to /inputs
+
+background draft                   ReplaceDraftOKRs, RenameStrategy, draft notes
+                                   → funding source + links to every KR
+                                   → OKRTuner scores the draft
+                                   → FinishStrategyDraft: 'ready' or 'failed'
 ```
+
+`BeginStrategyDraft` is a conditional UPDATE, so a double-submitted retry cannot
+start a second agent call rewriting the same objectives as the first.
 
 Ribbon stages: **Describe the project → Approve objectives → Approve roadmap →
 Explore approaches**, retiring at the first Variation.
@@ -171,10 +274,26 @@ Explore approaches**, retiring at the first Variation.
 ## Verification
 
 - `go build ./... && go vet ./...`
-- `MENDEL_TEST_DB_URL=... go test ./...` — all packages pass
-- `go test ./schema/...` — migration 032 applies and matches `full.sql`
-- Walked live against a local server with a real API key: created a project from
-  a brief, got three objectives with nine dated key results and tuner scores,
-  edited an objective and a target inline, approved, and confirmed the edits
-  persisted, `okrs_approved_at` was set, the repository request was filed, and
-  the roadmap review arrived in the queue from the background job.
+- `go test ./...` — all packages pass, with no `MENDEL_TEST_DB_URL` set
+- `go test ./schema/...` — migrations 032 and 034 apply and match `full.sql`
+- The draft tests pass under `TZ=UTC`, `America/Los_Angeles` and `Asia/Tokyo`,
+  which is the point: the bug they guard only appears off UTC.
+- Walked the whole flow live against a local server with a real API key:
+  - `POST /new` returns in ~10ms instead of ~35s, which was the bug that
+    started this
+  - the review screen shows the spinner, polls, and flips to the draft when it
+    lands (~25s later)
+  - a draft aged past the stale window renders the failure state with an
+    explanation and a retry, and the retry restarts it
+  - the approve form is absent in both non-ready states, so nothing can be
+    approved that has not been drafted
+  - inline edits persist, `okrs_approved_at` is set, the repository request is
+    filed, and the roadmap review arrives from the background job
+
+### On sample sizes
+
+An earlier version of this document claimed the empty-draft prompt fix worked
+"3/3". That was true and meant very little: the failure is intermittent, and it
+recurred on the next attempt after that. The gate and the retry exist because
+the prompt alone is not a guarantee — and a batch of eight is still not proof
+of a rate, only enough to catch the shapes worth handling.
