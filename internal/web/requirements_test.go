@@ -61,7 +61,7 @@ func TestVariationDetailRendersRequirements(t *testing.T) {
 	view := &VariationDetailView{
 		Variation: variation,
 		Hop:       hop,
-		Ribbon:    domain.VariationLifecycle(variation, nil, hop),
+		Ribbon:    ribbonView(domain.VariationLifecycle(variation, nil, hop)),
 		Requirements: &RequirementsPanel{
 			Title:        "What This Needs to Run",
 			Intro:        "This variation's code cannot function without the following.",
@@ -80,7 +80,7 @@ func TestVariationDetailRendersRequirements(t *testing.T) {
 		"GOOGLE_CLIENT_SECRET",
 		"GOOGLE_CLIENT_ID",
 		"https://demo.fly.dev/auth/callback", // the resolved instruction, not the placeholder
-		"Not Ready to Run",                   // the demo panel defers to the section above
+		"Not ready to run",                   // the demo panel defers to the section above
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("variation detail missing %q", want)

@@ -447,6 +447,25 @@ code {
 .callout-warning  { border-color: var(--tone-warning);  background: var(--tone-warning-bg);  color: var(--tone-warning-ink); }
 .callout-failure  { border-color: var(--tone-failure);  background: var(--tone-failure-bg);  color: var(--tone-failure-ink); }
 
+/* A quieter callout, for list items. A list of five tone-filled blocks is a
+   wall of colour that stops distinguishing anything; keeping the fill white and
+   the tone on the edge lets a list stay scannable while each row still says
+   what state it is in. */
+.callout-quiet {
+    background: var(--surface-card);
+    color: var(--ink-1);
+    border-color: var(--line);
+    border-left-color: var(--tone-neutral);
+}
+.callout-quiet.callout-neutral  { border-left-color: var(--tone-neutral); }
+.callout-quiet.callout-progress { border-left-color: var(--tone-progress); }
+.callout-quiet.callout-waiting  { border-left-color: var(--tone-waiting); }
+.callout-quiet.callout-success  { border-left-color: var(--tone-success); }
+.callout-quiet.callout-warning  { border-left-color: var(--tone-warning); }
+.callout-quiet.callout-failure  { border-left-color: var(--tone-failure); }
+.callout-quiet a { color: var(--tone-progress); text-decoration: none; }
+.callout-quiet a:hover { text-decoration: underline; }
+
 .callout-title {
     font-weight: 650;
     font-size: var(--text-base);
@@ -942,6 +961,10 @@ code {
     z-index: 1000;
     padding: var(--sp-4);
 }
+/* Opened by a link to the modal's id. Doing this in CSS rather than JavaScript
+   means the open state is in the URL: it survives a reload, the back button
+   closes it, and it cannot get stuck open because a script failed to load. */
+.modal:target { display: flex; }
 .modal.is-open { display: flex; }
 .modal-box {
     background: var(--surface-card);

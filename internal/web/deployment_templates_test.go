@@ -60,7 +60,9 @@ func renderPageForTest(t *testing.T, page string, data map[string]interface{}) s
 	if err := renderPage(rec, page, data); err != nil {
 		t.Fatalf("rendering %s: %v", page, err)
 	}
-	return rec.Body.String()
+	body := rec.Body.String()
+	dumpRendered(t, page, body)
+	return body
 }
 
 // TestDeploymentChannelRendersDeployStates walks the production-deploy states

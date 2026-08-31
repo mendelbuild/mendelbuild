@@ -61,21 +61,19 @@ var templateFuncs = template.FuncMap{
 		return a / b
 	},
 
-	// usd renders money at a precision that stays honest at both ends: cents
-	// for real sums, four decimals for the sub-cent charges a single agent call
-	// produces, so they do not all render as "$0.00".
-	"usd": func(f float64) string {
-		switch {
-		case f == 0:
-			return "$0"
-		case f < 0.01:
-			return fmt.Sprintf("$%.4f", f)
-		case f < 100:
-			return fmt.Sprintf("$%.2f", f)
-		default:
-			return fmt.Sprintf("$%.0f", f)
-		}
-	},
+	"usd": formatUSD,
+
+	// Status renderers. Templates must never switch on a raw status string, so
+	// every status a page shows arrives as a StatusView carrying a word and a
+	// tone. See internal/domain/status_view.go.
+	"revisionStatus":   domain.RevisionStatus,
+	"demoStatus":       domain.DemoStatus,
+	"deploymentStatus": domain.DeploymentStatus,
+	"validationStatus": domain.ValidationStatus,
+	"memberRole":       domain.MemberRole,
+	"hopStatus":        domain.HopStatusView,
+	"decisionKind":     domain.DecisionKindLabel,
+	"decisionWeight":   domain.DecisionImportance,
 	"usdPtr": func(f *float64) string {
 		if f == nil {
 			return "-"
@@ -111,6 +109,25 @@ var templateFuncs = template.FuncMap{
 			return fmt.Sprintf("%d", n)
 		}
 	},
+}
+
+// formatUSD renders money at a precision that stays honest at both ends: cents
+// for real sums, four decimals for the sub-cent charges a single agent call
+// produces, so they do not all render as "$0.00".
+//
+// Named rather than inline in templateFuncs because Go code composing a
+// sentence about money must spell it the same way the templates do.
+func formatUSD(f float64) string {
+	switch {
+	case f == 0:
+		return "$0"
+	case f < 0.01:
+		return fmt.Sprintf("$%.4f", f)
+	case f < 100:
+		return fmt.Sprintf("$%.2f", f)
+	default:
+		return fmt.Sprintf("$%.0f", f)
+	}
 }
 
 // parsePageTemplate creates a template from layout + shared partials + a

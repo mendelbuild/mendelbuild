@@ -149,7 +149,7 @@ func TestVariationPageStreamsItsLogs(t *testing.T) {
 	view := &VariationDetailView{
 		Variation: variation,
 		Hop:       hop,
-		Ribbon:    domain.VariationLifecycle(variation, nil, hop),
+		Ribbon:    ribbonView(domain.VariationLifecycle(variation, nil, hop)),
 		CodegenPanel: &LogPanel{
 			DOMID:   "codegen-logs",
 			FeedURL: "/api/variations/" + variation.ID.String() + "/logs",

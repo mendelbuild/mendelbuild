@@ -1,182 +1,163 @@
 {{define "page-content"}}
 {{with .View}}
-<h1>Variation: {{.Variation.Name}}</h1>
-<p><a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">&larr; Back to Hop: {{.Hop.Name}}</a></p>
+<div class="page-head">
+    <nav class="breadcrumb">
+        <a href="/p/{{$.ProjectID}}/roadmap">Roadmap</a>
+        <span class="breadcrumb-sep">/</span>
+        <a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">{{.Hop.Name}}</a>
+        <span class="breadcrumb-sep">/</span>
+        <span>{{.Variation.Name}}</span>
+    </nav>
+    <span class="page-kind">Variation</span>
+    <h1 class="page-title">{{.Variation.Name}}</h1>
+    {{if .Variation.Approach}}<p class="page-lede">{{.Variation.Approach}}</p>{{end}}
+</div>
 
 {{template "roadmap-panel" .Roadmap}}
 {{template "lifecycle-ribbon" .Ribbon}}
 
-<div style="display: flex; gap: 20px; align-items: flex-start;">
-    <div style="flex: 2;">
+{{if .Variation.PausedForBudget}}
+{{/* The ribbon above says what happened and offers the button. This carries the
+     only thing it cannot: the two numbers the decision actually turns on. */}}
+<div class="callout callout-waiting">
+    <p class="callout-body">
+        This run cost <strong>{{usd .Variation.BudgetSpentUSD}}</strong> against a ceiling of
+        <strong>{{usd .Variation.BudgetLimitUSD}}</strong>. Read the log below before deciding
+        whether the remaining work is worth another {{usd .Variation.BudgetLimitUSD}}.
+    </p>
+</div>
+{{end}}
+
+<div class="split">
+    <div>
+        {{if .ShowDemoPanel}}
         <div class="card">
-            <h2>Details</h2>
-            <table>
-                <tr>
-                    {{/* The ribbon above states this in plain English; this row
-                         keeps the raw value available for debugging. */}}
-                    <th style="width: 120px;">Internal status</th>
-                    <td>
-                        <span class="status {{if eq .Variation.Status "pending"}}status-pending{{else if eq .Variation.Status "creating"}}status-active{{else if eq .Variation.Status "error"}}status-error{{else if eq .Variation.Status "terminated"}}status-error{{else}}status-{{.Variation.Status}}{{end}}">
-                            {{.Variation.Status}}
-                        </span>
-                    </td>
-                </tr>
-                <tr>
-                    <th>Approach</th>
-                    <td>{{.Variation.Approach}}</td>
-                </tr>
-                {{if .GitHubURL}}
-                <tr>
-                    <th>Branch</th>
-                    <td>
-                        <a href="{{.GitHubURL}}" target="_blank" style="font-family: monospace;">
-                            {{if .Variation.CommitRef}}{{slice .Variation.CommitRef 0 8}}{{else}}View on GitHub{{end}} ↗
-                        </a>
-                        {{if .DiffURL}}
-                        <a href="{{.DiffURL}}" target="_blank" style="margin-left: 8px; font-size: 0.9em; color: #666;">(diff)</a>
-                        {{end}}
-                    </td>
-                </tr>
-                {{else if .Variation.CommitRef}}
-                <tr>
-                    <th>Commit</th>
-                    <td><code>{{slice .Variation.CommitRef 0 8}}</code></td>
-                </tr>
-                {{end}}
-                <tr>
-                    <th>Created</th>
-                    <td>{{.Variation.CreatedAt.Format "2006-01-02 15:04:05"}}</td>
-                </tr>
-                <tr>
-                    <th>Updated</th>
-                    <td>{{.Variation.UpdatedAt.Format "2006-01-02 15:04:05"}}</td>
-                </tr>
-                {{with .Cost}}
-                <tr>
-                    <th>Cost</th>
-                    <td>
-                        <strong>{{usd .AmountUSD}}</strong>
-                        <div style="color: #666; font-size: 0.85em; margin-top: 4px;">
-                            {{toks .Tokens.InputTokens}} in &middot;
-                            {{toks .Tokens.OutputTokens}} out &middot;
-                            {{toks .Tokens.CacheReadTokens}} cache read &middot;
-                            {{toks .Tokens.CacheWriteTokens}} cache write
-                        </div>
-                        {{if gt .CachedShare 0.0}}
-                        <div style="color: #666; font-size: 0.85em;">
-                            {{pct .CachedShare}} of the prompt was served from cache, billed at a tenth of the input rate.
-                        </div>
-                        {{end}}
-                    </td>
-                </tr>
-                {{end}}
-            </table>
-
-            {{if eq .Variation.Status "pending"}}
-            <div style="margin-top: 15px;">
-                <button type="button" onclick="document.getElementById('request-change-modal').style.display='flex'" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                    Request change
-                </button>
-                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry" style="display: inline; margin-left: 10px;">
-                    <button type="submit" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Regenerate
-                    </button>
-                </form>
-                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/rebase" style="display: inline; margin-left: 10px;">
-                    <button type="submit" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Rebase onto main
-                    </button>
-                </form>
+            <div class="card-head">
+                <h2 class="card-title">Demo</h2>
+                {{with .DemoStatus}}<span class="badge badge-{{.Tone}}">{{.Label}}</span>{{end}}
             </div>
-            {{else if or (eq .Variation.Status "error") (eq .Variation.Status "terminated") (eq .Variation.Status "blocked")}}
-            {{if .Variation.PausedForBudget}}
-            {{/* Paused on cost, not failed. The work is intact, so the choice is
-                 whether finishing it is worth more money -- which is why this
-                 says what it spent rather than just offering a retry. */}}
-            <div style="margin-top: 15px; padding: 12px; background: #fff3cd; border-left: 3px solid #b8860b; border-radius: 4px;">
-                <strong>Paused at its spend ceiling</strong>
-                <p style="margin: 6px 0 0;">
-                    This run cost <strong>{{usd .Variation.BudgetSpentUSD}}</strong>
-                    against a ceiling of <strong>{{usd .Variation.BudgetLimitUSD}}</strong>.
-                    Nothing went wrong &mdash; it ran out of budget before finishing, and the code it
-                    wrote is still here. Read the log below, then continue it if the remaining work
-                    is worth another {{usd .Variation.BudgetLimitUSD}}.
-                </p>
-                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry" style="margin-top: 10px;">
-                    <button type="submit" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Continue where it left off
-                    </button>
+
+            {{if .DemoInstance}}
+            {{if and .DemoInstance.URL .DemoRunning}}
+            <dl class="kv">
+                <dt>URL</dt>
+                <dd><a href="{{.DemoInstance.URL}}" target="_blank">{{.DemoInstance.URL}}</a></dd>
+            </dl>
+            {{end}}
+
+            {{if .DemoFailed}}
+            <div class="callout callout-failure">
+                <p class="callout-title">The demo did not start</p>
+                <p class="callout-detail">{{.DemoInstance.ErrorMessage}}</p>
+                <div class="actions">
+                    <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/restart-demo">
+                        <button type="submit" class="btn btn-secondary btn-sm">Retry the demo</button>
+                    </form>
+                </div>
+            </div>
+
+            {{if .DemoInstance.SuggestedFix}}
+            <div class="stack">
+                <p class="text-sm muted">Or apply a fix first. Mendel drafted this from the failure:</p>
+                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry-demo" class="stack-tight">
+                    <textarea name="fix_prompt" rows="5" class="input input-mono">{{.DemoInstance.SuggestedFix}}</textarea>
+                    <button type="submit" class="btn btn-primary btn-sm">Retry with this fix</button>
                 </form>
             </div>
             {{end}}
-            <div style="margin-top: 15px;">
-                <button type="button" onclick="document.getElementById('request-change-modal').style.display='flex'" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                    Request change
-                </button>
-                {{if not .Variation.PausedForBudget}}
-                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry" style="display: inline; margin-left: 10px;">
-                    <button type="submit" style="padding: 8px 16px; background: #ffc107; color: #212529; border: none; border-radius: 4px; cursor: pointer;">
-                        Retry from Scratch
-                    </button>
-                </form>
-                {{end}}
-                {{if .CanRetryFix}}
-                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry-fix" style="display: inline; margin-left: 10px;">
-                    <button type="submit" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Retry with Fix
-                    </button>
-                </form>
-                {{end}}
-                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/rebase" style="display: inline; margin-left: 10px;">
-                    <button type="submit" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Rebase onto main
-                    </button>
-                </form>
-            </div>
             {{end}}
 
-            {{if eq .Variation.Status "creating"}}
-            <div style="margin-top: 15px;">
-                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/terminate" style="display: inline;">
-                    <button type="submit" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Terminate
-                    </button>
+            <div class="actions">
+                {{if .DemoRunning}}
+                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/stop-demo">
+                    <button type="submit" class="btn btn-danger btn-sm">Stop the demo</button>
                 </form>
-                <span style="margin-left: 10px; color: #666; font-size: 0.9em;">Stop this stuck generation</span>
+                {{end}}
+                {{if .DemoStopped}}
+                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/restart-demo">
+                    <button type="submit" class="btn btn-primary btn-sm">Start the demo</button>
+                </form>
+                {{end}}
             </div>
+
+            {{with .DemoPanel}}
+            <details class="disclosure">
+                <summary>Demo log</summary>
+                <div class="disclosure-body">{{template "log-tail" .}}</div>
+            </details>
+            {{end}}
+
+            {{else}}
+            {{/* No demo yet. Say what is stopping one, and link to the fix. */}}
+            {{if .DemoReady}}
+            <p class="card-note">Deploy this variation to {{.DeploymentChannelName}} so you can click through it.</p>
+            <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/start-demo">
+                <button type="submit" class="btn btn-primary">Start a demo</button>
+            </form>
+            {{else if .HasDeploymentChannel}}
+                {{if .Requirements.Blocked}}
+                <div class="callout callout-waiting">
+                    <p class="callout-title">Not ready to run</p>
+                    <p class="callout-body">
+                        This variation&rsquo;s code needs something before it can start.
+                        See <strong>{{.Requirements.Title}}</strong> below.
+                    </p>
+                </div>
+                {{else if .MissingCredentials}}
+                <div class="callout callout-waiting">
+                    <p class="callout-title">Missing credentials</p>
+                    <p class="callout-body">
+                        Deploying to {{.DeploymentChannelName}} needs
+                        {{range $i, $c := .MissingCredentials}}{{if $i}}, {{end}}<code>{{$c}}</code>{{end}}.
+                    </p>
+                    <div class="actions">
+                        <a class="btn btn-primary btn-sm" href="/p/{{$.ProjectID}}/deployment">Add credentials</a>
+                    </div>
+                </div>
+                {{else if not .IsDemoValidated}}
+                <div class="callout callout-waiting">
+                    <p class="callout-title">Demo path not validated</p>
+                    <p class="callout-body">
+                        {{.DeploymentChannelName}} has not been proved to work yet. Validation deploys a
+                        hello-world app, health checks it, and tears it down, so the first real demo does
+                        not fail on a bad credential.
+                    </p>
+                    <div class="actions">
+                        <a class="btn btn-primary btn-sm" href="/p/{{$.ProjectID}}/deployment">Validate the demo path</a>
+                    </div>
+                </div>
+                {{end}}
+            {{else}}
+            <div class="callout callout-progress">
+                <p class="callout-title">No deployment channel configured</p>
+                <p class="callout-body">Mendel needs somewhere to run demos before it can show you this working.</p>
+                <div class="actions">
+                    <a class="btn btn-primary btn-sm" href="/p/{{$.ProjectID}}/deployment">Configure deployment</a>
+                </div>
+            </div>
+            {{end}}
             {{end}}
         </div>
+        {{end}}
+
+        {{template "requirements-panel" .Requirements}}
 
         {{/* Backing detail for the Refine track in the ribbon above. */}}
         {{if .Revisions}}
         <div class="card">
-            <h2>Requested changes</h2>
-            <p style="margin-top: 0; color: #666; font-size: 0.9em;">
-                Feedback you sent back for this variation, newest first.
-            </p>
-            <table>
-                <thead>
-                    <tr>
-                        <th style="width: 110px;">Status</th>
-                        <th>Feedback</th>
-                        <th style="width: 140px;">Requested</th>
-                    </tr>
-                </thead>
+            <div class="card-head"><h2 class="card-title">Requested changes</h2></div>
+            <p class="card-note">Feedback you sent back for this variation, newest first.</p>
+            <table class="table">
+                <thead><tr><th>Status</th><th>Feedback</th><th>Requested</th></tr></thead>
                 <tbody>
                     {{range .Revisions}}
                     <tr>
-                        <td>
-                            <span class="status {{if eq .Status "completed"}}status-resolved{{else if eq .Status "failed"}}status-error{{else if eq .Status "in_progress"}}status-active{{else}}status-pending{{end}}">
-                                {{.Status}}
-                            </span>
-                        </td>
+                        <td>{{with revisionStatus .Status}}<span class="badge badge-{{.Tone}}">{{.Label}}</span>{{end}}</td>
                         <td>
                             {{.Feedback}}
-                            {{if .ErrorMessage}}
-                            <div style="color: #721c24; font-size: 0.85em; margin-top: 4px;">{{derefString .ErrorMessage}}</div>
-                            {{end}}
+                            {{if .ErrorMessage}}<span class="table-sub">{{derefString .ErrorMessage}}</span>{{end}}
                         </td>
-                        <td style="font-size: 0.9em; color: #666;">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                        <td class="subtle nowrap">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
                     </tr>
                     {{end}}
                 </tbody>
@@ -184,181 +165,90 @@
         </div>
         {{end}}
 
-        {{template "requirements-panel" .Requirements}}
-
-        {{/* Demo Panel - shown when variation is ready for demo */}}
-        {{if or .DemoInstance (eq .Variation.Status "pending")}}
         <div class="card">
-            <h2>Demo</h2>
-            {{if .DemoInstance}}
-            <div style="margin-bottom: 15px;">
-                <table>
-                    <tr>
-                        <th style="width: 80px;">Status</th>
-                        <td>
-                            <span class="status {{if eq .DemoInstance.Status "running"}}status-active{{else if eq .DemoInstance.Status "starting"}}status-pending{{else if eq .DemoInstance.Status "error"}}status-error{{else}}status-resolved{{end}}">
-                                {{.DemoInstance.Status}}
-                            </span>
-                        </td>
-                    </tr>
-                    {{if and .DemoInstance.URL (eq .DemoInstance.Status "running")}}
-                    <tr>
-                        <th>URL</th>
-                        <td><a href="{{.DemoInstance.URL}}" target="_blank">{{.DemoInstance.URL}}</a></td>
-                    </tr>
-                    {{end}}
-                </table>
+            <div class="card-head"><h2 class="card-title">Code generation</h2></div>
+            {{template "log-tail" .CodegenPanel}}
+        </div>
+    </div>
 
-                {{if eq .DemoInstance.Status "running"}}
-                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/stop-demo" style="margin-top: 10px;">
-                    <button type="submit" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Stop Demo
-                    </button>
-                </form>
+    <div class="stack">
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">Source</h2></div>
+            <dl class="kv">
+                {{if .GitHubURL}}
+                <dt>Branch</dt>
+                <dd>
+                    <a href="{{.GitHubURL}}" target="_blank" class="mono">{{if .Variation.CommitRef}}{{slice .Variation.CommitRef 0 8}}{{else}}on GitHub{{end}}</a>
+                    {{if .DiffURL}}<a href="{{.DiffURL}}" target="_blank" class="text-sm">diff</a>{{end}}
+                </dd>
+                {{else if .Variation.CommitRef}}
+                <dt>Commit</dt><dd><code>{{slice .Variation.CommitRef 0 8}}</code></dd>
                 {{end}}
+                <dt>Created</dt><dd class="subtle">{{.Variation.CreatedAt.Format "2006-01-02 15:04"}}</dd>
+                <dt>Updated</dt><dd class="subtle">{{.Variation.UpdatedAt.Format "2006-01-02 15:04"}}</dd>
+            </dl>
+        </div>
 
-                {{if eq .DemoInstance.Status "stopped"}}
-                <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/restart-demo" style="margin-top: 10px;">
-                    <button type="submit" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Start Demo
-                    </button>
-                </form>
-                {{end}}
-
-                {{if eq .DemoInstance.Status "error"}}
-                <div style="margin-top: 15px; padding: 10px; background: #f8d7da; border-radius: 4px;">
-                    <strong style="color: #721c24;">Error:</strong>
-                    <p style="margin: 5px 0; color: #721c24; font-family: monospace; white-space: pre-wrap;">{{.DemoInstance.ErrorMessage}}</p>
-
-                    <div style="margin-top: 10px; display: flex; gap: 10px; align-items: flex-start;">
-                        <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/restart-demo">
-                            <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                                Retry Demo
-                            </button>
-                        </form>
-                    </div>
-
-                    {{if .DemoInstance.SuggestedFix}}
-                    <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #f5c6cb;">
-                        <strong style="color: #856404;">Or apply a fix first:</strong>
-                        <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry-demo" style="margin-top: 5px;">
-                            <textarea name="fix_prompt" style="width: 100%; height: 100px; font-family: monospace; font-size: 0.85em; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">{{.DemoInstance.SuggestedFix}}</textarea>
-                            <button type="submit" style="margin-top: 8px; padding: 8px 16px; background: #ffc107; color: #212529; border: none; border-radius: 4px; cursor: pointer;">
-                                Retry with Fix
-                            </button>
-                        </form>
-                    </div>
+        {{with .Cost}}
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">Cost</h2></div>
+            <div class="metric-value">{{usd .AmountUSD}}</div>
+            <div class="metric-label">Spent on this variation</div>
+            <details class="disclosure">
+                <summary>Token detail</summary>
+                <div class="disclosure-body">
+                    <p class="text-sm muted">
+                        {{toks .Tokens.InputTokens}} in &middot;
+                        {{toks .Tokens.OutputTokens}} out &middot;
+                        {{toks .Tokens.CacheReadTokens}} cache read &middot;
+                        {{toks .Tokens.CacheWriteTokens}} cache write
+                    </p>
+                    {{if gt .CachedShare 0.0}}
+                    <p class="text-sm muted">
+                        {{pct .CachedShare}} of the prompt was served from cache, billed at a tenth of the input rate.
+                    </p>
                     {{end}}
                 </div>
-                {{end}}
-            </div>
-
-            {{/* Demo Logs */}}
-            {{if .DemoPanel}}
-            <div style="border-top: 1px solid #ddd; padding-top: 15px;">
-                <strong style="display: block; margin-bottom: 10px;">Logs</strong>
-                {{template "log-tail" .DemoPanel}}
-            </div>
-            {{end}}
-
-            {{else}}
-            {{/* No demo instance - show Start Demo button or setup message */}}
-            {{if .DemoReady}}
-            <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/start-demo">
-                <button type="submit" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                    Start Demo
-                </button>
-            </form>
-            <p style="color: #666; font-size: 0.85em; margin-top: 10px;">
-                Deploy this variation to {{.DeploymentChannelName}}.
-            </p>
-            {{else if .HasDeploymentChannel}}
-                {{if .Requirements.Blocked}}
-                {{/* The code itself cannot run yet; see the section above. */}}
-                <div style="padding: 15px; background: #fff3cd; border-radius: 4px; border: 1px solid #ffc107;">
-                    <strong style="color: #856404;">Not Ready to Run</strong>
-                    <p style="color: #856404; margin: 8px 0 0 0; font-size: 0.9em;">
-                        This variation's code needs something before it can start. See
-                        <strong>What This Needs to Run</strong> above.
-                    </p>
-                </div>
-                {{else if .MissingCredentials}}
-                {{/* Channel configured but missing credentials */}}
-                <div style="padding: 15px; background: #fff3cd; border-radius: 4px; border: 1px solid #ffc107;">
-                    <strong style="color: #856404;">Missing Credentials</strong>
-                    <p style="color: #856404; margin: 8px 0 0 0; font-size: 0.9em;">
-                        Deployment channel ({{.DeploymentChannelName}}) requires these credentials:
-                    </p>
-                    <ul style="color: #856404; margin: 8px 0 0 0; font-size: 0.9em;">
-                        {{range .MissingCredentials}}
-                        <li><code>{{.}}</code></li>
-                        {{end}}
-                    </ul>
-                    <a href="/p/{{$.ProjectID}}/deployment" style="display: inline-block; margin-top: 12px; padding: 8px 16px; background: #ffc107; color: #212529; border-radius: 4px; text-decoration: none;">
-                        Add Credentials
-                    </a>
-                </div>
-                {{else if not .IsDemoValidated}}
-                {{/* Channel configured but not validated for demos */}}
-                <div style="padding: 15px; background: #fff3cd; border-radius: 4px; border: 1px solid #ffc107;">
-                    <strong style="color: #856404;">Demo Path Not Validated</strong>
-                    <p style="color: #856404; margin: 8px 0 0 0; font-size: 0.9em;">
-                        Deployment channel ({{.DeploymentChannelName}}) needs to be validated before demos can run.
-                        Validation deploys a hello-world app to confirm the credentials work.
-                    </p>
-                    <a href="/p/{{$.ProjectID}}/deployment" style="display: inline-block; margin-top: 12px; padding: 8px 16px; background: #007bff; color: white; border-radius: 4px; text-decoration: none;">
-                        Validate Demo Deployment
-                    </a>
-                </div>
-                {{end}}
-            {{else}}
-            <div style="padding: 15px; background: #e7f1ff; border-radius: 4px; border: 1px solid #b8daff;">
-                <strong style="color: #004085;">Deployment Channel Not Configured</strong>
-                <p style="color: #004085; margin: 8px 0 0 0; font-size: 0.9em;">
-                    To enable demos, configure a deployment channel in project settings.
-                </p>
-                <a href="/p/{{$.ProjectID}}/deployment" style="display: inline-block; margin-top: 12px; padding: 8px 16px; background: #007bff; color: white; border-radius: 4px; text-decoration: none;">
-                    Configure Deployment
-                </a>
-            </div>
-            {{end}}
-            {{end}}
+            </details>
         </div>
         {{end}}
 
         <div class="card">
-            <h2 style="margin: 0;">Code Generation</h2>
-
-            <div style="margin-top: 15px;">
-                {{template "log-tail" .CodegenPanel}}
-            </div>
-        </div>
-    </div>
-
-    <div style="flex: 1;">
-        <div class="card">
-            <h2>Hop</h2>
+            <div class="card-head"><h2 class="card-title">Hop</h2></div>
             <p><a href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">{{.Hop.Name}}</a></p>
-            <p style="color: #666; font-size: 0.9em;">{{.Hop.Commentary}}</p>
+            <p class="text-sm muted">{{.Hop.Commentary}}</p>
         </div>
+
+        <details class="disclosure">
+            <summary>Diagnostics</summary>
+            <div class="disclosure-body">
+                <dl class="kv">
+                    <dt>Variation status</dt><dd><code>{{.Variation.Status}}</code></dd>
+                    <dt>Hop status</dt><dd><code>{{.Hop.Status}}</code></dd>
+                    {{if .DemoInstance}}<dt>Demo status</dt><dd><code>{{.DemoInstance.Status}}</code></dd>{{end}}
+                </dl>
+            </div>
+        </details>
     </div>
 </div>
 
-
-<!-- Request Change Modal -->
-<div id="request-change-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 1000;">
-    <div style="background: white; padding: 24px; border-radius: 8px; max-width: 500px; width: 90%;">
-        <h3 style="margin-top: 0;">Request Change</h3>
-        <p style="color: #666;">Describe the change you'd like to make or the issue you've found. Mendel will apply this feedback to the existing code.</p>
+{{/* Opened by the "Request a change" action in the ribbon, via :target. No
+     JavaScript, so it cannot get stuck open or fail to open. */}}
+<div id="request-change" class="modal">
+    <div class="modal-box">
+        <h2 class="modal-title">Request a change</h2>
+        <p class="text-sm muted">
+            Describe the change you want or the problem you found. Mendel applies the
+            feedback to the existing code rather than starting again.
+        </p>
         <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/request-change">
-            <textarea name="feedback" rows="5" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-family: inherit; resize: vertical;" placeholder="e.g., The auth.js file is not being served correctly - it returns index.html instead. Fix the static file routing." required></textarea>
-            <div style="margin-top: 16px; text-align: right;">
-                <button type="button" onclick="document.getElementById('request-change-modal').style.display='none'" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 8px;">
-                    Cancel
-                </button>
-                <button type="submit" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                    Submit
-                </button>
+            <div class="field">
+                <textarea name="feedback" rows="5" required
+                    placeholder="e.g. auth.js is served as index.html — fix the static file routing."></textarea>
+            </div>
+            <div class="actions actions-end">
+                <a class="btn btn-secondary" href="#">Cancel</a>
+                <button type="submit" class="btn btn-primary">Send feedback</button>
             </div>
         </form>
     </div>

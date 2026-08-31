@@ -154,3 +154,45 @@ func proposedVariations(ctx context.Context, s *Server, hopID uuid.UUID) []Roadm
 	}
 	return out
 }
+
+// PageAction is one thing the reader can do, rendered into the ribbon's foot.
+//
+// The point of routing actions through here is that a page then has exactly one
+// place to look for "what can I do". The old Variation page scattered its
+// buttons across a details table, a sidebar card, and a demo panel, so the
+// answer depended on where you happened to be reading.
+type PageAction struct {
+	Label string
+
+	// Exactly one of Href or Post. Href is a link; Post submits a form, which
+	// is what anything with a side effect must be.
+	Href string
+	Post string
+
+	// Role picks the button treatment: "primary", "secondary", or "danger".
+	// There must be at most one primary in a ribbon — it is the thing the page
+	// wants you to do.
+	Role string
+
+	// Confirm, when set, is the message shown before a Post is sent.
+	Confirm string
+
+	// Note is a short clause explaining the action, shown beside it. Use it
+	// when the label alone would be ambiguous or alarming.
+	Note string
+}
+
+// RibbonView is a Ribbon plus the actions the page offers on it.
+//
+// It embeds domain.Ribbon, so the partial reads Headline, Tone, and Tracks
+// exactly as before; the wrapper adds only what the domain has no business
+// knowing, namely URLs.
+type RibbonView struct {
+	domain.Ribbon
+	Actions []PageAction
+}
+
+// ribbonView wraps a Ribbon with the actions a page offers.
+func ribbonView(r domain.Ribbon, actions ...PageAction) *RibbonView {
+	return &RibbonView{Ribbon: r, Actions: actions}
+}

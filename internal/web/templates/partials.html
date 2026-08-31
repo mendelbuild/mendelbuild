@@ -2,7 +2,7 @@
 Shared components. This file is parsed alongside layout.html for every page, so
 any template defined here is available everywhere.
 
-    lifecycle-ribbon    expects a domain.Ribbon
+    lifecycle-ribbon    expects a *web.RibbonView
     roadmap-panel       expects a *web.MiniRoadmap
     log-tail            expects a *web.LogPanel
     requirements-panel  expects a web.RequirementsPanel
@@ -40,11 +40,25 @@ full set rendered in every tone and state.
     </div>
     {{end}}
 
-    {{/* The foot is where a page's primary action belongs, beside the sentence
-         explaining why it is being offered. Pages that have one render it into
-         `.ribbon-foot .actions`; see /styleguide. */}}
+    {{/* The foot is where a page's primary action belongs: beside the sentence
+         explaining why it is being offered, and nowhere else on the page. */}}
     <div class="ribbon-foot">
         <p class="ribbon-next">{{.NextAction}}</p>
+        {{if .Actions}}
+        <div class="actions">
+            {{range .Actions}}
+            {{if .Href}}
+            <a class="btn btn-{{.Role}}" href="{{.Href}}">{{.Label}}</a>
+            {{else}}
+            <form method="POST" action="{{.Post}}">
+                <button type="submit" class="btn btn-{{.Role}}"
+                    {{if .Confirm}}onclick="return confirm('{{.Confirm}}')"{{end}}>{{.Label}}</button>
+            </form>
+            {{end}}
+            {{if .Note}}<span class="text-sm subtle">{{.Note}}</span>{{end}}
+            {{end}}
+        </div>
+        {{end}}
     </div>
 </section>
 {{end}}

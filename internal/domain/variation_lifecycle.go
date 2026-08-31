@@ -127,6 +127,16 @@ func VariationLifecycle(v *Variation, revs []VariationRevision, h *Hop) Ribbon {
 		r.Headline = "Writing code"
 		r.NextAction = "Mendel is implementing this approach. It will be ready to review when the build finishes."
 
+	// Running out of money is not the same as being blocked on a credential,
+	// and the status column cannot tell them apart: handleVariationBudgetPause
+	// leaves a paused run in `blocked` (or `error`, depending on where it
+	// stopped). Checked before both, because both would otherwise claim it.
+	case v.PausedForBudget():
+		r.Tone, r.WaitingOn = ToneWaiting, ActorYou
+		r.Headline = "Paused at its spend ceiling"
+		r.NextAction = "Nothing went wrong — it ran out of budget before finishing, and the code " +
+			"it wrote is intact. Continue it if the remaining work is worth more money."
+
 	case st == VariationStatusBlocked:
 		r.Tone, r.WaitingOn = ToneWaiting, ActorYou
 		r.Headline = "Blocked — needs something from you"
@@ -326,5 +336,77 @@ func variationVerdictTrack(st VariationStatus) Track {
 	default:
 		// Still being built or blocked; judgement has not begun.
 		return stageSeq(VariationTrackVerdict, "Verdict", verdictKeys, verdictLabels, -1, ToneNeutral)
+	}
+}
+
+// VariationOffers is what a person may do to a Variation right now.
+//
+// This lives here, next to the lifecycle, for the reason the ribbon does: the
+// answer is derived from status, revision history, and whether the run stopped
+// on cost, and working that out inside a template meant the Variation page
+// carried ten separate `eq .Status "..."` branches deciding which buttons to
+// draw. Two of them disagreed about `blocked`.
+//
+// It says nothing about where the buttons go or what they are called; that is
+// the template's business. It says only what is legitimate.
+type VariationOffers struct {
+	// RequestChange sends feedback back for revision. Available whenever there
+	// is code to revise.
+	RequestChange bool
+	// Continue resumes a run that stopped at its spend ceiling. The work is
+	// intact, so this is not a retry: it is the same run, funded further.
+	Continue bool
+	// Regenerate discards the work and builds the approach again from scratch.
+	// Never offered alongside Continue — throwing away intact code because it
+	// ran out of money is not a thing to offer next to resuming it.
+	Regenerate bool
+	// RetryWithFix rebuilds with the diagnosed failure fed back in.
+	RetryWithFix bool
+	// Rebase moves the variation onto the current main.
+	Rebase bool
+	// Terminate stops a generation that is stuck.
+	Terminate bool
+}
+
+// Any reports whether there is anything at all to offer, so a template can omit
+// the action region rather than render an empty one.
+func (o VariationOffers) Any() bool {
+	return o.RequestChange || o.Continue || o.Regenerate || o.RetryWithFix || o.Rebase || o.Terminate
+}
+
+// VariationActions decides what may be done to a Variation.
+//
+// canRetryFix reports whether a failure was diagnosed well enough to retry
+// against it; that judgement needs the build logs and so is made by the caller.
+func VariationActions(v *Variation, canRetryFix bool) VariationOffers {
+	if v == nil {
+		return VariationOffers{}
+	}
+
+	switch v.Status {
+	case VariationStatusCreating:
+		// Mid-build. Nothing to revise yet, and the only useful intervention is
+		// to stop it.
+		return VariationOffers{Terminate: true}
+
+	case VariationStatusPending:
+		return VariationOffers{RequestChange: true, Regenerate: true, Rebase: true}
+
+	case VariationStatusError, VariationStatusTerminated, VariationStatusBlocked:
+		if v.PausedForBudget() {
+			return VariationOffers{RequestChange: true, Continue: true, Rebase: true}
+		}
+		return VariationOffers{
+			RequestChange: true,
+			Regenerate:    true,
+			RetryWithFix:  canRetryFix,
+			Rebase:        true,
+		}
+
+	default:
+		// Live, drained, or adjudicated. These are outcomes, not workbenches:
+		// offering "retry from scratch" on a merged winner would be an invitation
+		// to undo a decision that has already been acted on.
+		return VariationOffers{}
 	}
 }

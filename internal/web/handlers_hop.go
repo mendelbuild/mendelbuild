@@ -65,6 +65,22 @@ func buildGitHubDiffURL(repoURL, mainBranch, branchName string) string {
 type VariationWithLogs struct {
 	Variation  domain.Variation
 	RecentLogs []domain.VariationLog
+
+	// Hop is what the Variation belongs to. Carried so Status can be derived
+	// rather than supplied.
+	Hop *domain.Hop
+}
+
+// Status is the same plain-English reading the Variation's own page gives, so a
+// variation cannot describe itself one way in a list and another when you click
+// into it.
+//
+// A method rather than a field, so a caller building this struct cannot forget
+// it and leave a blank badge on the page. Revisions are not loaded for a list,
+// so a first build and a revision in flight both read as "writing code" here;
+// that is acceptable in a list and never on the Variation's own page.
+func (v VariationWithLogs) Status() domain.StatusView {
+	return domain.VariationStatusView(&v.Variation, nil, v.Hop)
 }
 
 // HopDetailView holds data for rendering the hop detail page.
@@ -82,7 +98,7 @@ type HopDetailView struct {
 	NeedsProductionCredentials bool // requires_production but no credentials configured
 	Cost                     *HopCostView
 
-	Ribbon domain.Ribbon // Plain-English lifecycle position and next action
+	Ribbon *RibbonView // Lifecycle position, next action, and what to do about it
 	Roadmap *MiniRoadmap  // The project roadmap, scrolled to this Hop
 }
 
@@ -131,6 +147,7 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 		variations = append(variations, VariationWithLogs{
 			Variation:  v,
 			RecentLogs: logs,
+			Hop:        hop,
 		})
 	}
 
@@ -210,9 +227,12 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 		IsStuck:                    isStuck,
 		NeedsProductionCredentials: needsProductionCredentials,
 		Cost:                       costView,
-		Ribbon:                     domain.HopLifecycle(hop, rawVariations),
+		Ribbon:                     ribbonView(domain.HopLifecycle(hop, rawVariations)),
 		Roadmap:                      s.buildMiniRoadmap(ctx, projectID, hop, uuid.Nil),
 	}
+
+	// Actions need the assembled view, so they are attached once it exists.
+	view.Ribbon.Actions = hopRibbonActions(projectID, view)
 
 	data := map[string]interface{}{
 		"Title":     "Hop: " + hop.Name,
@@ -296,8 +316,42 @@ type VariationDetailView struct {
 	Requirements *RequirementsPanel
 
 	Revisions []domain.VariationRevision // User-requested changes; drives the Refine track
-	Ribbon    domain.Ribbon              // Plain-English lifecycle position and next action
+	Ribbon    *RibbonView                // Lifecycle position, next action, and what to do about it
 	Roadmap   *MiniRoadmap               // The project roadmap, scrolled to the parent Hop
+
+	// Offers is what may be done to this Variation right now. Decided in the
+	// domain so the template does not have to work it out from the status.
+	Offers domain.VariationOffers
+}
+
+// DemoStatus renders the demo instance's status as a word and a tone. Returns
+// the zero value when there is no demo, which the template guards on.
+func (v *VariationDetailView) DemoStatus() domain.StatusView {
+	if v.DemoInstance == nil {
+		return domain.StatusView{}
+	}
+	return domain.DemoStatus(v.DemoInstance.Status)
+}
+
+// DemoRunning and DemoStopped name the two demo states the page offers a button
+// for. Naming them here keeps the raw status out of the template.
+func (v *VariationDetailView) DemoRunning() bool {
+	return v.DemoInstance != nil && v.DemoInstance.Status == domain.DemoInstanceStatusRunning
+}
+
+func (v *VariationDetailView) DemoStopped() bool {
+	return v.DemoInstance != nil && v.DemoInstance.Status == domain.DemoInstanceStatusStopped
+}
+
+func (v *VariationDetailView) DemoFailed() bool {
+	return v.DemoInstance != nil && v.DemoInstance.Status == domain.DemoInstanceStatusError
+}
+
+// ShowDemoPanel reports whether the demo section is worth drawing at all: a
+// demo exists, or the code is built and could have one.
+func (v *VariationDetailView) ShowDemoPanel() bool {
+	return v.DemoInstance != nil ||
+		(v.Variation != nil && v.Variation.Status == domain.VariationStatusPending)
 }
 
 func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
@@ -489,13 +543,14 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		CodegenPanel:          codegenPanel,
 		DemoPanel:             demoPanel,
 		Revisions:             revisions,
-		Ribbon:                domain.VariationLifecycle(variation, revisions, hop),
+		Ribbon: variationRibbon(projectID, variation, revisions, hop, canRetryFix),
 		Roadmap:                 s.buildMiniRoadmap(ctx, projectID, hop, variationID),
 		DemoInstance:          demoInstance,
 		DemoLogs:              demoLogs,
 		GitHubURL:             githubURL,
 		DiffURL:               diffURL,
 		CanRetryFix:           canRetryFix,
+		Offers:                domain.VariationActions(variation, canRetryFix),
 		LastError:             lastError,
 		HasDeploymentChannel:  hasDeploymentChannel,
 		DeploymentChannelName: deploymentChannelName,

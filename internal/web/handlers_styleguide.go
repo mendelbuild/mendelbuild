@@ -19,10 +19,14 @@ import (
 
 // Specimen is one rendered example with a note saying what it is for.
 type Specimen struct {
-	Label  string
-	Note   string
-	Ribbon domain.Ribbon
+	Label   string
+	Note    string
+	Ribbon  domain.Ribbon
+	Actions []PageAction
 }
+
+// View wraps the specimen's Ribbon for the partial, which takes a *RibbonView.
+func (s Specimen) View() *RibbonView { return ribbonView(s.Ribbon, s.Actions...) }
 
 // SpecimenGroup is a set of specimens under one heading.
 type SpecimenGroup struct {

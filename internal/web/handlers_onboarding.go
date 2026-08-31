@@ -51,7 +51,7 @@ type SetupOKRView struct {
 	Notes      *domain.StrategyDraftNotes
 	Objectives []SetupObjectiveView
 	Funding    *domain.FundingSource
-	Ribbon     domain.Ribbon
+	Ribbon     *RibbonView
 	Error      string
 
 	// Drafting and DraftFailed are mutually exclusive with showing the draft:
@@ -456,7 +456,7 @@ func (s *Server) renderSetupOKRs(ctx context.Context, w http.ResponseWriter, r *
 	view := SetupOKRView{
 		Project:     project,
 		Strategy:    &strategy,
-		Ribbon:      domain.OnboardingLifecycle(state),
+		Ribbon:      ribbonView(domain.OnboardingLifecycle(state)),
 		Error:       errMsg,
 		Drafting:    state.Drafting,
 		DraftFailed: state.DraftFailed,
@@ -889,5 +889,5 @@ func (s *Server) addOnboardingRibbon(ctx context.Context, data map[string]interf
 	if err != nil || state.Complete() {
 		return
 	}
-	data["OnboardingRibbon"] = domain.OnboardingLifecycle(state)
+	data["OnboardingRibbon"] = ribbonView(domain.OnboardingLifecycle(state))
 }

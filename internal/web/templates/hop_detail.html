@@ -1,193 +1,164 @@
 {{define "page-content"}}
 {{with .View}}
-<h1>Hop: {{.Hop.Name}}</h1>
-<p><a href="/p/{{$.ProjectID}}/strategy">&larr; Back to Strategy</a></p>
+<div class="page-head">
+    <nav class="breadcrumb">
+        <a href="/p/{{$.ProjectID}}/roadmap">Roadmap</a>
+        <span class="breadcrumb-sep">/</span>
+        <span>{{.Hop.Name}}</span>
+    </nav>
+    <span class="page-kind">Hop</span>
+    <h1 class="page-title">{{.Hop.Name}}</h1>
+    {{if .Hop.Commentary}}<p class="page-lede">{{.Hop.Commentary}}</p>{{end}}
+</div>
 
 {{template "roadmap-panel" .Roadmap}}
 {{template "lifecycle-ribbon" .Ribbon}}
 
 {{if .NeedsProductionCredentials}}
-<div style="padding: 15px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; margin-bottom: 20px;">
-    <strong style="color: #856404;">Production deployment requires credentials</strong>
-    <p style="margin: 8px 0 0 0; color: #856404;">
-        This hop requires production traffic comparison, but no cloud credentials are configured.
-        <a href="/p/{{$.ProjectID}}/settings" style="color: #007bff;">Configure in Project Settings &rarr;</a>
+<div class="callout callout-waiting">
+    <p class="callout-title">Production deployment needs credentials</p>
+    <p class="callout-body">
+        This Hop compares variations under real traffic, but no cloud credentials are
+        configured, so nothing can be deployed to compare.
     </p>
+    <div class="actions">
+        <a class="btn btn-primary btn-sm" href="/p/{{$.ProjectID}}/settings">Add credentials</a>
+    </div>
 </div>
 {{end}}
 
-<div style="display: flex; gap: 20px; align-items: flex-start;">
-    <div style="flex: 2;">
+<div class="split">
+    <div>
         <div class="card">
-            <h2>Details</h2>
-            <table>
-                <tr>
-                    {{/* The ribbon above states this in plain English; this row
-                         keeps the raw value available for debugging. */}}
-                    <th style="width: 150px;">Internal status</th>
-                    <td><span class="status status-{{.Hop.Status}}">{{.Hop.Status}}</span></td>
-                </tr>
-                <tr>
-                    <th>Commentary</th>
-                    <td>{{.Hop.Commentary}}</td>
-                </tr>
-                <tr>
-                    <th>Created</th>
-                    <td>{{.Hop.CreatedAt.Format "2006-01-02 15:04"}}</td>
-                </tr>
-            </table>
+            <div class="card-head">
+                <h2 class="card-title">Variations</h2>
+                {{if .Variations}}<span class="badge badge-quiet">{{len .Variations}}</span>{{end}}
+            </div>
+
+            {{if .Variations}}
+            <div class="stack">
+                {{range .Variations}}
+                <div class="callout callout-quiet callout-{{.Status.Tone}}">
+                    <div class="row row-baseline row-tight">
+                        <a href="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}" class="callout-title">{{.Variation.Name}}</a>
+                        <span class="badge badge-{{.Status.Tone}}">{{.Status.Label}}</span>
+                        {{if .Variation.CommitRef}}<code class="text-xs">{{slice .Variation.CommitRef 0 7}}</code>{{end}}
+                    </div>
+                    {{if .Variation.Approach}}
+                    <p class="callout-body">{{.Variation.Approach}}</p>
+                    {{end}}
+                    {{if .RecentLogs}}
+                    <details class="disclosure">
+                        <summary>Recent activity</summary>
+                        <div class="disclosure-body log">
+                            <div class="log-scroll">
+                                <table class="log-table">
+                                    <tbody>
+                                        {{range .RecentLogs}}
+                                        <tr>
+                                            <td class="log-time">{{.LoggedAt.Format "15:04:05"}}</td>
+                                            <td class="log-msg">{{.Message}}</td>
+                                        </tr>
+                                        {{end}}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </details>
+                    {{end}}
+                </div>
+                {{end}}
+            </div>
+            {{else}}
+            <div class="empty-block">
+                <div class="empty-title">No variations yet</div>
+                <p class="empty">
+                    Mendel proposes several approaches to this Hop and asks you to approve them
+                    before it writes any code.
+                </p>
+            </div>
+            {{end}}
         </div>
 
         {{if .Objectives}}
         <div class="card">
-            <h2>Objectives</h2>
-            {{range .Objectives}}
-            <div class="objective">
-                <p style="margin: 0;">{{.Description}}</p>
+            <div class="card-head">
+                <h2 class="card-title">What this Hop is for</h2>
+                <a class="card-head-action" href="/p/{{$.ProjectID}}/okr">All OKRs &rarr;</a>
             </div>
-            {{end}}
+            <div class="stack-tight">
+                {{range .Objectives}}<p>{{.Description}}</p>{{end}}
+            </div>
         </div>
         {{end}}
+    </div>
 
+    <div class="stack">
         {{with .Cost}}
         <div class="card">
-            <h2>Cost</h2>
-            <div class="funding">
-                <div class="funding-item">
-                    <div class="amount">{{usd .ActualUSD}}</div>
-                    <div class="type">Spent</div>
+            <div class="card-head"><h2 class="card-title">Cost</h2></div>
+            <div class="metrics">
+                <div>
+                    <div class="metric-value">{{usd .ActualUSD}}</div>
+                    <div class="metric-label">Spent</div>
                 </div>
                 {{if .HasEstimate}}
-                <div class="funding-item">
-                    <div class="amount">{{usdPtr .EstimateUSD}}</div>
-                    <div class="type">Estimated</div>
+                <div>
+                    <div class="metric-value">{{usdPtr .EstimateUSD}}</div>
+                    <div class="metric-label">Estimated</div>
                 </div>
                 {{end}}
                 {{if .LimitUSD}}
-                <div class="funding-item">
-                    <div class="amount" {{if .OverBudget}}style="color: #dc3545;"{{end}}>{{usdPtr .LimitUSD}}</div>
-                    <div class="type">Ceiling</div>
+                <div{{if .OverBudget}} class="metric-alert"{{end}}>
+                    <div class="metric-value">{{usdPtr .LimitUSD}}</div>
+                    <div class="metric-label">Ceiling</div>
                 </div>
                 {{end}}
             </div>
 
             {{if .Variance}}
-            <p style="margin: 12px 0 0; font-weight: 600; {{if .OverBudget}}color: #dc3545;{{end}}">
-                {{.Variance}}{{if .OverBudget}} &mdash; over its ceiling{{end}}
+            <p class="text-sm{{if .OverBudget}} metric-alert{{end}}">
+                <strong>{{.Variance}}</strong>{{if .OverBudget}} &mdash; over its ceiling{{end}}
             </p>
             {{end}}
 
-            {{if not .Tokens.IsZero}}
-            <p style="margin: 8px 0 0; color: #666; font-size: 0.85em;">
-                {{toks .Tokens.InputTokens}} in &middot;
-                {{toks .Tokens.OutputTokens}} out &middot;
-                {{toks .Tokens.CacheReadTokens}} cache read &middot;
-                {{toks .Tokens.CacheWriteTokens}} cache write
-            </p>
-            {{end}}
-
-            {{if .Basis}}
-            <details style="margin-top: 12px;">
-                <summary style="cursor: pointer; color: #007bff; font-size: 0.9em;">
-                    How this was estimated{{if .Confidence}} ({{pct (derefFloat .Confidence)}} confidence){{end}}
-                </summary>
-                <p style="margin: 8px 0 0; color: #555; font-size: 0.9em;">{{derefString .Basis}}</p>
-                <p style="margin: 4px 0 0; color: #888; font-size: 0.8em;">Estimated by: {{.Estimator}}</p>
+            {{if or (not .Tokens.IsZero) .Basis}}
+            <details class="disclosure">
+                <summary>How this was estimated{{if .Confidence}} ({{pct (derefFloat .Confidence)}} confidence){{end}}</summary>
+                <div class="disclosure-body">
+                    {{if .Basis}}
+                    <p class="text-sm muted">{{derefString .Basis}}</p>
+                    <p class="text-xs subtle">Estimated by {{.Estimator}}.</p>
+                    {{end}}
+                    {{if not .Tokens.IsZero}}
+                    <p class="text-sm muted">
+                        {{toks .Tokens.InputTokens}} in &middot;
+                        {{toks .Tokens.OutputTokens}} out &middot;
+                        {{toks .Tokens.CacheReadTokens}} cache read &middot;
+                        {{toks .Tokens.CacheWriteTokens}} cache write
+                    </p>
+                    {{end}}
+                </div>
             </details>
             {{end}}
         </div>
         {{end}}
 
         <div class="card">
-            <h2>Variations</h2>
-            {{if .Variations}}
-            {{range .Variations}}
-            <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; {{if eq .Variation.Status "creating"}}border-color: #007bff;{{else if eq .Variation.Status "error"}}border-color: #dc3545;{{else if eq .Variation.Status "pending"}}border-color: #28a745;{{end}}">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
-                    <div>
-                        <a href="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}" style="font-weight: bold; font-size: 1.1em; color: #007bff; text-decoration: none;">{{.Variation.Name}}</a>
-                        <span class="status {{if eq .Variation.Status "pending"}}status-pending{{else if eq .Variation.Status "creating"}}status-active{{else if eq .Variation.Status "error"}}status-error{{else if eq .Variation.Status "terminated"}}status-error{{else}}status-{{.Variation.Status}}{{end}}" style="margin-left: 10px;">
-                            {{.Variation.Status}}
-                        </span>
-                        {{if .Variation.CommitRef}}
-                        <code style="font-size: 0.85em; margin-left: 10px;">{{slice .Variation.CommitRef 0 7}}</code>
-                        {{end}}
-                    </div>
-                    <div>
-                        {{if eq .Variation.Status "error"}}
-                        <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry" style="display: inline;">
-                            <button type="submit" style="padding: 4px 8px; background: #ffc107; color: #212529; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
-                                Retry
-                            </button>
-                        </form>
-                        {{end}}
-                    </div>
-                </div>
-                {{if .Variation.Approach}}
-                <p style="color: #666; margin: 0 0 10px 0; font-size: 0.9em;">{{.Variation.Approach}}</p>
-                {{end}}
-                {{if .RecentLogs}}
-                <div style="background: #f8f9fa; border-radius: 4px; padding: 10px; font-family: monospace; font-size: 0.85em;">
-                    {{range .RecentLogs}}
-                    <div style="margin-bottom: 3px;">
-                        <span style="color: #666;">{{.LoggedAt.Format "2006/01/02 15:04:05"}}</span>
-                        {{if eq .Level "milestone"}}<span style="color: #28a745;">[M]</span>{{else if eq .Level "error"}}<span style="color: #dc3545;">[E]</span>{{else}}<span style="color: #007bff;">[I]</span>{{end}}
-                        {{.Message}}
-                    </div>
-                    {{end}}
-                </div>
-                {{end}}
-            </div>
-            {{end}}
-            {{else}}
-            <p class="empty">No variations yet.</p>
-            {{end}}
-        </div>
-    </div>
-
-    <div style="flex: 1;">
-        <div class="card">
-            <h2>Actions</h2>
-
-            {{/* Narration of the Hop's state lives in the lifecycle ribbon at
-                 the top of the page. This card carries only things you can act
-                 on, so it stays empty when there is nothing to do. */}}
-            {{if .PendingReview}}
-            <div style="padding: 15px; background: #cce5ff; border-radius: 4px; margin-bottom: 15px;">
-                <strong>Review the proposed approaches</strong><br>
-                <a href="/p/{{$.ProjectID}}/inputs/{{.PendingReview.ID}}">{{.PendingReview.Title}}</a>
-                <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
-                    Approve them before any code is written.
-                </div>
-            </div>
-            {{else if .PendingSelection}}
-            <div style="padding: 15px; background: #fff3cd; border-radius: 4px; margin-bottom: 15px;">
-                <strong>Pick a winner</strong><br>
-                <a href="/p/{{$.ProjectID}}/inputs/{{.PendingSelection.ID}}">{{.PendingSelection.Title}}</a>
-                <div style="font-size: 0.85em; color: #666; margin-top: 5px;">
-                    Compare the variations, or ask for more.
-                </div>
-            </div>
-            {{else if .IsStuck}}
-            <div style="padding: 15px; background: #f8d7da; border-radius: 4px; margin-bottom: 15px;">
-                <strong>Out of candidates</strong>
-                <form method="POST" action="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}/propose-variations" style="margin-top: 10px;">
-                    <button type="submit" style="width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Request New Variations
-                    </button>
-                </form>
-            </div>
-            {{else}}
-            <p class="empty">Nothing needs your attention on this Hop right now.</p>
-            {{end}}
+            <div class="card-head"><h2 class="card-title">Strategy</h2></div>
+            <p><a href="/p/{{$.ProjectID}}/strategy">{{.Strategy.Name}}</a></p>
+            <p class="text-sm subtle">Created {{.Hop.CreatedAt.Format "2 Jan 2006"}}</p>
         </div>
 
-        <div class="card">
-            <h2>Strategy</h2>
-            <p>
-                <a href="/p/{{$.ProjectID}}/strategy">{{.Strategy.Name}}</a>
-            </p>
-        </div>
+        <details class="disclosure">
+            <summary>Diagnostics</summary>
+            <div class="disclosure-body">
+                <dl class="kv">
+                    <dt>Hop status</dt><dd><code>{{.Hop.Status}}</code></dd>
+                    <dt>Requires production</dt><dd><code>{{.Hop.RequiresProduction}}</code></dd>
+                </dl>
+            </div>
+        </details>
     </div>
 </div>
 {{end}}

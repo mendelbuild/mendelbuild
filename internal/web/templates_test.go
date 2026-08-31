@@ -5,6 +5,8 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -114,7 +116,7 @@ func TestRibbonExecutes(t *testing.T) {
 		domain.HopStatusCompleted, domain.HopStatusRejected, domain.HopStatusAbandoned,
 	}
 	for _, st := range hopStatuses {
-		ribbon := domain.HopLifecycle(&domain.Hop{Status: st}, nil)
+		ribbon := ribbonView(domain.HopLifecycle(&domain.Hop{Status: st}, nil))
 		var buf bytes.Buffer
 		if err := tmpl.ExecuteTemplate(&buf, "lifecycle-ribbon", ribbon); err != nil {
 			t.Fatalf("hop %q: %v", st, err)
@@ -131,11 +133,11 @@ func TestRibbonExecutes(t *testing.T) {
 		domain.VariationStatusSelected, domain.VariationStatusMerged, domain.VariationStatusRejected,
 	}
 	for _, st := range variationStatuses {
-		ribbon := domain.VariationLifecycle(
+		ribbon := ribbonView(domain.VariationLifecycle(
 			&domain.Variation{Status: st},
 			[]domain.VariationRevision{{ID: uuid.New(), Status: domain.VariationRevisionStatusCompleted}},
 			&domain.Hop{RequiresDemo: true},
-		)
+		))
 		var buf bytes.Buffer
 		if err := tmpl.ExecuteTemplate(&buf, "lifecycle-ribbon", ribbon); err != nil {
 			t.Fatalf("variation %q: %v", st, err)
@@ -150,7 +152,7 @@ func TestRibbonExecutes(t *testing.T) {
 func TestRibbonShowsWhoseMoveItIs(t *testing.T) {
 	tmpl := partialsTemplate(t)
 
-	waiting := domain.HopLifecycle(&domain.Hop{Status: domain.HopStatusSelecting}, nil)
+	waiting := ribbonView(domain.HopLifecycle(&domain.Hop{Status: domain.HopStatusSelecting}, nil))
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&buf, "lifecycle-ribbon", waiting); err != nil {
 		t.Fatal(err)
@@ -159,7 +161,7 @@ func TestRibbonShowsWhoseMoveItIs(t *testing.T) {
 		t.Error(`a Hop awaiting selection should render "Your move"`)
 	}
 
-	working := domain.HopLifecycle(&domain.Hop{Status: domain.HopStatusPending}, nil)
+	working := ribbonView(domain.HopLifecycle(&domain.Hop{Status: domain.HopStatusPending}, nil))
 	buf.Reset()
 	if err := tmpl.ExecuteTemplate(&buf, "lifecycle-ribbon", working); err != nil {
 		t.Fatal(err)
@@ -187,7 +189,7 @@ func TestRibbonBadgeDistinguishesOutcomes(t *testing.T) {
 		{domain.VariationStatusPruned, "Closed", "Complete"},
 	}
 	for _, c := range cases {
-		ribbon := domain.VariationLifecycle(&domain.Variation{Status: c.status}, nil, &domain.Hop{})
+		ribbon := ribbonView(domain.VariationLifecycle(&domain.Variation{Status: c.status}, nil, &domain.Hop{}))
 		var buf bytes.Buffer
 		if err := tmpl.ExecuteTemplate(&buf, "lifecycle-ribbon", ribbon); err != nil {
 			t.Fatalf("%s: %v", c.status, err)
@@ -297,7 +299,7 @@ func TestDetailPagesRender(t *testing.T) {
 			Strategy:   &domain.Strategy{ID: hop.StrategyID, Name: "Q3 reliability"},
 			Project:    &domain.Project{ID: projectID, Name: "Demo"},
 			Variations: []VariationWithLogs{{Variation: variation}},
-			Ribbon:     domain.HopLifecycle(hop, []domain.Variation{variation}),
+			Ribbon:     ribbonView(domain.HopLifecycle(hop, []domain.Variation{variation})),
 			Roadmap:    roadmap,
 		}
 		body := renderForTest(t, "hop_detail.html", projectID, view)
@@ -318,7 +320,7 @@ func TestDetailPagesRender(t *testing.T) {
 			Variation: &v,
 			Hop:       hop,
 			Revisions: revisions,
-			Ribbon:    domain.VariationLifecycle(&v, revisions, hop),
+			Ribbon:    ribbonView(domain.VariationLifecycle(&v, revisions, hop)),
 			Roadmap:   roadmap,
 		}
 		body := renderForTest(t, "variation_detail.html", projectID, view)
@@ -341,7 +343,37 @@ func renderForTest(t *testing.T, page string, projectID uuid.UUID, view interfac
 	if err := renderPage(rec, page, data); err != nil {
 		t.Fatalf("rendering %s: %v", page, err)
 	}
-	return rec.Body.String()
+	body := rec.Body.String()
+	dumpRendered(t, page, body)
+	return body
+}
+
+// dumpRendered writes a rendered page to disk when MENDEL_PAGE_DUMP_DIR is set,
+// and does nothing otherwise.
+//
+// The test suite already constructs every page in every interesting state, so
+// this turns the suite into a way to look at all of them at once without a
+// database, a repository, or a deployment channel — including the states that
+// are awkward to reach by hand, like a run paused at its spend ceiling:
+//
+//	MENDEL_PAGE_DUMP_DIR=/tmp/pages go test ./internal/web/
+//
+// Filenames carry the test name, so each state lands in its own file rather
+// than the last one winning.
+func dumpRendered(t *testing.T, page, body string) {
+	t.Helper()
+	dir := os.Getenv("MENDEL_PAGE_DUMP_DIR")
+	if dir == "" {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("page dump dir: %v", err)
+	}
+	safe := strings.NewReplacer("/", "_", " ", "_", "\\", "_").Replace(t.Name())
+	name := filepath.Join(dir, safe+"--"+strings.TrimSuffix(page, ".html")+".html")
+	if err := os.WriteFile(name, []byte(body), 0o644); err != nil {
+		t.Fatalf("writing page dump: %v", err)
+	}
 }
 
 // TestSetupPagesRender renders the two guided-setup screens end to end. These
@@ -357,7 +389,7 @@ func TestSetupPagesRender(t *testing.T) {
 			"Title":  "New Project",
 			"Form":   newProjectForm{Deadline: "2026-12-31", Budget: "250"},
 			"Error":  "",
-			"Ribbon": domain.OnboardingLifecycle(domain.OnboardingState{}),
+			"Ribbon": ribbonView(domain.OnboardingLifecycle(domain.OnboardingState{})),
 		}
 		if err := renderPage(rec, "new_project.html", data); err != nil {
 			t.Fatalf("rendering: %v", err)
@@ -403,7 +435,7 @@ func TestSetupPagesRender(t *testing.T) {
 				ID: uuid.New(), StrategyID: strategyID, Name: "MVP build",
 				AmountUSD: 250, PeriodEnd: &target,
 			},
-			Ribbon: domain.OnboardingLifecycle(state),
+			Ribbon: ribbonView(domain.OnboardingLifecycle(state)),
 		}
 
 		body := renderForTest(t, "setup_okrs.html", projectID, view)
@@ -441,7 +473,7 @@ func TestSetupScreenEditsRoundTrip(t *testing.T) {
 			Objective:  domain.Objective{ID: objID, Description: "o"},
 			KeyResults: []domain.KeyResult{{ID: krID, Description: "k", TargetUnits: ">= 1"}},
 		}},
-		Ribbon: domain.OnboardingLifecycle(domain.OnboardingState{HasStrategy: true, HasDraftOKRs: true}),
+		Ribbon: ribbonView(domain.OnboardingLifecycle(domain.OnboardingState{HasStrategy: true, HasDraftOKRs: true})),
 	}
 	body := renderForTest(t, "setup_okrs.html", projectID, view)
 
@@ -478,7 +510,7 @@ func TestSetupScreenDraftStates(t *testing.T) {
 	t.Run("drafting", func(t *testing.T) {
 		v := base()
 		v.Drafting = true
-		v.Ribbon = domain.OnboardingLifecycle(domain.OnboardingState{HasStrategy: true, Drafting: true})
+		v.Ribbon = ribbonView(domain.OnboardingLifecycle(domain.OnboardingState{HasStrategy: true, Drafting: true}))
 
 		body := renderForTest(t, "setup_okrs.html", projectID, v)
 		for _, want := range []string{"Reading your brief", "setup-spinner", "window.location.reload"} {
@@ -495,7 +527,7 @@ func TestSetupScreenDraftStates(t *testing.T) {
 		v := base()
 		v.DraftFailed = true
 		v.DraftError = "the model returned no objectives"
-		v.Ribbon = domain.OnboardingLifecycle(domain.OnboardingState{HasStrategy: true, DraftFailed: true})
+		v.Ribbon = ribbonView(domain.OnboardingLifecycle(domain.OnboardingState{HasStrategy: true, DraftFailed: true}))
 
 		body := renderForTest(t, "setup_okrs.html", projectID, v)
 		for _, want := range []string{v.DraftError, "/setup/okrs/redraft", "Try again", brief} {

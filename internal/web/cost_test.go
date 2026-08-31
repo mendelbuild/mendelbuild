@@ -272,7 +272,7 @@ func renderHopPageWithCost(t *testing.T, costView *HopCostView) string {
 		Strategy: &domain.Strategy{ID: hop.StrategyID, Name: "Q3"},
 		Project:  &domain.Project{ID: projectID, Name: "Demo"},
 		Cost:     costView,
-		Ribbon:   domain.HopLifecycle(hop, nil),
+		Ribbon:   ribbonView(domain.HopLifecycle(hop, nil)),
 	})
 }
 
@@ -490,22 +490,24 @@ func TestVariationPageOffersToContinueAPausedRun(t *testing.T) {
 	body := renderForTest(t, "variation_detail.html", projectID, &VariationDetailView{
 		Variation: paused,
 		Hop:       hop,
-		Ribbon:    domain.VariationLifecycle(paused, nil, hop),
+		Ribbon:    variationRibbon(projectID, paused, nil, hop, false),
 	})
 
 	for _, want := range []string{
+		// The ribbon states the situation and offers the move...
 		"Paused at its spend ceiling",
-		"$5.02", "$5.00",
 		"Nothing went wrong",
 		"Continue where it left off",
+		// ...and the page carries the two numbers the decision turns on.
+		"$5.02", "$5.00",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("paused-run panel missing %q", want)
 		}
 	}
-	// "Retry from Scratch" would throw the work away, which is the opposite of
-	// what this state calls for.
-	if strings.Contains(body, "Retry from Scratch") {
+	// Rebuilding would throw the work away, which is the opposite of what this
+	// state calls for.
+	if strings.Contains(body, "Rebuild from scratch") {
 		t.Error("a budget-paused run must not offer a from-scratch retry")
 	}
 }
@@ -527,13 +529,13 @@ func TestVariationBlockedForOtherReasonsIsUnchanged(t *testing.T) {
 	body := renderForTest(t, "variation_detail.html", projectID, &VariationDetailView{
 		Variation: blocked,
 		Hop:       hop,
-		Ribbon:    domain.VariationLifecycle(blocked, nil, hop),
+		Ribbon:    variationRibbon(projectID, blocked, nil, hop, false),
 	})
 
 	if strings.Contains(body, "Paused at its spend ceiling") {
 		t.Error("a variation blocked on credentials must not claim a spend pause")
 	}
-	if !strings.Contains(body, "Retry from Scratch") {
+	if !strings.Contains(body, "Rebuild from scratch") {
 		t.Error("ordinary blocked variations should keep the from-scratch retry")
 	}
 }
