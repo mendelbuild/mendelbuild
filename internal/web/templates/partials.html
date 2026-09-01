@@ -298,7 +298,8 @@ document.querySelectorAll('[data-meter-mark]').forEach(function (el) {
     </nav>
     <span class="page-kind">{{decisionKind .View.InputRequest.Kind}}</span>
     <h1 class="page-title">{{.View.InputRequest.Title}}</h1>
-    <p class="page-lede">{{.View.Ask}}</p>
+    {{/* No lede: the ribbon below states the ask, and printing the same
+         sentence twice in the first inch of the page reads as a stutter. */}}
 </div>
 {{template "lifecycle-ribbon" .View.Ribbon}}
 {{end}}
