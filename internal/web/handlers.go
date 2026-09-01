@@ -168,8 +168,25 @@ func renderPage(w http.ResponseWriter, pageName string, data interface{}) error 
 // Hop and Variation pages showed no signed-in user and no way to log out.
 // Deriving it here means a new page cannot be born missing it.
 func (s *Server) renderPageFor(w http.ResponseWriter, r *http.Request, pageName string, data map[string]interface{}) error {
-	data["Nav"] = navSection(r.URL.Path)
+	s.addChrome(r, data)
 	return renderPage(w, pageName, data)
+}
+
+// addChrome stamps everything the layout needs and no page should have to
+// remember: who is signed in, which nav section is current, and how many
+// requests are open.
+//
+// One call rather than three, because three is three chances to lose one — and
+// two of them were lost. Handlers used to add the user by hand and five forgot,
+// so the Hop and Variation pages offered no way to log out; the fix put it here
+// and a later edit dropped it again along with the open-request count, which is
+// how a deployed build came to show no account and no badge on any page at all.
+// There is a test below whose only job is to notice if this call goes missing a
+// third time.
+func (s *Server) addChrome(r *http.Request, data map[string]interface{}) {
+	s.addUserToData(r, data)
+	data["Nav"] = navSection(r.URL.Path)
+	s.addOpenInputCount(r.Context(), data)
 }
 
 // navSection maps a request path to the navigation item that should read as

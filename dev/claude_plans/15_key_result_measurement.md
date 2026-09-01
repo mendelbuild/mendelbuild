@@ -220,7 +220,7 @@ that it is going well.
    derived.~~ Done, and 038 reduced five operators to three judgement modes.
 3. ~~`key_result_history` read/write queries.~~ Done.
 4. ~~The recurring request: new `InputRequestKind`, the worker that files and
-   rolls it, the form that resolves it.~~ Done, migration 039.
+   rolls it, the form that resolves it.~~ Done, migration 040.
 5. ~~Staleness and escalation.~~ Done.
 6. **The timeline on the Strategy page.** Remaining.
 

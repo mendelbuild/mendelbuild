@@ -118,7 +118,7 @@ CREATE TABLE strategies (
     draft_error TEXT,
     draft_started_at TIMESTAMPTZ,
 
-    -- When this strategy was last asked for Key Result measurements [039].
+    -- When this strategy was last asked for Key Result measurements [040].
     -- The cadence is judged from this rather than from the open request's
     -- created_at, so that asking and resolving stay separate facts: a request
     -- updated in place must not read as a fresh one.
@@ -241,7 +241,7 @@ CREATE TABLE key_result_history (
 CREATE INDEX idx_kr_history_kr_id ON key_result_history(key_result_id, measured_at);
 
 -- Answering the same measurement form twice is a double submit, not two
--- readings [039].
+-- readings [040].
 CREATE UNIQUE INDEX idx_kr_history_unique ON key_result_history(key_result_id, measured_at);
 
 --------------------------------------------------------------------------------
