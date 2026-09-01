@@ -31,36 +31,75 @@ and a bigger bet the user manages.
 
 ---
 
-## 2. Who installs the gateway
+## 2. How many Envoys, and who installs them
 
-**Mendel requires a Gateway API implementation; it does not install one.**
+### 2.1 One per Gateway, not one per pod
 
-This is the question §13 left open, and it is worth being explicit about why the
-answer is "require" rather than "install". Installing Envoy Gateway or Istio
-means cluster-scoped CRDs, admission webhooks, and an upgrade lifecycle that
-outlives any experiment. Mendel would be taking ownership of a component whose
-failures look nothing like Mendel's, in a cluster it shares with whatever else
-the user runs. Deploying an application into a namespace is a tenant's action.
-Installing a gateway controller is an administrator's, and Mendel is not the
-administrator.
+Worth settling first, because it changes how large the ask is. Gateway API's
+`Gateway` is an **ingress point**, not a sidecar. Creating one causes the
+controller to provision a single Envoy Deployment plus a LoadBalancer Service,
+and all traffic for the routes attached to that Gateway flows through it. There
+is no Envoy alongside each application pod, and no east-west interception.
 
-So it becomes a validated prerequisite, in the same shape as credentials:
+That is the distinction between an ingress gateway and a service mesh. A mesh
+puts a proxy next to every workload for mTLS and east-west policy, and it is a
+far heavier thing to adopt. Splitting *inbound* traffic across Arms of one
+service needs none of that.
 
-- **Channel validation extends.** Today validating `kubernetes`/`gke` deploys a
-  hello-world and tears it down. It also checks for a usable `GatewayClass`, and
-  — separately — whether experiments are possible at all.
-- **Two levels of validated.** A channel can be valid for deploys and not for
-  experiments. That distinction has to exist in the data model, or a user with a
-  working deploy channel will be told experiments are available and discover
-  otherwise at the worst moment.
-- **The refusal names what to install**, the way the GKE setup script names what
-  to run. Envoy Gateway is a helm install; the message should say so and link it,
-  not say "no GatewayClass found".
+So the footprint is: **one Envoy for the experiment's Gateway.** Not one per
+Arm, not one per service, not one per pod.
 
-**Consequence worth stating plainly:** this is the second large prerequisite,
-after Kubernetes itself. A user wanting live experiments needs a cluster *and* a
-gateway controller in it. §13's §4.2 says the k8s requirement must be raised
-early and unprompted; this belongs in the same breath.
+### 2.2 Two installs, at different levels
+
+They are worth separating because only one of them is an administrator's:
+
+| Layer | Scope | Who | Frequency |
+|---|---|---|---|
+| Gateway API CRDs, the controller, a `GatewayClass` | cluster | administrator | once per cluster |
+| A `Gateway` resource, and the Envoy it provisions | namespace | **Mendel** | once per project |
+
+Mendel owning the `Gateway` matters. It means Mendel gets its own Envoy for
+experiment traffic rather than sharing whatever the user's other workloads use,
+so an experiment cannot disturb unrelated ingress, and teardown removes an Envoy
+Mendel created. Only the layer above it — cluster-scoped CRDs and a controller
+with its own upgrade lifecycle — is genuinely an administrator's to own.
+
+### 2.3 Who installs the controller
+
+Mendel **asks the cluster whether it may**, rather than assuming either way.
+
+Kubernetes answers this question directly through `SelfSubjectAccessReview` —
+the API behind `kubectl auth can-i`. At channel validation Mendel checks whether
+its credential can create `customresourcedefinitions`, `clusterroles` and a
+namespace. That is exact, costs one API call, and sidesteps reasoning about how
+GKE's IAM roles combine with Kubernetes RBAC, which is a union of two systems
+and not reliably predictable from the role name alone.
+
+**If the answer is yes**, Mendel offers to install the controller, and says what
+it is about to add cluster-wide before doing it. Installing CRDs into someone's
+cluster is not a thing to do silently, even when permitted.
+
+**If the answer is no**, Mendel emits the exact commands for an administrator to
+run — the same shape as the `SetupScript` that `hosting.DefaultPlatforms`
+already uses for credentials, where Mendel writes a script the user pastes and
+Mendel then validates the result. That pattern exists and works; a gateway
+install is the same problem with a different script.
+
+Either way Mendel validates the outcome rather than trusting it: a usable
+`GatewayClass` must be `Accepted` before the channel is experiment-capable.
+
+### 2.4 What this still costs the user
+
+Even at its best this is the second large prerequisite after Kubernetes itself.
+A cluster with no Gateway API controller needs one installed, and if Mendel's
+credential cannot do it, a human with cluster-admin has to. §13's §4.2 says the
+Kubernetes requirement must be raised early and unprompted; this belongs in the
+same conversation, not discovered later.
+
+**A channel can therefore be valid for deploys and not valid for experiments.**
+That distinction has to exist in the data model, or a user with a working deploy
+channel will be told experiments are available and find out otherwise at the
+worst moment.
 
 ---
 
@@ -130,6 +169,7 @@ Per experiment, in `mendel-apps`:
 |---|---|---|
 | `Deployment` | Arm | The Variation's image, `PORT` from `hosting.ContainerPort` |
 | `Service` | Arm | ClusterIP, selecting that Arm's pods |
+| `Gateway` | project | Provisions the experiment's own Envoy (§2.1) |
 | `Deployment` + `Service` | experiment | The assigner |
 | `ConfigMap` | experiment | Allocation the assigner reads |
 | `HTTPRoute` | experiment | Cookie matches per Arm, fallback to assigner |
@@ -220,8 +260,10 @@ it "the control changed underneath the comparison" has nowhere to be recorded.
    currently proven and unused; this is what makes it reachable.
 2. **The `.mendel/` declaration** so codegen produces an experiment migration at
    all — nothing upstream generates one today.
-3. **Gateway validation** (§2): extend channel validation, add the
-   experiment-capable distinction, write the refusal.
+3. **Gateway validation and install** (§2): the `SelfSubjectAccessReview`
+   probe, the install path when permitted, the admin script when not, the
+   `GatewayClass` acceptance check, and the experiment-capable distinction on
+   the channel.
 4. **The assigner**, with its ConfigMap contract. Testable on its own: given
    weights and a cookie, which Arm.
 5. **Arm deployment and HTTPRoute generation** (§4), as pure functions first —
@@ -240,7 +282,8 @@ channel, which §13 §15 records as the remaining staging move.
 | # | Decision | Rejected alternative | Why |
 |---|---|---|---|
 | D21 | Experiments only for Mendel-deployed production | Reach into user-configured ingress | Mendel would be editing routing it did not create, with no safe way back |
-| D22 | Require a Gateway API implementation; do not install one | Mendel installs Envoy Gateway | Cluster-scoped CRDs and an upgrade lifecycle are an administrator's to own |
+| D22 | Mendel owns the `Gateway`; the controller is installed by whoever may | Mendel always installs, or never installs | The two layers have different scopes and different owners |
+| D22a | Detect the right with `SelfSubjectAccessReview`, install if permitted, else emit a script | Infer from the IAM role name | IAM and RBAC combine as a union; asking the cluster is exact |
 | D23 | Assign once by 302 + cookie, then match on the cookie | Envoy Lua/WASM filter | Header matching is core Gateway API; a Lua filter undoes the portability it claims |
 | D24 | Weights in a ConfigMap the assigner reads | Assigner queries Mendel per request | Production traffic must not depend on Mendel being up |
 | D25 | Weights not in `backendRefs` | Weighted backendRefs | They pick per request, splitting one visitor across Arms |
