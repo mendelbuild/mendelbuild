@@ -68,6 +68,40 @@ func TestCredentialFormAsksForTheNamedValues(t *testing.T) {
 	}
 }
 
+// TestSetupScriptRendersSingleSpaced guards the spacing of the rendered block.
+//
+// Each line is its own block element, so the markup must not also carry a
+// newline between them: a <pre> preserves that newline, the block starts a line
+// of its own, and every script renders double-spaced. It reads as a styling
+// nicety and is really a legibility bug -- a screen of commands at double
+// spacing is half a screen of commands.
+func TestSetupScriptRendersSingleSpaced(t *testing.T) {
+	projectID := uuid.New()
+	view := &InputRequestDetailView{
+		InputRequest: &domain.InputRequest{
+			ID: uuid.New(), ProjectID: projectID,
+			Kind:   domain.InputRequestKindCredentialRequest,
+			Title:  deploymentCredentialRequestTitle,
+			Status: domain.InputRequestStatusNeedsAssignment,
+		},
+		SetupScript:      "export GCP_PROJECT=<YOUR_PROJECT_ID_HERE>\ngcloud services enable foo\n\ngcloud iam bar",
+		SetupScriptLines: markUpSetupScript("export GCP_PROJECT=<YOUR_PROJECT_ID_HERE>\ngcloud services enable foo\n\ngcloud iam bar"),
+	}
+
+	body := renderForTest(t, "input_request_credential.html", projectID, view)
+
+	start := strings.Index(body, `<pre class="script-body">`)
+	end := strings.Index(body[start:], "</pre>") + start
+	block := body[start:end]
+
+	if strings.Contains(block, "</span>\n") {
+		t.Error("a newline between line spans renders the script double-spaced")
+	}
+	if n := strings.Count(block, `class="script-line`); n != 4 {
+		t.Errorf("rendered %d line spans, want 4", n)
+	}
+}
+
 // TestSetupScriptMarkupFlagsOnlyTheEditableLine keeps the highlight on the one
 // line it belongs to: a comment mentioning the placeholder explains it, and
 // highlighting that too would point at a line there is nothing to do to.

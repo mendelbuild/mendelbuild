@@ -1386,10 +1386,12 @@ a.callout:hover /* A stack manages the gaps between its own children, so a callo
     background: var(--surface-sunken);
     font-family: var(--font-mono);
     font-size: var(--text-sm);
-    line-height: 1.7;
+    line-height: 1.55;
     color: var(--ink-1);
-    overflow-x: auto;
-    white-space: pre;
+    /* Wrapped rather than scrolled: a command running off the right edge is a
+       command the reader cannot check before pasting. Each line is its own
+       block, so the element itself does no whitespace handling. */
+    white-space: normal;
 }
 
 .label-mono {
@@ -1421,7 +1423,24 @@ a.callout:hover /* A stack manages the gaps between its own children, so a callo
 
 /* One line of a setup script. The line the user must edit is called out, since
    pasting it unchanged is the mistake the whole block is arranged to prevent. */
-.script-line { display: block; }
+/* One line per block, so the markup carries no newline of its own -- a block
+   element plus a literal newline renders every script double-spaced. */
+.script-line {
+    display: block;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    /* A wrapped command continues indented, the way a terminal or a devtools
+       console shows it, so the continuation is not mistaken for a new command. */
+    padding-left: 2.5ch;
+    text-indent: -2.5ch;
+}
+
+/* A blank line in the script keeps its height; without this an empty block
+   collapses and the grouping the author intended disappears. */
+.script-line:empty::after {
+    content: "\200b";
+}
+
 .script-line-comment { color: var(--ink-3); }
 
 .script-line-edit {
