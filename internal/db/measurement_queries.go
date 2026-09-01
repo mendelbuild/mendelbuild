@@ -60,14 +60,19 @@ func (db *DB) RecordKeyResultMeasurements(ctx context.Context, ms []domain.KeyRe
 // with a zero: never measured and measured as zero are different facts, and a
 // map that conflated them would make the timeline claim the wrong one.
 func (db *DB) GetLatestMeasurements(ctx context.Context, strategyID uuid.UUID) (map[uuid.UUID]domain.KeyResultHistory, error) {
+	return db.edgeMeasurements(ctx, strategyID, "DESC")
+}
+
+// edgeMeasurements returns either end of each Key Result's history.
+func (db *DB) edgeMeasurements(ctx context.Context, strategyID uuid.UUID, direction string) (map[uuid.UUID]domain.KeyResultHistory, error) {
+	// direction is a literal from the two callers above, never user input.
 	rows, err := db.Pool.Query(ctx, `
 		SELECT DISTINCT ON (h.key_result_id)
 		       h.id, h.key_result_id, h.measured_value, h.measured_at, h.source
 		FROM key_result_history h
 		JOIN key_results kr ON kr.id = h.key_result_id
 		WHERE kr.strategy_id = $1 AND kr.deleted_at IS NULL
-		ORDER BY h.key_result_id, h.measured_at DESC
-	`, strategyID)
+		ORDER BY h.key_result_id, h.measured_at `+direction, strategyID)
 	if err != nil {
 		return nil, err
 	}
@@ -82,6 +87,17 @@ func (db *DB) GetLatestMeasurements(ctx context.Context, strategyID uuid.UUID) (
 		out[m.KeyResultID] = m
 	}
 	return out, rows.Err()
+}
+
+// GetFirstMeasurements returns the earliest measurement for each Key Result in
+// a strategy.
+//
+// The first reading is the baseline a shrinking target's progress is counted
+// from — latency does not start at zero — so it is needed alongside the latest
+// one and is cheaper to fetch in the same shape than to derive from full
+// histories.
+func (db *DB) GetFirstMeasurements(ctx context.Context, strategyID uuid.UUID) (map[uuid.UUID]domain.KeyResultHistory, error) {
+	return db.edgeMeasurements(ctx, strategyID, "ASC")
 }
 
 // GetKeyResultHistory returns every measurement for one Key Result, oldest

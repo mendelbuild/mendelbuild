@@ -195,6 +195,37 @@ sequences them by dependency rather than wall-clock time, so placing them on a
 time axis would contradict the model. A pill shows its Hop's own lifecycle
 reading, so one blocked on dependencies says so.
 
+## What the timeline draws
+
+One comparison, made visible: **a bar's fill is how much of the goal is done,
+and the line down the page is how much of the time is gone.** Fill ahead of the
+line is on track. Two unlike quantities are made comparable by sharing a track,
+which is the trick the budget meter already uses, so it is a reading people will
+have seen before.
+
+The bar runs from the day a Key Result was written to the day it is due.
+
+**The baseline progress is counted from depends on the direction of the target.**
+For one that should grow it is zero: you start with no users and no signups, and
+"820 of 1000" is a reading anyone recognises. For one that should shrink there is
+no such floor — latency does not start at zero and improve upwards — so the
+baseline is the first measurement. The consequence is deliberate: a shrinking
+target shows no fill until it has been measured twice, because one reading of
+260ms against a 200ms goal says nothing about whether the number is falling.
+
+Four things the panel refuses to do, each of which would be a claim the data
+cannot support:
+
+- **No fill without a baseline.** An unmeasured Key Result is hatched, not empty:
+  empty says *zero* and hatched says *unknown*.
+- **No fill for a boolean, ever.** That is the whole reason it is the weaker kind
+  of Key Result, and half-filling a bar would invent the signal it lacks.
+- **Staleness outranks being on track.** A number a fortnight old supports "was
+  on track a fortnight ago", which is not a claim a green bar makes, so a stale
+  row is drawn in the waiting tone whatever the arithmetic says.
+- **Hops sit in the label column, not over the axis.** A Hop has no date at all;
+  laid across a time axis it would read as positioned in time.
+
 ## Progress against budget
 
 Once measurements exist, the Costs page can answer the question it currently
@@ -222,10 +253,10 @@ that it is going well.
 4. ~~The recurring request: new `InputRequestKind`, the worker that files and
    rolls it, the form that resolves it.~~ Done, migration 040.
 5. ~~Staleness and escalation.~~ Done.
-6. **The timeline on the Strategy page.** Remaining.
+6. ~~The timeline on the Strategy page.~~ Done.
 
-Steps 1–5 change nothing a user sees except the measurement ask itself. The
-numbers are being collected; nothing yet draws them.
+All of it is in. The numbers are collected weekly through the queue and drawn on
+the Strategy page's Objectives tab.
 
 ### What 4 and 5 settled in the building
 

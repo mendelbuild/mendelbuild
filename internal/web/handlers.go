@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/go-chi/chi/v5"
@@ -67,6 +68,7 @@ var templateFuncs = template.FuncMap{
 	// num prints a target value without a trailing ".0" -- a key result of
 	// "1000 users" should not render its target as "1000.0".
 	"num": func(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) },
+	"add": func(a, b float64) float64 { return a + b },
 
 	// Status renderers. Templates must never switch on a raw status string, so
 	// every status a page shows arrives as a StatusView carrying a word and a
@@ -372,12 +374,21 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 		costView = s.strategyCostView(ctx, projectID, view.Strategy.ID)
 	}
 
+	// The timeline is the join between the objectives and the roadmap: the
+	// Strategy page could say what the project is for and the Roadmap what it
+	// was doing, and nothing put the two on one axis.
+	var timeline *TimelineView
+	if view != nil && view.Strategy != nil {
+		timeline = s.buildTimeline(ctx, projectID, view.Strategy.ID, time.Now())
+	}
+
 	data := map[string]interface{}{
 		"Title":       "Strategy",
 		"ProjectID":   projectID.String(),
 		"StrategyTab": "objectives",
 		"Strategy":    view,
 		"Cost":        costView,
+		"Timeline":    timeline,
 	}
 	s.addProjectReadiness(ctx, data)
 	s.addOnboardingRibbon(ctx, data)

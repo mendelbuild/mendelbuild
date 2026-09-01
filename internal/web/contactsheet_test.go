@@ -8,13 +8,17 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 // The contact sheet: every page state the suite builds, on one scrollable page.
 //
-//	MENDEL_CONTACT_SHEET=/tmp/mendel-ui.html go test ./internal/web/
+//	MENDEL_CONTACT_SHEET=/tmp/mendel-ui.html go test -count=1 ./internal/web/
+//
+// -count=1 matters: a cached test run does not execute TestMain, so the sheet
+// is silently not rebuilt and you review the previous one.
 //
 // The file is self-contained — stylesheets inlined, no server needed — so it
 // opens straight from disk in a browser. Every state carries a stable number,
@@ -86,8 +90,16 @@ var (
 	// Writing an inline style is right here and wrong there: this file is a
 	// generated artifact, not a template, and it has no second render in which
 	// to drift.
-	widthRE = regexp.MustCompile(`data-(?:meter-fill|w)="([0-9.]+)"`)
-	leftRE  = regexp.MustCompile(`data-(?:meter-mark|x)="([0-9.]+)"`)
+	widthRE = regexp.MustCompile(`data-(?:meter-fill|tl-width|w)="([0-9.]+)"`)
+	leftRE  = regexp.MustCompile(`data-(?:meter-mark|tl-at|x)="([0-9.]+)"`)
+	// The timeline's "today" line is positioned against the label column, so
+	// its offset is an expression rather than a plain percentage.
+	todayRE = regexp.MustCompile(`data-tl-today="([0-9.]+)"`)
+	// An element carrying both a position and a width has to become one style
+	// attribute. Emitting two leaves the second ignored, since HTML keeps the
+	// first of a repeated attribute — which drew every timeline bar at zero
+	// width while looking, in the markup, entirely correct.
+	pairRE = regexp.MustCompile(`data-tl-at="([0-9.]+)"\s+data-tl-width="([0-9.]+)"`)
 	titleRE = regexp.MustCompile(`(?s)<title>(.*?)</title>`)
 	// Dump filenames are "<TestName>--<template>.html".
 	nameRE = regexp.MustCompile(`^(.*)--([^-]+)\.html$`)
@@ -147,14 +159,32 @@ func buildContactSheet(dumpDir, out string) error {
 		}
 		body = scriptRE.ReplaceAllString(body, "")
 		body = metaRE.ReplaceAllString(body, "")
+		body = pairRE.ReplaceAllString(body, `style="left:$1%;width:$2%"`)
 		body = widthRE.ReplaceAllString(body, `style="width:$1%"`)
 		body = leftRE.ReplaceAllString(body, `style="left:$1%"`)
+		body = todayRE.ReplaceAllStringFunc(body, func(m string) string {
+			pctStr := todayRE.FindStringSubmatch(m)[1]
+			f, err := strconv.ParseFloat(pctStr, 64)
+			if err != nil {
+				return m
+			}
+			return fmt.Sprintf(`style="left:calc(var(--tl-label) + (100%% - var(--tl-label)) * %.4f)"`, f/100)
+		})
 		body = strings.ReplaceAll(body, `src="/static/mendel-logo-transparent-32.png"`,
 			`src="`+logoURI+`"`)
 		body = scriptRE.ReplaceAllString(body, "")
 		body = metaRE.ReplaceAllString(body, "")
+		body = pairRE.ReplaceAllString(body, `style="left:$1%;width:$2%"`)
 		body = widthRE.ReplaceAllString(body, `style="width:$1%"`)
 		body = leftRE.ReplaceAllString(body, `style="left:$1%"`)
+		body = todayRE.ReplaceAllStringFunc(body, func(m string) string {
+			pctStr := todayRE.FindStringSubmatch(m)[1]
+			f, err := strconv.ParseFloat(pctStr, 64)
+			if err != nil {
+				return m
+			}
+			return fmt.Sprintf(`style="left:calc(var(--tl-label) + (100%% - var(--tl-label)) * %.4f)"`, f/100)
+		})
 		body = strings.ReplaceAll(body, `src="/static/mendel-logo-transparent-32.png"`,
 			`src="`+logoURI+`"`)
 		pages = append(pages, specimenPage{

@@ -13,7 +13,9 @@
 
 {{if $.OnboardingRibbon}}{{template "lifecycle-ribbon" $.OnboardingRibbon}}{{end}}
 
-{{template "budget-strip" $.Cost}}
+{{template "progress-strip" $}}
+
+{{template "okr-timeline" $.Timeline}}
 
 <div class="card">
     <div class="card-head">

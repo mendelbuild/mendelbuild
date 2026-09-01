@@ -1463,3 +1463,208 @@ a.callout:hover /* A stack manages the gaps between its own children, so a callo
     font-size: var(--text-xs);
     color: var(--ink-3);
 }
+
+/* ==== 12. OKR timeline ====================================================
+
+   Added for the Strategy page's Objectives tab. See
+   dev/claude_plans/15_key_result_measurement.md.
+*/
+
+.tl { --tl-label: 320px; }
+
+/* The scroll is a fallback for a genuinely narrow window, not the normal
+   state: a min-width above the card's inner width put a scrollbar under every
+   timeline at ordinary sizes. */
+.tl-scroll { overflow-x: auto; }
+/* Room on the right for the things that sit at 100% and are centred on it: the
+   final month tick and a due-date dot on the last day of the window. Padding
+   the grid rather than the track keeps the percentage mapping intact, since the
+   1fr column simply becomes that much narrower. */
+.tl-grid { min-width: 560px; position: relative; padding-right: 16px; }
+@media (max-width: 720px) { .tl { --tl-label: 180px; } }
+
+/* Today, drawn once across every row rather than per row, so the eye reads a
+   single line down the page. */
+.tl-today {
+    position: absolute;
+    top: 26px;
+    bottom: 0;
+    width: 2px;
+    background: var(--ink-1);
+    z-index: 2;
+    pointer-events: none;
+}
+.tl-today::after {
+    content: "today";
+    position: absolute;
+    top: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: var(--text-xs);
+    font-weight: 700;
+    color: var(--ink-1);
+    background: var(--surface-card);
+    padding: 0 var(--sp-1);
+    white-space: nowrap;
+}
+
+.tl-axis {
+    display: grid;
+    grid-template-columns: var(--tl-label) 1fr;
+    align-items: end;
+    height: 26px;
+    border-bottom: 1px solid var(--line-strong);
+}
+.tl-months { position: relative; height: 100%; }
+.tl-month {
+    position: absolute;
+    bottom: 2px;
+    font-size: var(--text-xs);
+    color: var(--ink-3);
+    transform: translateX(-50%);
+    white-space: nowrap;
+}
+.tl-month::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: -6px;
+    height: 5px;
+    width: 1px;
+    background: var(--line-strong);
+}
+
+/* ---- Objective: the container, and where Hops hang ---------------------
+   Hops attach to the Objective rather than to individual Key Results. Some
+   serve one Key Result and others the whole Objective, and only the Objective
+   link is recorded -- so per-row pills would put every Objective-scoped Hop on
+   every row beneath it.
+
+   They sit in the label column, not over the timeline. A Hop has no date: it is
+   sequenced by what it depends on, not by the calendar. Laid across the axis
+   they read as positioned in time, which is a claim the data cannot make. */
+.tl-objective {
+    display: grid;
+    grid-template-columns: var(--tl-label) 1fr;
+    gap: 0 var(--sp-4);
+    align-items: start;
+    padding: var(--sp-4) 0 var(--sp-2);
+    border-top: 1px solid var(--line);
+}
+.tl-objective-label > * + * { margin-top: var(--sp-2); }
+.tl-objective:first-of-type { border-top: 0; }
+.tl-objective-name { font-weight: 650; font-size: var(--text-base); }
+.tl-hops { display: flex; flex-wrap: wrap; gap: var(--sp-1); align-items: center; }
+.tl-hop {
+    font-size: var(--text-xs);
+    padding: 1px var(--sp-2);
+    border-radius: var(--radius-pill);
+    text-decoration: none;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+.tl-hop-progress { background: var(--tone-progress-bg); color: var(--tone-progress-ink); }
+.tl-hop-success  { background: var(--tone-success-bg);  color: var(--tone-success-ink); }
+.tl-hop-waiting  { background: var(--tone-waiting-bg);  color: var(--tone-waiting-ink); }
+/* Not started, because something upstream has not finished. Dashed for the same
+   reason an unreached stage in the lifecycle stepper is dashed. */
+.tl-hop-blocked {
+    background: transparent;
+    color: var(--ink-3);
+    border-style: dashed;
+    border-color: var(--line-strong);
+}
+
+/* ---- Key Result row ---------------------------------------------------- */
+.tl-row {
+    display: grid;
+    grid-template-columns: var(--tl-label) 1fr;
+    gap: 0 var(--sp-4);
+    align-items: center;
+    padding: var(--sp-2) 0;
+}
+.tl-row + .tl-row { border-top: 1px dotted var(--line); }
+.tl-kr { padding-left: var(--sp-4); }
+.tl-kr-name { font-size: var(--text-sm); color: var(--ink-1); }
+.tl-kr-meta { font-size: var(--text-xs); color: var(--ink-3); margin-top: 1px; }
+
+.tl-track {
+    position: relative;
+    height: 22px;
+    display: flex;
+    align-items: center;
+}
+/* The span from when the Key Result started to the day it is due. */
+.tl-bar {
+    position: absolute;
+    height: 10px;
+    border-radius: var(--radius-pill);
+    background: var(--surface-sunken);
+    border: 1px solid var(--line);
+    overflow: hidden;
+}
+.tl-fill { height: 100%; border-radius: var(--radius-pill); }
+.tl-fill-success { background: var(--tone-success); }
+.tl-fill-waiting { background: var(--tone-waiting); }
+.tl-fill-failure { background: var(--tone-failure); }
+
+/* No measurement, so no fill can be drawn. Hatching says "unknown" where an
+   empty bar would say "zero", and those are not the same claim. */
+.tl-bar-unknown {
+    background: repeating-linear-gradient(
+        45deg, var(--surface-sunken), var(--surface-sunken) 4px,
+        var(--surface-card) 4px, var(--surface-card) 8px);
+}
+
+/* The day it is due. */
+.tl-deadline {
+    position: absolute;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    border: 2px solid var(--surface-card);
+    transform: translateX(-50%);
+    z-index: 1;
+}
+.tl-deadline-success { background: var(--tone-success); }
+.tl-deadline-waiting { background: var(--tone-waiting); }
+.tl-deadline-failure { background: var(--tone-failure); }
+.tl-deadline-neutral { background: var(--tone-neutral); }
+
+.tl-reading {
+    position: absolute;
+    font-size: var(--text-xs);
+    white-space: nowrap;
+    color: var(--ink-2);
+    transform: translateY(-14px);
+}
+
+/* ---- The two figures that answer "is the spending working" -------------
+   Stacked, with their labels in one column and their meters in another, so the
+   comparison is a matter of looking down rather than remembering a number from
+   the line above. */
+.attain { display: grid; grid-template-columns: max-content 1fr max-content; gap: var(--sp-2) var(--sp-4); align-items: center; }
+.attain-label { font-size: var(--text-xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); white-space: nowrap; }
+.attain-figure { font-size: var(--text-sm); color: var(--ink-2); white-space: nowrap; }
+.attain-figure strong { color: var(--ink-1); font-variant-numeric: tabular-nums; }
+/* Met is solid; on-track is the same bar continued in a lighter tone, so the
+   two readings are one shape rather than two numbers to reconcile. Both fills
+   are laid over the same track rather than stacked, so "met" is always a
+   segment of "on track" and cannot be read as a separate quantity. */
+.attain .meter { position: relative; display: block; }
+.attain .meter-fill { position: absolute; inset: 0 auto 0 0; display: block; }
+.attain-ontrack { background: var(--tone-success-bg); }
+
+.tl-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2) var(--sp-4);
+    font-size: var(--text-xs);
+    color: var(--ink-2);
+    margin-top: var(--sp-4);
+    padding-top: var(--sp-3);
+    border-top: 1px solid var(--line);
+}
+.tl-legend span { display: inline-flex; align-items: center; gap: var(--sp-1); }
+.tl-swatch { width: 22px; height: 8px; border-radius: var(--radius-pill); }
+

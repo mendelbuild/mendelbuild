@@ -252,6 +252,18 @@ document.querySelectorAll('[data-meter-fill]').forEach(function (el) {
 document.querySelectorAll('[data-meter-mark]').forEach(function (el) {
     el.style.left = el.dataset.meterMark + '%';
 });
+// The timeline's geometry: everything is a percentage of an axis whose pixel
+// width the server cannot know.
+document.querySelectorAll('[data-tl-at]').forEach(function (el) {
+    el.style.left = el.dataset.tlAt + '%';
+});
+document.querySelectorAll('[data-tl-width]').forEach(function (el) {
+    el.style.width = el.dataset.tlWidth + '%';
+});
+document.querySelectorAll('[data-tl-today]').forEach(function (el) {
+    el.style.left = 'calc(var(--tl-label) + (100% - var(--tl-label)) * ' +
+        (parseFloat(el.dataset.tlToday) / 100) + ')';
+});
 </script>
 {{end}}
 
@@ -359,31 +371,141 @@ document.querySelectorAll('[data-meter-mark]').forEach(function (el) {
 {{end}}
 
 {{/*
-    budget-strip is the one-line reading of a Strategy's spend, shown beside the
-    Key Results the money is meant to buy. Takes a *StrategyCostView.
+    progress-strip is the pair of readings that answer "is the spending
+    working". Takes the page's top-level data and reads .Cost and .Timeline.
 
-    Costs has its own page for the detail; this exists so that looking at what
-    the project is trying to achieve also shows what achieving it is costing.
+    Stacked with their labels in one column and their meters in another, so the
+    comparison is a matter of looking down rather than remembering a number from
+    the line above. Counts rather than percentages for attainment: turning
+    measurements into "43% complete" needs an assumption about the shape of
+    every growth curve, and counting needs none.
 */}}
-{{define "budget-strip"}}
-{{with .}}
+{{define "progress-strip"}}
+{{if or .Cost .Timeline}}
 <div class="card card-tight">
-    <div class="row row-baseline">
-        <span class="eyebrow">Spend</span>
-        {{if .HasBudget}}
-        <strong class="numeric{{if .OverBudget}} metric-alert{{end}}">{{usd .SpentUSD}}</strong>
-        <span class="text-sm muted">of {{usd .BudgetUSD}}</span>
-        <span class="meter-inline">
-            <span class="meter{{if .OverBudget}} meter-over{{end}}">
-                <span class="meter-fill" data-meter-fill="{{printf "%.1f" (pctWidth .BurnedFraction)}}"></span>
-            </span>
+    <div class="attain">
+        {{with .Cost}}
+        <span class="attain-label">Spend</span>
+        <span class="meter{{if .OverBudget}} meter-over{{end}}">
+            <span class="meter-fill" data-meter-fill="{{printf "%.1f" (pctWidth .BurnedFraction)}}"></span>
         </span>
-        {{if .Pace}}<span class="text-sm muted">{{.Pace}}</span>{{end}}
-        {{else}}
-        <strong class="numeric">{{usd .SpentUSD}}</strong>
-        <span class="text-sm muted">no budget set</span>
+        <span class="attain-figure">
+            <strong>{{usd .SpentUSD}}</strong>{{if .HasBudget}} of {{usd .BudgetUSD}}{{end}}
+            &middot; <a href="/p/{{.ProjectID}}/costs">Costs &rarr;</a>
+        </span>
         {{end}}
-        <a class="row-spacer text-sm" href="/p/{{.ProjectID}}/costs">Costs &rarr;</a>
+
+        {{with .Timeline}}{{with .Attainment}}
+        <span class="attain-label">OKR attainment</span>
+        <span class="meter">
+            {{/* On track is the wider, paler bar and met is drawn over it, so
+                 met reads as a segment of on track rather than a second
+                 quantity to reconcile. */}}
+            <span class="meter-fill attain-ontrack" data-meter-fill="{{printf "%.1f" (pctWidth .OnTrackFraction)}}"></span>
+            <span class="meter-fill" data-meter-fill="{{printf "%.1f" (pctWidth .MetFraction)}}"></span>
+        </span>
+        <span class="attain-figure">
+            <strong>{{.Met}} of {{.Total}}</strong> key results met,
+            <strong>{{.OnTrack}} of {{.Total}}</strong> on track
+        </span>
+        {{end}}{{end}}
+    </div>
+</div>
+{{end}}
+{{end}}
+
+{{/*
+    okr-timeline draws the Key Results on a shared time axis. Takes a
+    *web.TimelineView.
+
+    A bar runs from the day a Key Result was written to the day it is due, and
+    its fill is how much of the goal is done. The line down the page is how much
+    of the time is gone, so fill ahead of the line is on track -- two unlike
+    quantities made comparable by sharing a track.
+*/}}
+{{define "okr-timeline"}}
+{{if .HasRows}}
+<div class="card">
+    <div class="card-head">
+        <h2 class="card-title">Where the work stands</h2>
+    </div>
+    <p class="card-note">
+        A bar runs from the day a key result was written to the day it is due, and its
+        fill is how much of the goal is done. The line down the page is how much of the
+        time is gone; fill ahead of the line is on track.
+    </p>
+
+    <div class="tl tl-scroll">
+        <div class="tl-grid">
+            <div class="tl-today" data-tl-today="{{printf "%.2f" .TodayPercent}}"></div>
+            <div class="tl-axis">
+                <div></div>
+                <div class="tl-months">
+                    {{range .Months}}
+                    <span class="tl-month" data-tl-at="{{printf "%.2f" .Percent}}">{{.Label}}</span>
+                    {{end}}
+                </div>
+            </div>
+
+            {{range .Objectives}}
+            <div class="tl-objective">
+                <div class="tl-objective-label">
+                    <div>
+                        <div class="tl-objective-name">{{.Description}}</div>
+                        <div class="tl-kr-meta">{{len .Rows}} key result{{if ne (len .Rows) 1}}s{{end}}</div>
+                    </div>
+                    {{if .Hops}}
+                    <div class="tl-hops">
+                        {{range .Hops}}
+                        <a class="tl-hop tl-hop-{{.Status.Tone}}" href="{{.Href}}"
+                           title="{{.Status.Label}}">{{.Name}}</a>
+                        {{end}}
+                    </div>
+                    {{end}}
+                </div>
+                <div></div>
+            </div>
+
+            {{range .Rows}}
+            <div class="tl-row">
+                <div class="tl-kr">
+                    <div class="tl-kr-name">{{.KeyResult.Description}}</div>
+                    <div class="tl-kr-meta">
+                        {{.KeyResult.Target}}
+                        {{with .Reading.Status}}<span class="badge badge-{{.Tone}}">{{.Label}}</span>{{end}}
+                    </div>
+                </div>
+                <div class="tl-track">
+                    <div class="tl-bar{{if not .Reading.HasProgress}} tl-bar-unknown{{end}}"
+                         data-tl-at="{{printf "%.2f" .LeftPercent}}"
+                         data-tl-width="{{printf "%.2f" .WidthPercent}}">
+                        {{if .Reading.HasProgress}}
+                        <div class="tl-fill tl-fill-{{.FillTone}}" data-tl-width="{{printf "%.2f" .FillPercent}}"></div>
+                        {{end}}
+                    </div>
+                    <div class="tl-deadline tl-deadline-{{if .Reading.HasProgress}}{{.FillTone}}{{else}}neutral{{end}}"
+                         data-tl-at="{{printf "%.2f" (add .LeftPercent .WidthPercent)}}"></div>
+                    <div class="tl-reading" data-tl-at="{{printf "%.2f" .LeftPercent}}">
+                        {{if .Reading.Latest}}
+                        <strong>{{num .Reading.Latest.MeasuredValue}}</strong>
+                        {{.KeyResult.TargetUnit}}
+                        &middot; {{.Reading.Latest.MeasuredAt.Format "2 Jan"}}
+                        {{else}}
+                        <span class="subtle">not measured</span>
+                        {{end}}
+                    </div>
+                </div>
+            </div>
+            {{end}}
+            {{end}}
+        </div>
+    </div>
+
+    <div class="tl-legend">
+        <span><i class="tl-swatch tl-fill-success"></i> on track</span>
+        <span><i class="tl-swatch tl-fill-waiting"></i> the reading is out of date</span>
+        <span><i class="tl-swatch tl-fill-failure"></i> behind</span>
+        <span><i class="tl-swatch tl-bar-unknown"></i> not measured &mdash; unknown, not zero</span>
     </div>
 </div>
 {{end}}

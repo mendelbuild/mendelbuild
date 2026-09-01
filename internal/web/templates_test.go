@@ -669,3 +669,112 @@ func TestStrategyPageBeforeSetup(t *testing.T) {
 		t.Error("a project before setup should say so rather than rendering an empty page")
 	}
 }
+
+// The timeline is the join between the objectives and the roadmap, and it has
+// to draw every state a Key Result can be in without claiming more than the
+// measurements support.
+func TestTimelineRendersEveryState(t *testing.T) {
+	projectID := uuid.New()
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	ago := func(d int) time.Time { return now.AddDate(0, 0, -d) }
+	in := func(d int) *time.Time { t := now.AddDate(0, 0, d); return &t }
+	reading := func(v float64, d int) *domain.KeyResultHistory {
+		return &domain.KeyResultHistory{MeasuredValue: v, MeasuredAt: ago(d)}
+	}
+
+	growing := domain.KeyResult{
+		Description: "Weekly active users", TargetComparator: domain.TargetAtLeast,
+		TargetValue: 1000, TargetUnit: "users", CreatedAt: ago(50), TargetDate: in(50),
+	}
+	shrinking := domain.KeyResult{
+		Description: "Checkout latency", TargetComparator: domain.TargetAtMost,
+		TargetValue: 200, TargetUnit: "ms p99", CreatedAt: ago(50), TargetDate: in(20),
+	}
+	boolean := domain.KeyResult{
+		Description: "Public launch", TargetComparator: domain.TargetDone,
+		TargetValue: 1, CreatedAt: ago(40), TargetDate: in(60),
+	}
+	unmeasured := domain.KeyResult{
+		Description: "Error rate", TargetComparator: domain.TargetAtMost,
+		TargetValue: 0.5, TargetUnit: "%", CreatedAt: ago(40), TargetDate: in(80),
+	}
+
+	row := func(kr domain.KeyResult, first, latest *domain.KeyResultHistory) TimelineRow {
+		return TimelineRow{
+			KeyResult: kr, Reading: domain.ReadKeyResult(kr, first, latest, now),
+			LeftPercent: 10, WidthPercent: 60, FillPercent: 40,
+		}
+	}
+
+	view := &TimelineView{
+		TodayPercent: 45,
+		Months:       []TimelineTick{{Label: "Jul", Percent: 5}, {Label: "Nov", Percent: 90}},
+		Objectives: []TimelineObjective{{
+			Description: "People can sign in without help",
+			Hops: []TimelineHop{{
+				Name: "google-oauth", Href: "/p/x/hops/1",
+				Status: domain.StatusView{Label: "Done — a winner was merged to main", Tone: domain.ToneSuccess},
+			}},
+			Rows: []TimelineRow{
+				row(growing, reading(10, 40), reading(820, 1)),
+				row(shrinking, reading(400, 40), reading(260, 20)),
+				row(boolean, nil, nil),
+				row(unmeasured, nil, nil),
+			},
+		}},
+		Attainment: domain.Attainment{Met: 1, OnTrack: 2, Total: 4},
+	}
+
+	body := renderPageForTest(t, "strategy.html", map[string]interface{}{
+		"ProjectID":   projectID.String(),
+		"StrategyTab": "objectives",
+		"Strategy": &StrategyView{
+			Project:  &domain.Project{ID: projectID, Name: "Pollstar"},
+			Strategy: &domain.Strategy{ID: uuid.New(), Name: "Q3 launch"},
+		},
+		"Cost":     &StrategyCostView{ProjectID: projectID.String(), SpentUSD: 41.82, BudgetUSD: 120},
+		"Timeline": view,
+	})
+
+	for _, want := range []string{
+		"Where the work stands",
+		"Weekly active users", "at least 1000 users", "On track",
+		"Checkout latency", "Out of date", // stale, so not drawn as success
+		"Public launch", "Not yet",
+		"Error rate", "Never measured",
+		"google-oauth", // the Hop pill
+		// The attainment line, in counts rather than percentages.
+		"1 of 4</strong> key results met", "2 of 4</strong> on track",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("timeline missing %q", want)
+		}
+	}
+
+	// A boolean and an unmeasured key result draw no fill: neither has progress
+	// to report, and a half-full bar would invent the signal.
+	if n := strings.Count(body, "tl-fill tl-fill-"); n != 2 {
+		t.Errorf("expected exactly two filled bars, got %d", n)
+	}
+	if n := strings.Count(body, "tl-bar-unknown"); n != 3 {
+		// Two rows plus the legend swatch.
+		t.Errorf("expected the unmeasured rows to be hatched, got %d", n)
+	}
+}
+
+// A strategy whose key results carry no dates has no axis to draw them on, and
+// the panel must simply not appear rather than render an empty frame.
+func TestTimelineAbsentWhenThereIsNothingToDraw(t *testing.T) {
+	projectID := uuid.New()
+	body := renderPageForTest(t, "strategy.html", map[string]interface{}{
+		"ProjectID":   projectID.String(),
+		"StrategyTab": "objectives",
+		"Strategy": &StrategyView{
+			Project:  &domain.Project{ID: projectID, Name: "Pollstar"},
+			Strategy: &domain.Strategy{ID: uuid.New(), Name: "Q3"},
+		},
+	})
+	if strings.Contains(body, "Where the work stands") {
+		t.Error("no dated key results means no timeline")
+	}
+}
