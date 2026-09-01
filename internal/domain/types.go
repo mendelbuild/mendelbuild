@@ -800,7 +800,8 @@ type HostingPlatform struct {
 	Slug          string    `json:"slug"`           // "fly-io", "cloud-run"
 	Name          string    `json:"name"`           // "Fly.io", "Google Cloud Run"
 	DeployerImage string    `json:"deployer_image"` // Docker image with /bin/sh
-	Instructions  string    `json:"instructions"`   // AI prompt fragment
+	Instructions  string    `json:"instructions"`   // Prose: what is needed, and where each value goes
+	SetupScript   string    `json:"setup_script"`   // Commands to paste into a terminal, offered with a copy button
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

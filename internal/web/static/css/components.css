@@ -1265,3 +1265,48 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
 .tune-good       { background: var(--tone-progress-bg); color: var(--tone-progress-ink); }
 .tune-needs-work { background: var(--tone-waiting-bg);  color: var(--tone-waiting-ink); }
 .tune-poor       { background: var(--tone-failure-bg);  color: var(--tone-failure-ink); }
+
+/* --- Setup script ------------------------------------------------------- */
+/* A block of commands meant to leave the page and land in a terminal, so it
+   is styled as something to copy rather than something to read. */
+
+.script-block {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    margin-top: var(--sp-4);
+}
+
+.script-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    padding: var(--sp-2) var(--sp-3);
+    background: var(--surface-sunken);
+    border-bottom: 1px solid var(--line);
+}
+
+.script-label {
+    font-size: var(--text-xs);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+}
+
+.script-body {
+    margin: 0;
+    padding: var(--sp-4);
+    background: var(--surface-sunken);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    line-height: 1.7;
+    color: var(--ink-1);
+    overflow-x: auto;
+    white-space: pre;
+}
+
+.label-mono {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+}

@@ -91,45 +91,47 @@ func DefaultPlatforms() []domain.HostingPlatform {
 			DeployerImage: "google/cloud-sdk:slim",
 			Instructions: `Deploy to your own Google Kubernetes Engine cluster.
 
-Mendel needs a service account key with enough access to build images and apply
-workloads. Only you can mint that key, so run the following against your GCP
-project; Mendel does the rest. Substitute your own project ID for PROJECT.
+Before you start:
+  1. Install the gcloud CLI — https://cloud.google.com/sdk/docs/install
+  2. Sign in — gcloud auth login
+  3. Have a GKE cluster running, and rights to manage IAM on its project.
 
-1. Enable the APIs Mendel uses:
+Mendel cannot mint a service account key on your behalf, so run the setup script
+once. Edit its first line; everything after that pastes as-is, and it is safe to
+run again if you lose the key or need to repeat a step.
 
-   gcloud services enable container.googleapis.com cloudbuild.googleapis.com \
-     artifactregistry.googleapis.com --project PROJECT
+The script ends by printing your clusters and the key. Those supply the four
+values:
 
-2. Create a service account for Mendel:
+  GCP_PROJECT_ID           what you set PROJECT to
+  GCP_SERVICE_ACCOUNT_KEY  the whole contents of mendel-key.json
+  GKE_CLUSTER_NAME         NAME, from the cluster list
+  GKE_ZONE                 LOCATION, from the cluster list — a zone
+                           (us-central1-a) or a region (us-central1) both work
 
-   gcloud iam service-accounts create mendel-deployer --project PROJECT \
-     --display-name "Mendel Deployer"
-
-3. Grant it the roles the deploy needs — cluster access, image build and push,
-   the Cloud Build staging bucket, and permission to act as the build's own
-   service account:
-
-   for ROLE in container.developer cloudbuild.builds.editor \
-     artifactregistry.writer storage.admin iam.serviceAccountUser; do
-     gcloud projects add-iam-policy-binding PROJECT \
-       --member serviceAccount:mendel-deployer@PROJECT.iam.gserviceaccount.com \
-       --role roles/$ROLE --condition None
-   done
-
-4. Create the key and paste its contents into GCP_SERVICE_ACCOUNT_KEY:
-
-   gcloud iam service-accounts keys create mendel-key.json \
-     --iam-account mendel-deployer@PROJECT.iam.gserviceaccount.com
-
-Then give Mendel these four values:
-- GCP_PROJECT_ID          your project ID
-- GCP_SERVICE_ACCOUNT_KEY the full contents of mendel-key.json
-- GKE_CLUSTER_NAME        the cluster to deploy into
-- GKE_ZONE                that cluster's location — a zone (us-central1-a) or a
-                          region (us-central1) for a regional cluster
-
-Mendel deploys into a namespace of its own, `+Namespace+`, creating it if
+Mendel deploys into a namespace of its own, ` + Namespace + `, creating it if
 absent, and removes the Deployment, Service and Secret it created on teardown.`,
+			SetupScript: `# Edit this line, then paste the rest unchanged.
+PROJECT=your-project-id
+
+# The APIs Mendel uses: the cluster, the image build, and the image registry.
+gcloud services enable container.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com --project "$PROJECT"
+
+# A service account for Mendel. Harmless if it already exists.
+gcloud iam service-accounts create mendel-deployer --project "$PROJECT" --display-name "Mendel Deployer" || true
+
+# Cluster access, image build and push, the Cloud Build staging bucket, and
+# permission to act as the build's own service account.
+for ROLE in container.developer cloudbuild.builds.editor artifactregistry.writer storage.admin iam.serviceAccountUser; do
+  gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:mendel-deployer@$PROJECT.iam.gserviceaccount.com" --role "roles/$ROLE" --condition None --quiet > /dev/null
+done
+
+# The key itself, and the clusters you can deploy to.
+gcloud iam service-accounts keys create mendel-key.json --iam-account "mendel-deployer@$PROJECT.iam.gserviceaccount.com"
+gcloud container clusters list --project "$PROJECT"
+
+echo; echo "--- GCP_SERVICE_ACCOUNT_KEY: copy everything below ---"; echo
+cat mendel-key.json`,
 		},
 	}
 }

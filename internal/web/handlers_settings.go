@@ -561,6 +561,14 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 	// Get current channel if any
 	channel, _ := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
 
+	// Keep the queue honest about this channel. Selection files the ask, but a
+	// channel chosen before that existed -- or one whose credentials were since
+	// removed -- would otherwise sit here needing values with nothing in the
+	// queue saying so.
+	if channel != nil {
+		s.ensureDeploymentCredentialRequest(ctx, projectID, channel)
+	}
+
 	// Get all channels (history)
 	channels, _ := s.db.ListProjectDeploymentChannels(ctx, projectID)
 
@@ -760,6 +768,7 @@ func (s *Server) ensureDeploymentCredentialRequest(ctx context.Context, projectI
 		existing.Details = &details
 		existing.Instructions = &instructions
 		existing.Link = &link
+		existing.RequiredCapabilities = missing
 		if err := s.db.UpdateInputRequest(ctx, existing); err != nil {
 			log.Printf("deployment: could not update the credential request: %v", err)
 		}
@@ -775,7 +784,10 @@ func (s *Server) ensureDeploymentCredentialRequest(ctx context.Context, projectI
 		Details:          &details,
 		Instructions:     &instructions,
 		Link:             &link,
-		ObjectivityScore: 1.0, // Nothing to weigh: the values are needed or they are not.
+		// The names are what let the form ask for these specific values instead
+		// of offering a blank box and an example from another platform.
+		RequiredCapabilities: missing,
+		ObjectivityScore:     1.0, // Nothing to weigh: the values are needed or they are not.
 		ImportanceScore:  0.9, // Blocks every demo and deploy on this channel.
 		Status:           domain.InputRequestStatusNeedsAssignment,
 		CreatedAt:        now,

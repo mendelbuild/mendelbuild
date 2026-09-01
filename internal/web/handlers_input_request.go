@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/agent"
@@ -43,6 +45,7 @@ type InputRequestDetailView struct {
 	ObjectivesJSON             template.JS  // JSON map of objective ID to description
 	NeedsProductionCredentials bool         // requires_production but no credentials configured
 	HostingPlatforms           []HostingPlatformOption // For hosting_platform kind
+	SetupScript                string                  // For credential_request: commands the user pastes into a terminal
 
 }
 
@@ -366,6 +369,15 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 
 	case domain.InputRequestKindCredentialRequest:
 		templateName = "input_request_credential.html"
+		// The setup script belongs to the platform, not the request, so that
+		// editing it is a platform refresh rather than a rewrite of every ask
+		// already filed against it.
+		if projUUID, perr := uuid.Parse(projectID); perr == nil {
+			if channel, cerr := s.db.GetActiveProjectDeploymentChannel(ctx, projUUID); cerr == nil &&
+				channel != nil && channel.HostingPlatform != nil {
+				view.SetupScript = channel.HostingPlatform.SetupScript
+			}
+		}
 		// Load the blocked variation
 		if inputRequest.SubjectType != nil && *inputRequest.SubjectType == "variation" && inputRequest.SubjectID != nil {
 			variation, err := s.db.GetVariation(ctx, *inputRequest.SubjectID)
@@ -2156,19 +2168,35 @@ func (s *Server) handleProvideCredential(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	name := r.FormValue("credential_name")
-	value := r.FormValue("credential_value")
-
-	if name == "" {
-		http.Error(w, "credential name is required", http.StatusBadRequest)
-		return
-	}
-
 	// Get the inputRequest
 	inputRequest, err := s.db.GetInputRequest(ctx, inputRequestID)
 	if err != nil {
 		http.Error(w, "decision not found", http.StatusNotFound)
 		return
+	}
+
+	// A request that names what it needs collects those values together; one
+	// that does not still takes a single name and value. Asking for four
+	// credentials one page-load at a time is how the GKE ask felt before it
+	// carried its names.
+	provided := map[string]string{}
+	if len(inputRequest.RequiredCapabilities) > 0 {
+		for _, capName := range inputRequest.RequiredCapabilities {
+			if v := r.FormValue("value_" + capName); v != "" {
+				provided[capName] = v
+			}
+		}
+		if len(provided) == 0 {
+			http.Error(w, "enter at least one value", http.StatusBadRequest)
+			return
+		}
+	} else {
+		name := r.FormValue("credential_name")
+		if name == "" {
+			http.Error(w, "credential name is required", http.StatusBadRequest)
+			return
+		}
+		provided[name] = r.FormValue("credential_value")
 	}
 
 	// Encrypt and save the credential
@@ -2178,30 +2206,43 @@ func (s *Server) handleProvideCredential(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	encryptedValue, err := crypto.Encrypt([]byte(value), key)
-	if err != nil {
-		http.Error(w, "failed to encrypt credential: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	var saved []string
+	for name, value := range provided {
+		encryptedValue, err := crypto.Encrypt([]byte(value), key)
+		if err != nil {
+			http.Error(w, "failed to encrypt credential: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 
-	cred := &domain.ProjectCredential{
-		ID:             uuid.New(),
-		ProjectID:      projectID,
-		Name:           name,
-		EncryptedValue: encryptedValue,
+		cred := &domain.ProjectCredential{
+			ID:             uuid.New(),
+			ProjectID:      projectID,
+			Name:           name,
+			EncryptedValue: encryptedValue,
+		}
+		if err := s.db.CreateProjectCredential(ctx, cred); err != nil {
+			http.Error(w, "failed to save credential: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		saved = append(saved, name)
+		_ = s.db.ResolveCredentialRequestsByName(ctx, projectID, name)
 	}
+	sort.Strings(saved)
 
-	if err := s.db.CreateProjectCredential(ctx, cred); err != nil {
-		http.Error(w, "failed to save credential: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Resolve the input request
-	inputRequest.Status = domain.InputRequestStatusResolved
-	resolution := "credential_provided"
-	inputRequest.Resolution = &resolution
 	now := time.Now()
-	inputRequest.ResolvedAt = &now
+
+	// Resolve only once nothing is outstanding. Closing on the first value would
+	// take a four-credential ask out of the queue three values early, and the
+	// next sign of trouble would be a failed deploy.
+	stillMissing := outstandingCapabilities(ctx, s, projectID, inputRequest)
+	if len(stillMissing) == 0 {
+		inputRequest.Status = domain.InputRequestStatusResolved
+		resolution := "credential_provided"
+		inputRequest.Resolution = &resolution
+		inputRequest.ResolvedAt = &now
+	} else {
+		inputRequest.RequiredCapabilities = stillMissing
+	}
 	inputRequest.UpdatedAt = now
 
 	if err := s.db.UpdateInputRequest(ctx, inputRequest); err != nil {
@@ -2209,15 +2250,16 @@ func (s *Server) handleProvideCredential(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Auto-resolve any other credential requests for this credential name
-	_ = s.db.ResolveCredentialRequestsByName(ctx, projectID, name)
-
-	// Save system message
+	content := fmt.Sprintf("Provided %s. Blocked workflows will resume.", strings.Join(saved, ", "))
+	if len(stillMissing) > 0 {
+		content = fmt.Sprintf("Provided %s. Still needed: %s.",
+			strings.Join(saved, ", "), strings.Join(stillMissing, ", "))
+	}
 	sysMsg := &domain.InputRequestMessage{
 		ID:             uuid.New(),
 		InputRequestID: inputRequestID,
 		Role:           "system",
-		Content:        fmt.Sprintf("Credential '%s' provided. Blocked workflows will resume.", name),
+		Content:        content,
 		CreatedAt:      now,
 	}
 	s.db.CreateInputRequestMessage(ctx, sysMsg)
@@ -2476,4 +2518,29 @@ func (s *Server) handleResolveConflicts(w http.ResponseWriter, r *http.Request) 
 
 	// Redirect to hop page where they'll see the new selection input request
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/hops/%s", projectID, hop.ID), http.StatusSeeOther)
+}
+
+// outstandingCapabilities returns the credentials a request named that the
+// project still does not have. Recomputed from stored credentials rather than
+// from what this submission contained, so a value supplied elsewhere -- on the
+// deployment page, or by another member -- counts.
+func outstandingCapabilities(ctx context.Context, s *Server, projectID uuid.UUID, req *domain.InputRequest) []string {
+	if len(req.RequiredCapabilities) == 0 {
+		return nil
+	}
+	creds, err := s.db.ListProjectCredentials(ctx, projectID)
+	if err != nil {
+		return nil // Treat as satisfied rather than trapping the user in the ask.
+	}
+	have := make(map[string]bool, len(creds))
+	for _, c := range creds {
+		have[c.Name] = true
+	}
+	var missing []string
+	for _, name := range req.RequiredCapabilities {
+		if !have[name] {
+			missing = append(missing, name)
+		}
+	}
+	return missing
 }

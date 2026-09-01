@@ -594,7 +594,8 @@ CREATE TABLE hosting_platforms (
     slug TEXT UNIQUE NOT NULL,           -- "fly-io", "cloud-run", "vercel"
     name TEXT NOT NULL,                  -- "Fly.io", "Google Cloud Run", "Vercel"
     deployer_image TEXT NOT NULL,        -- Docker image with /bin/sh (e.g., "alpine:latest")
-    instructions TEXT NOT NULL,          -- AI prompt fragment for generating deploy scripts
+    instructions TEXT NOT NULL,          -- Prose a person reads: what is needed and where it goes
+    setup_script TEXT NOT NULL DEFAULT '', -- Commands they paste into a terminal, offered with a copy button
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
