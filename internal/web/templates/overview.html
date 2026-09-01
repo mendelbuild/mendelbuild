@@ -16,7 +16,7 @@
             <div class="card-head">
                 <h2 class="card-title">Needs you</h2>
                 {{if .NeedsYou}}<span class="badge badge-waiting">{{len .NeedsYou}}</span>{{end}}
-                <a class="card-head-action" href="/p/{{$.ProjectID}}/inputs">Full queue &rarr;</a>
+                <a class="card-head-action" href="/p/{{$.ProjectID}}/inputs">Everything Mendel has asked &rarr;</a>
             </div>
 
             {{if .NeedsYou}}
@@ -32,7 +32,7 @@
             {{else}}
             <p class="empty">
                 Nothing is waiting on you. Anything Mendel needs a person for appears
-                here first; the Decisions queue holds the whole history, including the
+                here first; Input Needed holds the whole history, including the
                 ones agents settled without you.
             </p>
             {{end}}

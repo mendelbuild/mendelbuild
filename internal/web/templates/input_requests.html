@@ -1,12 +1,13 @@
 {{define "page-content"}}
 <div class="page-head">
-    <span class="page-kind">Decisions</span>
+    <span class="page-kind">Input needed</span>
     <h1 class="page-title">What Mendel needs from you</h1>
     <p class="page-lede">
-        Every decision this project has faced, open and settled, including the ones
-        agents resolved on their own. Nothing gets built, spent, or deployed off the
-        back of a decision that has not been made. The
-        <a href="/p/{{.ProjectID}}">overview</a> shows just the open ones waiting on you.
+        Everything Mendel has needed a person for, open and settled &mdash; choices to
+        make, credentials to supply, steps to take in someone else&rsquo;s console.
+        Nothing gets built, spent, or deployed off the back of a request that has not
+        been answered. The <a href="/p/{{.ProjectID}}">overview</a> shows just the
+        open ones.
     </p>
 </div>
 
@@ -26,7 +27,7 @@
         {{if .OpenInputRequests}}
         <table class="table">
             <thead>
-                <tr><th>Decision</th><th>Asks you to</th><th>Where it stands</th><th>Weight</th><th>Raised</th></tr>
+                <tr><th>Request</th><th>Asks you to</th><th>Where it stands</th><th>Weight</th><th>Raised</th></tr>
             </thead>
             <tbody>
                 {{range .OpenInputRequests}}
@@ -68,7 +69,7 @@
         {{if .ResolvedInputRequests}}
         <table class="table">
             <thead>
-                <tr><th>Decision</th><th>Asked you to</th><th>Outcome</th><th>Raised</th><th>Settled</th></tr>
+                <tr><th>Request</th><th>Asked you to</th><th>Outcome</th><th>Raised</th><th>Settled</th></tr>
             </thead>
             <tbody>
                 {{range .ResolvedInputRequests}}

@@ -6,7 +6,7 @@
 <div class="callout callout-waiting">
     <p class="callout-title">Production comparison needs credentials</p>
     <p class="callout-body">
-        This Hop compares its variations under real traffic, but no cloud credentials
+        This Hop compares its Variations under real traffic, but no cloud credentials
         are configured, so nothing can be deployed to compare.
     </p>
     <div class="actions">
@@ -26,13 +26,13 @@
                 Pick a winner
             </button>
             {{else}}
-            <span class="badge badge-progress">Waiting for every variation to finish</span>
+            <span class="badge badge-progress">Waiting for every Variation to finish</span>
             {{end}}
         </span>
     </div>
 
     <p class="card-note">
-        Each column is one approach to the same Hop. Grades are Mendel's reading against
+        Each column is one Variation of the same Hop. Grades are Mendel's reading against
         the criteria below; the demos are yours to click through. The winner is merged to
         <code>main</code> and the rest are closed.
     </p>
@@ -146,7 +146,7 @@
 <div class="card">
     <div class="empty-block">
         <div class="empty-title">Nothing to compare yet</div>
-        <p class="empty">This Hop has no finished variations.</p>
+        <p class="empty">This Hop has no finished Variations.</p>
     </div>
 </div>
 {{end}}
@@ -157,7 +157,7 @@
         <div class="card">
             <div class="card-head"><h2 class="card-title">What Mendel graded against</h2></div>
             <p class="card-note">
-                Agreed before the variations were built, so the criteria could not be
+                Agreed before the Variations were built, so the criteria could not be
                 chosen to fit whichever one happened to win.
             </p>
             <table class="table">
@@ -196,14 +196,14 @@
             {{if eq .Resolution "approved"}}
             <div class="callout callout-success">
                 <p class="callout-title">A winner was merged</p>
-                <p class="callout-body">The winning variation is on <code>main</code>.</p>
+                <p class="callout-body">The winning Variation is on <code>main</code>.</p>
                 <div class="actions">
                     <a class="btn btn-secondary btn-sm" href="/p/{{$.ProjectID}}/hops/{{.Hop.ID}}">Open the Hop</a>
                 </div>
             </div>
             {{else if eq .Resolution "rejected"}}
             <div class="callout callout-failure">
-                <p class="callout-title">Every variation was rejected</p>
+                <p class="callout-title">Every Variation was rejected</p>
                 <p class="callout-body">Nothing from this Hop was merged.</p>
             </div>
             {{else}}

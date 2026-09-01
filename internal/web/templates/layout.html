@@ -33,7 +33,7 @@
         {{$nav := .Nav}}
         <a class="nav-link{{if eq $nav "overview"}} is-active{{end}}" href="/p/{{.ProjectID}}">Overview</a>
         <a class="nav-link{{if eq $nav "strategy"}} is-active{{end}}" href="/p/{{.ProjectID}}/strategy">Strategy</a>
-        <a class="nav-link{{if eq $nav "inputs"}} is-active{{end}}" href="/p/{{.ProjectID}}/inputs">Decisions{{if .OpenInputCount}}<span class="nav-badge">{{.OpenInputCount}}</span>{{end}}</a>
+        <a class="nav-link{{if eq $nav "inputs"}} is-active{{end}}" href="/p/{{.ProjectID}}/inputs">Input Needed{{if .OpenInputCount}}<span class="nav-badge">{{.OpenInputCount}}</span>{{end}}</a>
         <a class="nav-link{{if eq $nav "costs"}} is-active{{end}}" href="/p/{{.ProjectID}}/costs">Costs</a>
         <a class="nav-link{{if eq $nav "settings"}} is-active{{end}}" href="/p/{{.ProjectID}}/settings">Settings</a>
         {{end}}

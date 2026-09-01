@@ -28,7 +28,7 @@
             <div class="row row-baseline">
                 <h3 class="card-title">{{.Objective.Description}}</h3>
                 {{if .HopCount}}
-                <a class="badge badge-progress" href="/p/{{$.ProjectID}}/roadmap">{{.HopCount}} hop{{if ne .HopCount 1}}s{{end}}</a>
+                <a class="badge badge-progress" href="/p/{{$.ProjectID}}/roadmap">{{.HopCount}} Hop{{if ne .HopCount 1}}s{{end}}</a>
                 {{else}}
                 {{/* An objective with no Hop is one nothing is being done about,
                      which is worth saying plainly rather than leaving blank. */}}

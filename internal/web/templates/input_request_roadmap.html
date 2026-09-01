@@ -5,7 +5,7 @@
 {{if .Roadmap}}
 <div class="card">
     <div class="card-head">
-        <h2 class="card-title">Proposed hops</h2>
+        <h2 class="card-title">Proposed Hops</h2>
         {{if .Roadmap.Hops}}<span class="badge badge-quiet">{{len .Roadmap.Hops}}</span>{{end}}
     </div>
     <p class="card-note">
@@ -50,7 +50,7 @@
         </table>
     </div>
     {{else}}
-    <p class="empty">The proposal contains no hops.</p>
+    <p class="empty">The proposal contains no Hops.</p>
     {{end}}
 
     {{if .Roadmap.FeasibilityNotes}}
@@ -144,11 +144,11 @@
 
             {{if .Open}}
             <p class="card-note">
-                Approving creates these hops and lets Mendel start proposing approaches for
-                the first of them. Nothing is built until you approve the approaches too.
+                Approving creates these Hops and lets Mendel start proposing Variations for
+                the first of them. Nothing is built until you approve the Variations too.
             </p>
             <div class="actions">
-                <button type="submit" form="approve-form" class="btn btn-primary">Approve and create the hops</button>
+                <button type="submit" form="approve-form" class="btn btn-primary">Approve and create the Hops</button>
                 <button type="submit" form="reject-form" class="btn btn-danger">Reject this roadmap</button>
             </div>
             <form id="approve-form" method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/approve" hidden></form>
@@ -173,7 +173,7 @@
                 {{if eq .Resolution "approved"}}
                 <div class="callout callout-success">
                     <p class="callout-title">Approved</p>
-                    <p class="callout-body">These hops are now on the roadmap.</p>
+                    <p class="callout-body">These Hops are now on the roadmap.</p>
                     <div class="actions">
                         <a class="btn btn-secondary btn-sm" href="/p/{{$.ProjectID}}/roadmap">Open the roadmap</a>
                     </div>
@@ -181,7 +181,7 @@
                 {{else if eq .Resolution "rejected"}}
                 <div class="callout callout-failure">
                     <p class="callout-title">Rejected</p>
-                    <p class="callout-body">No hops were created from this proposal.</p>
+                    <p class="callout-body">No Hops were created from this proposal.</p>
                 </div>
                 {{else}}
                 {{template "decision-resolved" .}}

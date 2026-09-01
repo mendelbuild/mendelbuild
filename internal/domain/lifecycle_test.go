@@ -377,3 +377,50 @@ func TestBudgetPauseIsNotReportedAsBlockedOnInput(t *testing.T) {
 		t.Errorf("an ordinary blocked variation lost its explanation: %q", ordinary.NextAction)
 	}
 }
+
+// Every InputRequest is created `needs_assignment` and nothing in the codebase
+// ever moves it on, so that state means "nobody has looked at this yet" — which
+// makes it the user's move, not Mendel's.
+//
+// Reporting it as Mendel's work is not a cosmetic error. It puts the request in
+// the "Mendel is working on" list on the overview and tells the reader nothing
+// is needed from them, about the only thing that will ever unblock it.
+func TestUnroutedRequestIsTheUsersMove(t *testing.T) {
+	ir := &InputRequest{
+		Status: InputRequestStatusNeedsAssignment,
+		Kind:   InputRequestKindCredentialRequest,
+	}
+	r := DecisionLifecycle(ir)
+
+	if r.WaitingOn != ActorYou {
+		t.Errorf("an unrouted request should be the user's move, got %q", r.WaitingOn)
+	}
+	if r.Tone != ToneWaiting {
+		t.Errorf("tone = %q, want %q", r.Tone, ToneWaiting)
+	}
+	// The ask must be the specific one for its kind, not a generic "being routed".
+	if r.NextAction != DecisionAsk(InputRequestKindCredentialRequest) {
+		t.Errorf("NextAction = %q, want the credential ask", r.NextAction)
+	}
+}
+
+// The corollary, stated as its own rule because it is the one that shows up on
+// the overview: nothing that is still open may claim to be Mendel's problem
+// unless Mendel is genuinely working on it.
+func TestNoOpenRequestHidesFromTheUser(t *testing.T) {
+	for _, st := range []InputRequestStatus{
+		InputRequestStatusNeedsAssignment,
+		InputRequestStatusAssigned,
+		InputRequestStatusAccepted,
+	} {
+		r := DecisionLifecycle(&InputRequest{Status: st, Kind: InputRequestKindPassFail})
+		if !r.WaitingOnYou() {
+			t.Errorf("%s: an open request must surface as the user's move, got %q", st, r.WaitingOn)
+		}
+	}
+
+	// And a resolved one must not.
+	if DecisionLifecycle(&InputRequest{Status: InputRequestStatusResolved}).WaitingOnYou() {
+		t.Error("a resolved request should not still be asking for something")
+	}
+}

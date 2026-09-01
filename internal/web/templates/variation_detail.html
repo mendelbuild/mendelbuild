@@ -92,7 +92,7 @@
             {{else}}
             {{/* No demo yet. Say what is stopping one, and link to the fix. */}}
             {{if .DemoReady}}
-            <p class="card-note">Deploy this variation to {{.DeploymentChannelName}} so you can click through it.</p>
+            <p class="card-note">Deploy this Variation to {{.DeploymentChannelName}} so you can click through it.</p>
             <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/start-demo">
                 <button type="submit" class="btn btn-primary">Start a demo</button>
             </form>
@@ -101,7 +101,7 @@
                 <div class="callout callout-waiting">
                     <p class="callout-title">Not ready to run</p>
                     <p class="callout-body">
-                        This variation&rsquo;s code needs something before it can start.
+                        This Variation&rsquo;s code needs something before it can start.
                         See <strong>{{.Requirements.Title}}</strong> below.
                     </p>
                 </div>
@@ -148,7 +148,7 @@
         {{if .Revisions}}
         <div class="card">
             <div class="card-head"><h2 class="card-title">Requested changes</h2></div>
-            <p class="card-note">Feedback you sent back for this variation, newest first.</p>
+            <p class="card-note">Feedback you sent back for this Variation, newest first.</p>
             <table class="table">
                 <thead><tr><th>Status</th><th>Feedback</th><th>Requested</th></tr></thead>
                 <tbody>
@@ -195,7 +195,7 @@
         <div class="card">
             <div class="card-head"><h2 class="card-title">Cost</h2></div>
             <div class="metric-value">{{usd .AmountUSD}}</div>
-            <div class="metric-label">Spent on this variation</div>
+            <div class="metric-label">Spent on this Variation</div>
             <details class="disclosure">
                 <summary>Token detail</summary>
                 <div class="disclosure-body">

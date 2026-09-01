@@ -599,7 +599,7 @@ func TestSelectionPageRendersBothStates(t *testing.T) {
 		if strings.Contains(body, `name="winner"`) {
 			t.Error("a winner must not be selectable while variations are still building")
 		}
-		if !strings.Contains(body, "Waiting for every variation to finish") {
+		if !strings.Contains(body, "Waiting for every Variation to finish") {
 			t.Error("the page should say why no winner can be picked yet")
 		}
 	})
@@ -636,7 +636,7 @@ func TestStrategyPageShowsObjectivesAndSpend(t *testing.T) {
 
 	for _, want := range []string{
 		"Q3 launch", "People can sign in", "Weekly active users", "1000 users",
-		"2 hops",            // an objective the roadmap is actually pursuing
+		"2 Hops",            // an objective the roadmap is actually pursuing
 		"Not planned",       // and one it is not, said plainly rather than left blank
 		"$41.82", "of $120", // the budget strip, beside what the money is buying
 	} {

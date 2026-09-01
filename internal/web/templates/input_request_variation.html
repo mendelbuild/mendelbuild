@@ -4,7 +4,7 @@
 
 {{if .ConflictInfo}}
 <div class="callout callout-failure">
-    <p class="callout-title">These approaches cannot all be merged</p>
+    <p class="callout-title">These Variations cannot all be merged</p>
     <p class="callout-body">{{.ConflictInfo.Summary}}</p>
     <div class="stack-tight">
         {{range .ConflictInfo.Conflicts}}
@@ -21,8 +21,8 @@
         {{end}}
     </div>
     <p class="callout-body">
-        Prune conflicting variations below until none remain, or ask for revised
-        approaches that avoid the clash.
+        Prune conflicting Variations below until none remain, or ask for revised
+        Variations that avoid the clash.
     </p>
 </div>
 {{end}}
@@ -32,7 +32,7 @@
         {{if .VariationProposal}}{{if .VariationProposal.Variations}}
         <div class="card">
             <div class="card-head">
-                <h2 class="card-title">{{if .ExistingVariations}}New approaches{{else}}Proposed approaches{{end}}</h2>
+                <h2 class="card-title">{{if .ExistingVariations}}New Variations{{else}}Proposed Variations{{end}}</h2>
                 <span class="card-head-action">
                     Estimated <strong>{{usd .VariationProposal.TotalEstimatedUSD}}</strong>
                     {{with .HopCost}}{{if .LimitUSD}}
@@ -43,7 +43,7 @@
                 </span>
             </div>
             <p class="card-note">
-                Mendel writes code for each approach you keep, and you compare the results
+                Mendel writes code for each Variation you keep, and you compare the results
                 before anything is merged. Uncheck any that are not worth the money.
             </p>
 
@@ -113,7 +113,7 @@
         {{if and (not .VariationProposal.Variations) (not .ExistingVariations)}}
         <div class="card">
             <div class="empty-block">
-                <div class="empty-title">No approaches proposed</div>
+                <div class="empty-title">No Variations proposed</div>
                 <p class="empty">Use the conversation to tell Mendel what you want it to try.</p>
             </div>
         </div>
@@ -147,7 +147,7 @@
             {{if .Open}}
                 {{if .ConflictInfo}}
                 <p class="card-note">
-                    Prune conflicting variations until none remain, then confirm. Mendel
+                    Prune conflicting Variations until none remain, then confirm. Mendel
                     re-checks before moving on.
                 </p>
                 <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/resolve-conflicts">
@@ -158,7 +158,7 @@
                     <legend class="eyebrow">What counts as a comparison</legend>
                     <label class="check">
                         <input type="checkbox" name="requires_demo" form="approve-form" checked>
-                        <span>A clickable demo of each approach</span>
+                        <span>A clickable demo of each Variation</span>
                     </label>
                     <label class="check">
                         <input type="checkbox" name="requires_production" form="approve-form">
@@ -170,18 +170,18 @@
                 </fieldset>
 
                 <button id="approve-button" type="submit" form="approve-form" class="btn btn-primary btn-block">
-                    Approve {{len .VariationProposal.Variations}} approach{{if ne (len .VariationProposal.Variations) 1}}es{{end}}
+                    Approve {{len .VariationProposal.Variations}} Variation{{if ne (len .VariationProposal.Variations) 1}}s{{end}}
                 </button>
                 <p class="text-sm subtle">
                     {{if .ExistingVariations}}
-                    Code generation starts for the approaches you keep. What is already built stays.
+                    Code generation starts for the Variations you keep. What is already built stays.
                     {{else}}
-                    Code generation starts for each approach you keep.
+                    Code generation starts for each Variation you keep.
                     {{end}}
                 </p>
                 {{else if .ExistingVariations}}
                 <p class="empty">
-                    Nothing new to approve. Ask for more approaches in the conversation,
+                    Nothing new to approve. Ask for more Variations in the conversation,
                     then approve them here.
                 </p>
                 {{end}}
@@ -258,7 +258,7 @@
 </div>
 
 <script>
-// The approve button names how many approaches it will fund, so it has to track
+// The approve button names how many Variations it will fund, so it has to track
 // the checkboxes. Disabling it at zero is the point: approving nothing silently
 // resolves the decision with no work started.
 function updateApproveButton() {
@@ -267,8 +267,8 @@ function updateApproveButton() {
     const checked = document.querySelectorAll('.variation-checkbox:checked').length;
     button.disabled = checked === 0;
     button.textContent = checked === 0
-        ? 'Select at least one approach'
-        : 'Approve ' + checked + ' approach' + (checked !== 1 ? 'es' : '');
+        ? 'Select at least one Variation'
+        : 'Approve ' + checked + ' Variation' + (checked !== 1 ? 's' : '');
 }
 document.addEventListener('DOMContentLoaded', updateApproveButton);
 </script>
