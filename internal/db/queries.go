@@ -129,14 +129,19 @@ func (db *DB) LoadStrategy(ctx context.Context, input *domain.StrategyInput) (uu
 
 			// Insert key_result with strategy_id (new schema)
 			_, err = tx.Exec(ctx, `
-				INSERT INTO key_results (id, strategy_id, description, target_units, target_date, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $6)
+				INSERT INTO key_results (id, strategy_id, description,
+				                         target_comparator, target_value, target_unit,
+				                         target_date, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
 				ON CONFLICT (id) DO UPDATE SET
 					description = EXCLUDED.description,
-					target_units = EXCLUDED.target_units,
+					target_comparator = EXCLUDED.target_comparator,
+					target_value = EXCLUDED.target_value,
+					target_unit = EXCLUDED.target_unit,
 					target_date = EXCLUDED.target_date,
-					updated_at = $6
-			`, krID, strategyID, kr.Description, kr.TargetUnits, targetDate, now)
+					updated_at = $8
+			`, krID, strategyID, kr.Description,
+				kr.TargetComparator, kr.TargetValue, kr.TargetUnit, targetDate, now)
 			if err != nil {
 				return uuid.Nil, fmt.Errorf("upsert key result %s: %w", kr.ID, err)
 			}
@@ -328,7 +333,7 @@ func (db *DB) GetObjectivesByStrategy(ctx context.Context, strategyID uuid.UUID)
 // GetKeyResultsByObjective retrieves all non-deleted key results linked to an objective via junction table.
 func (db *DB) GetKeyResultsByObjective(ctx context.Context, objectiveID uuid.UUID) ([]domain.KeyResult, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT kr.id, kr.strategy_id, kr.description, kr.target_units, kr.target_date,
+		SELECT kr.id, kr.strategy_id, kr.description, kr.target_comparator, kr.target_value, kr.target_unit, kr.target_date,
 		       kr.tune_score, kr.tune_feedback, kr.deleted_at, kr.created_at, kr.updated_at
 		FROM key_results kr
 		JOIN objective_key_result_pairs okrp ON okrp.key_result_id = kr.id
@@ -343,7 +348,7 @@ func (db *DB) GetKeyResultsByObjective(ctx context.Context, objectiveID uuid.UUI
 	var keyResults []domain.KeyResult
 	for rows.Next() {
 		var kr domain.KeyResult
-		if err := rows.Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetUnits, &kr.TargetDate,
+		if err := rows.Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetComparator, &kr.TargetValue, &kr.TargetUnit, &kr.TargetDate,
 			&kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -1362,9 +1367,9 @@ func (db *DB) SoftDeleteObjective(ctx context.Context, id uuid.UUID) error {
 func (db *DB) GetKeyResult(ctx context.Context, id uuid.UUID) (*domain.KeyResult, error) {
 	var kr domain.KeyResult
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, strategy_id, description, target_units, target_date, tune_score, tune_feedback, deleted_at, created_at, updated_at
+		SELECT id, strategy_id, description, target_comparator, target_value, target_unit, target_date, tune_score, tune_feedback, deleted_at, created_at, updated_at
 		FROM key_results WHERE id = $1
-	`, id).Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetUnits, &kr.TargetDate, &kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt)
+	`, id).Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetComparator, &kr.TargetValue, &kr.TargetUnit, &kr.TargetDate, &kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -1374,7 +1379,7 @@ func (db *DB) GetKeyResult(ctx context.Context, id uuid.UUID) (*domain.KeyResult
 // GetAllKeyResultsForStrategy retrieves all non-deleted key results for a strategy.
 func (db *DB) GetAllKeyResultsForStrategy(ctx context.Context, strategyID uuid.UUID) ([]domain.KeyResult, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, strategy_id, description, target_units, target_date, tune_score, tune_feedback, deleted_at, created_at, updated_at
+		SELECT id, strategy_id, description, target_comparator, target_value, target_unit, target_date, tune_score, tune_feedback, deleted_at, created_at, updated_at
 		FROM key_results WHERE strategy_id = $1 AND deleted_at IS NULL
 		ORDER BY created_at
 	`, strategyID)
@@ -1386,7 +1391,7 @@ func (db *DB) GetAllKeyResultsForStrategy(ctx context.Context, strategyID uuid.U
 	var keyResults []domain.KeyResult
 	for rows.Next() {
 		var kr domain.KeyResult
-		if err := rows.Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetUnits, &kr.TargetDate, &kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt); err != nil {
+		if err := rows.Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetComparator, &kr.TargetValue, &kr.TargetUnit, &kr.TargetDate, &kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt); err != nil {
 			return nil, err
 		}
 		keyResults = append(keyResults, kr)
@@ -1397,7 +1402,7 @@ func (db *DB) GetAllKeyResultsForStrategy(ctx context.Context, strategyID uuid.U
 // GetUnlinkedKeyResults retrieves key results not linked to any objective.
 func (db *DB) GetUnlinkedKeyResults(ctx context.Context, strategyID uuid.UUID) ([]domain.KeyResult, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT kr.id, kr.strategy_id, kr.description, kr.target_units, kr.target_date,
+		SELECT kr.id, kr.strategy_id, kr.description, kr.target_comparator, kr.target_value, kr.target_unit, kr.target_date,
 		       kr.tune_score, kr.tune_feedback, kr.deleted_at, kr.created_at, kr.updated_at
 		FROM key_results kr
 		WHERE kr.strategy_id = $1 AND kr.deleted_at IS NULL
@@ -1414,7 +1419,7 @@ func (db *DB) GetUnlinkedKeyResults(ctx context.Context, strategyID uuid.UUID) (
 	var keyResults []domain.KeyResult
 	for rows.Next() {
 		var kr domain.KeyResult
-		if err := rows.Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetUnits, &kr.TargetDate, &kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt); err != nil {
+		if err := rows.Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetComparator, &kr.TargetValue, &kr.TargetUnit, &kr.TargetDate, &kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt); err != nil {
 			return nil, err
 		}
 		keyResults = append(keyResults, kr)
@@ -1432,9 +1437,12 @@ func (db *DB) CreateKeyResult(ctx context.Context, kr *domain.KeyResult) error {
 	kr.UpdatedAt = now
 
 	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO key_results (id, strategy_id, description, target_units, target_date, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $6)
-	`, kr.ID, kr.StrategyID, kr.Description, kr.TargetUnits, kr.TargetDate, now)
+		INSERT INTO key_results (id, strategy_id, description,
+		                         target_comparator, target_value, target_unit,
+		                         target_date, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+	`, kr.ID, kr.StrategyID, kr.Description,
+		kr.TargetComparator, kr.TargetValue, kr.TargetUnit, kr.TargetDate, now)
 	return err
 }
 
@@ -1443,13 +1451,16 @@ func (db *DB) UpdateKeyResult(ctx context.Context, kr *domain.KeyResult) error {
 	_, err := db.Pool.Exec(ctx, `
 		UPDATE key_results SET
 			description = $2,
-			target_units = $3,
-			target_date = $4,
+			target_comparator = $3,
+			target_value = $4,
+			target_unit = $5,
+			target_date = $6,
 			tune_score = NULL,
 			tune_feedback = NULL,
 			updated_at = NOW()
 		WHERE id = $1
-	`, kr.ID, kr.Description, kr.TargetUnits, kr.TargetDate)
+	`, kr.ID, kr.Description,
+		kr.TargetComparator, kr.TargetValue, kr.TargetUnit, kr.TargetDate)
 	return err
 }
 
@@ -1522,7 +1533,7 @@ func (db *DB) GetObjectiveIDsForKeyResult(ctx context.Context, keyResultID uuid.
 // (same strategy, not already linked, not deleted).
 func (db *DB) GetAvailableKeyResultsForObjective(ctx context.Context, objectiveID uuid.UUID) ([]domain.KeyResult, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT kr.id, kr.strategy_id, kr.description, kr.target_units, kr.target_date,
+		SELECT kr.id, kr.strategy_id, kr.description, kr.target_comparator, kr.target_value, kr.target_unit, kr.target_date,
 		       kr.tune_score, kr.tune_feedback, kr.deleted_at, kr.created_at, kr.updated_at
 		FROM key_results kr
 		JOIN objectives o ON o.strategy_id = kr.strategy_id
@@ -1541,7 +1552,7 @@ func (db *DB) GetAvailableKeyResultsForObjective(ctx context.Context, objectiveI
 	var keyResults []domain.KeyResult
 	for rows.Next() {
 		var kr domain.KeyResult
-		if err := rows.Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetUnits, &kr.TargetDate, &kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt); err != nil {
+		if err := rows.Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetComparator, &kr.TargetValue, &kr.TargetUnit, &kr.TargetDate, &kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt); err != nil {
 			return nil, err
 		}
 		keyResults = append(keyResults, kr)
@@ -1579,7 +1590,7 @@ func (db *DB) GetUntunedObjectives(ctx context.Context, strategyID uuid.UUID) ([
 // GetUntunedKeyResults retrieves key results without tuning scores for a strategy.
 func (db *DB) GetUntunedKeyResults(ctx context.Context, strategyID uuid.UUID) ([]domain.KeyResult, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, strategy_id, description, target_units, target_date, tune_score, tune_feedback, deleted_at, created_at, updated_at
+		SELECT id, strategy_id, description, target_comparator, target_value, target_unit, target_date, tune_score, tune_feedback, deleted_at, created_at, updated_at
 		FROM key_results WHERE strategy_id = $1 AND deleted_at IS NULL AND tune_score IS NULL
 		ORDER BY created_at
 	`, strategyID)
@@ -1591,7 +1602,7 @@ func (db *DB) GetUntunedKeyResults(ctx context.Context, strategyID uuid.UUID) ([
 	var keyResults []domain.KeyResult
 	for rows.Next() {
 		var kr domain.KeyResult
-		if err := rows.Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetUnits, &kr.TargetDate, &kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt); err != nil {
+		if err := rows.Scan(&kr.ID, &kr.StrategyID, &kr.Description, &kr.TargetComparator, &kr.TargetValue, &kr.TargetUnit, &kr.TargetDate, &kr.TuneScore, &kr.TuneFeedback, &kr.DeletedAt, &kr.CreatedAt, &kr.UpdatedAt); err != nil {
 			return nil, err
 		}
 		keyResults = append(keyResults, kr)

@@ -821,6 +821,28 @@ a.callout:hover /* A stack manages the gaps between its own children, so a callo
 .input-mono { font-family: var(--font-mono); }
 .input-inline { width: auto; min-width: 260px; }
 
+/* A Key Result's target: a comparison, a number, and what the number counts.
+   Three inputs on one line, sized to what each holds -- the comparison is a
+   fixed list, the number is short, and the unit takes whatever room is left. */
+.target-fields {
+    display: flex;
+    gap: var(--sp-2);
+    align-items: center;
+}
+.target-fields .target-comparator { flex: 0 0 auto; width: auto; }
+.target-fields .target-value { flex: 0 0 7em; text-align: right; font-variant-numeric: tabular-nums; }
+.target-fields .target-unit { flex: 1 1 8em; min-width: 0; }
+.target-fields select,
+.target-fields input {
+    padding: var(--sp-2) var(--sp-3);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-md);
+    font-family: inherit;
+    font-size: var(--text-base);
+    background: var(--surface-card);
+    color: var(--ink-1);
+}
+
 .field-row { display: flex; gap: var(--sp-5); flex-wrap: wrap; }
 .field-row > .field { flex: 1; min-width: 200px; }
 

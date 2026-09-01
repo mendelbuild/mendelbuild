@@ -31,10 +31,17 @@ type ObjectiveDef struct {
 
 // KeyResultDef defines a key result.
 type KeyResultDef struct {
-	ID          string  `json:"id"`           // Stable user-provided ID for upsert
-	Description string  `json:"description"`
-	TargetUnits string  `json:"target_units"`
-	TargetDate  *string `json:"target_date,omitempty"` // ISO8601 format
+	ID          string `json:"id"` // Stable user-provided ID for upsert
+	Description string `json:"description"`
+
+	// The target, structured [037]: the comparison to make, the number to make
+	// it against, and what that number counts. The unit is for display only, so
+	// it carries any qualifier ("ms p99", "signups per week").
+	TargetComparator string  `json:"target_comparator"`
+	TargetValue      float64 `json:"target_value"`
+	TargetUnit       string  `json:"target_unit"`
+
+	TargetDate *string `json:"target_date,omitempty"` // ISO8601 format
 }
 
 // FundingDef defines a USD budget for a strategy.

@@ -172,9 +172,12 @@ func (db *DB) ReplaceDraftOKRs(ctx context.Context, strategyID uuid.UUID, object
 		for _, kr := range obj.KeyResults {
 			krID := uuid.New()
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO key_results (id, strategy_id, description, target_units, target_date, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $6)
-			`, krID, strategyID, kr.Description, kr.TargetUnits, kr.TargetDate, now); err != nil {
+				INSERT INTO key_results (id, strategy_id, description,
+				                         target_comparator, target_value, target_unit,
+				                         target_date, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+			`, krID, strategyID, kr.Description,
+				kr.TargetComparator, kr.TargetValue, kr.TargetUnit, kr.TargetDate, now); err != nil {
 				return fmt.Errorf("insert key result: %w", err)
 			}
 			if _, err := tx.Exec(ctx, `
@@ -198,9 +201,11 @@ type DraftObjective struct {
 
 // DraftKeyResult is one key result in a draft.
 type DraftKeyResult struct {
-	Description string
-	TargetUnits string
-	TargetDate  *time.Time
+	Description      string
+	TargetComparator string
+	TargetValue      float64
+	TargetUnit       string
+	TargetDate       *time.Time
 }
 
 // GetOnboardingState gathers everything the setup ribbon needs for a project.

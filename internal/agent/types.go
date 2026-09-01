@@ -81,7 +81,7 @@ type ObjectiveInfo struct {
 type KeyResultInfo struct {
 	ID          string  `json:"id" desc:"UUID of the key result"`
 	Description string  `json:"description" desc:"What this key result measures"`
-	TargetUnits string  `json:"target_units" desc:"Target value with units (e.g., '100 users', '99.9%')"`
+	Target      string  `json:"target" desc:"The target as a phrase, e.g. '>= 100 users', '< 200 ms p99'"`
 	TargetDate  *string `json:"target_date,omitempty" desc:"When target should be achieved (ISO 8601 date)"`
 }
 
@@ -339,8 +339,10 @@ type StrategyBrief struct {
 
 // DraftedKeyResult is one measurable target in a drafted strategy.
 type DraftedKeyResult struct {
-	Description string `json:"description" desc:"What is being measured, in plain English. One sentence, no target figure in it."`
-	TargetUnits string `json:"target_units" desc:"The target with its unit and comparison, e.g. '>= 100 signups', '< 200ms p99', '>= 80%'. This is the whole point of a key result: a reader must be able to tell whether it was hit."`
+	Description string `json:"description" desc:"What is being measured, in plain English. One sentence, no target figure in it. It must be something a person could put a number to every week: a key result that can only be measured at the end of the quarter cannot tell anyone whether the work is going well while there is still time to change it."`
+	TargetComparator string  `json:"target_comparator" desc:"How a measurement is compared against the target. One of: >=, <=, >, <, =. Use >= for things that should grow and <= for things that should shrink."`
+	TargetValue      float64 `json:"target_value" desc:"The number to compare against. Just the number: no unit, no symbol, no thousands separator."`
+	TargetUnit       string  `json:"target_unit" desc:"What the number counts, for display: 'users', '%', 'ms p99', 'signups per week'. Carries any qualifier, since only the number is compared."`
 	TargetDate  string `json:"target_date" desc:"When this should be hit, YYYY-MM-DD. Must fall on or before the deadline and on or after today. Empty only if the user gave no deadline."`
 }
 

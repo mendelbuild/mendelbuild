@@ -43,7 +43,7 @@
                     {{range .KeyResults}}
                     <tr>
                         <td>{{.Description}}</td>
-                        <td class="mono nowrap">{{.TargetUnits}}</td>
+                        <td class="mono nowrap">{{.Target}}</td>
                         <td class="subtle nowrap">{{if .TargetDate}}{{.TargetDate.Format "2 Jan 2006"}}{{else}}&mdash;{{end}}</td>
                     </tr>
                     {{end}}

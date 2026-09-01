@@ -245,9 +245,11 @@ func (s *Server) draftStrategy(ctx context.Context, projectID, strategyID uuid.U
 		o := db.DraftObjective{Description: obj.Description}
 		for _, kr := range obj.KeyResults {
 			o.KeyResults = append(o.KeyResults, db.DraftKeyResult{
-				Description: kr.Description,
-				TargetUnits: kr.TargetUnits,
-				TargetDate:  parseTargetDate(kr.TargetDate, deadline),
+				Description:      kr.Description,
+				TargetComparator: kr.TargetComparator,
+				TargetValue:      kr.TargetValue,
+				TargetUnit:       kr.TargetUnit,
+				TargetDate:       parseTargetDate(kr.TargetDate, deadline),
 			})
 		}
 		objectives = append(objectives, o)
@@ -384,7 +386,7 @@ func (s *Server) tuneStrategyOKRs(ctx context.Context, strategyID uuid.UUID) {
 		input.KeyResults = append(input.KeyResults, agent.KeyResultForTuning{
 			ID:          kr.ID.String(),
 			Description: kr.Description,
-			TargetUnits: kr.TargetUnits,
+			TargetUnits: kr.Target(),
 		})
 	}
 
@@ -637,7 +639,12 @@ func (s *Server) currentDraft(ctx context.Context, strategy *domain.Strategy) *a
 		o := agent.DraftedObjective{Description: obj.Description}
 		krs, _ := s.db.GetKeyResultsByObjective(ctx, obj.ID)
 		for _, kr := range krs {
-			d := agent.DraftedKeyResult{Description: kr.Description, TargetUnits: kr.TargetUnits}
+			d := agent.DraftedKeyResult{
+				Description:      kr.Description,
+				TargetComparator: kr.TargetComparator,
+				TargetValue:      kr.TargetValue,
+				TargetUnit:       kr.TargetUnit,
+			}
 			if kr.TargetDate != nil {
 				d.TargetDate = kr.TargetDate.Format("2006-01-02")
 			}
@@ -766,7 +773,12 @@ func (s *Server) saveOKREdits(ctx context.Context, strategy *domain.Strategy, r 
 				}
 				continue
 			}
-			units := strings.TrimSpace(r.FormValue("kr_" + kr.ID.String() + "_units"))
+			field := "kr_" + kr.ID.String() + "_"
+			comparator, value, unit, targetErr := keyResultTargetFields(
+				r.FormValue(field+"comparator"), r.FormValue(field+"value"), r.FormValue(field+"unit"))
+			if targetErr != nil {
+				return targetErr
+			}
 			rawDate := strings.TrimSpace(r.FormValue("kr_" + kr.ID.String() + "_date"))
 
 			var target *time.Time
@@ -776,14 +788,17 @@ func (s *Server) saveOKREdits(ctx context.Context, strategy *domain.Strategy, r 
 				}
 			}
 
-			unchanged := krDesc == kr.Description && units == kr.TargetUnits &&
-				sameDay(target, kr.TargetDate)
+			unchanged := krDesc == kr.Description &&
+				comparator == kr.TargetComparator && value == kr.TargetValue &&
+				unit == kr.TargetUnit && sameDay(target, kr.TargetDate)
 			if unchanged {
 				continue
 			}
 			edited := kr
 			edited.Description = krDesc
-			edited.TargetUnits = units
+			edited.TargetComparator = comparator
+			edited.TargetValue = value
+			edited.TargetUnit = unit
 			edited.TargetDate = target
 			if err := s.db.UpdateKeyResult(ctx, &edited); err != nil {
 				return err

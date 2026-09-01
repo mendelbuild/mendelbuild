@@ -20,7 +20,7 @@ func TestDraftDefect(t *testing.T) {
 		Summary:      "A polling tool for one district.",
 		Objectives: []DraftedObjective{{
 			Description: "An official can poll a sample of constituents",
-			KeyResults:  []DraftedKeyResult{{Description: "Polls sent", TargetUnits: ">= 1 poll"}},
+			KeyResults:  []DraftedKeyResult{{Description: "Polls sent", TargetComparator: ">=", TargetValue: 1, TargetUnit: "polls"}},
 		}},
 	}
 	if defect := draftDefect(good); defect != "" {
@@ -59,7 +59,7 @@ func TestDraftDefect(t *testing.T) {
 			func() DraftedStrategy {
 				d := good
 				d.Objectives = []DraftedObjective{{
-					KeyResults: []DraftedKeyResult{{Description: "x", TargetUnits: ">= 1"}},
+					KeyResults: []DraftedKeyResult{{Description: "x", TargetComparator: ">=", TargetValue: 1}},
 				}}
 				return d
 			}(),

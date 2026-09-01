@@ -3,6 +3,8 @@ package domain
 import (
 	"encoding/json"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -197,16 +199,59 @@ type Objective struct {
 // KeyResult is a quantitative target that can be linked to multiple Objectives
 // via the objective_key_result_pairs junction table.
 type KeyResult struct {
-	ID           uuid.UUID  `json:"id"`
-	StrategyID   uuid.UUID  `json:"strategy_id"`
-	Description  string     `json:"description"`
-	TargetUnits  string     `json:"target_units"`
+	ID          uuid.UUID `json:"id"`
+	StrategyID  uuid.UUID `json:"strategy_id"`
+	Description string    `json:"description"`
+
+	// The target, structured [037]. Comparator and value are what a measurement
+	// is judged against; unit is for display only, and so carries any qualifier
+	// ("ms p99", "signups per week") that does not affect the arithmetic.
+	TargetComparator string  `json:"target_comparator"`
+	TargetValue      float64 `json:"target_value"`
+	TargetUnit       string  `json:"target_unit"`
+
 	TargetDate   *time.Time `json:"target_date,omitempty"`
 	TuneScore    *float64   `json:"tune_score,omitempty"`
 	TuneFeedback *string    `json:"tune_feedback,omitempty"`
 	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+// Target renders the target as a phrase: "≥ 1000 users", "< 200 ms p99".
+//
+// Derived rather than stored, so the words and the number cannot disagree. The
+// bare "=" is dropped because "= 3 releases" reads worse than "3 releases".
+func (k KeyResult) Target() string {
+	value := strconv.FormatFloat(k.TargetValue, 'f', -1, 64)
+	symbol := map[string]string{">=": "\u2265", "<=": "\u2264"}[k.TargetComparator]
+	if symbol == "" && k.TargetComparator != "=" {
+		symbol = k.TargetComparator
+	}
+	if symbol == "" {
+		return strings.TrimSpace(value + " " + k.TargetUnit)
+	}
+	return strings.TrimSpace(symbol + " " + value + " " + k.TargetUnit)
+}
+
+// Met reports whether a measured value satisfies this target.
+func (k KeyResult) Met(measured float64) bool {
+	switch k.TargetComparator {
+	case ">=":
+		return measured >= k.TargetValue
+	case "<=":
+		return measured <= k.TargetValue
+	case ">":
+		return measured > k.TargetValue
+	case "<":
+		return measured < k.TargetValue
+	case "=":
+		return measured == k.TargetValue
+	default:
+		// An unrecognised comparator cannot be satisfied. Reporting a KR met on
+		// a comparator nobody defined is the worse of the two failures.
+		return false
+	}
 }
 
 // KeyResultHistory is a single measurement for a KeyResult.

@@ -100,7 +100,11 @@ queue is for: things only a person can supply.
   record a zero.
 - **Never blocks anything**, and is not filed at all when no KR has a target
   date.
-- **Weekly by default**, project-settable.
+- **Weekly, for every Key Result.** Not settable per KR, and this is a product
+  position rather than a simplification: a Key Result that can only be measured
+  at the end of the quarter cannot tell anyone whether the work is going well
+  while there is still time to change it. That is now part of what the drafting
+  agent is told a good Key Result looks like.
 
 Resolution writes one `key_result_history` row per value supplied, then resolves
 the request. Nothing else in the system waits on it.
@@ -151,24 +155,35 @@ That is acceptable only if it is legible, so the row says what it assumes —
 *"at this pace, 700 of 1000 by 15 Sep"* — which is a falsifiable claim rather
 than a colour.
 
-Hops appear as **pills on the KR row, not positioned on the axis**. Hops carry
-no dates, and DESIGN.md section 2.1 sequences them by dependency rather than
-wall-clock time; placing them on a time axis would contradict the model. A pill
-shows its Hop's own lifecycle reading, so one blocked on dependencies says so.
+Hops appear as **pills on the Objective group header, not on individual KR
+rows**. Some Hops are genuinely Objective-scoped and others serve one Key
+Result, and the data only records the Objective link — so attaching them to KR
+rows would over-attribute every Objective-scoped Hop to every KR beneath it.
+Hanging them off the container is both what the data supports and what is true
+of most of them.
 
-## Open
+They are pills rather than bars: Hops carry no dates, and DESIGN.md section 2.1
+sequences them by dependency rather than wall-clock time, so placing them on a
+time axis would contradict the model. A pill shows its Hop's own lifecycle
+reading, so one blocked on dependencies says so.
 
-1. **Hop-to-KR linkage.** Hops link to *Objectives* (`params.objective_ids`), so
-   pills on a KR row are transitive: a Hop serving Objective O appears on every
-   KR of O, even when it moves only one. The alternative is a direct link — a
-   `hop_key_results` table plus the roadmap proposer emitting KR ids alongside
-   the objective ids it already emits. Transitive is free and slightly wrong;
-   direct is a contained change and correct.
-2. **Cadence override granularity** — per project, or per KR? A weekly signup
-   count and a quarterly retention number do not want the same rhythm.
-3. **Budget juxtaposition.** Once "% of objectives complete" exists, showing it
-   beside "% of budget spent" is two numbers on one line, and answers the
-   question the Costs page currently cannot: is the spend buying anything.
+## Progress against budget
+
+Once measurements exist, the Costs page can answer the question it currently
+cannot: is the spend buying anything.
+
+It should report a **band, not a point**. Turning a measurement into "43%
+complete" needs a progress model — a baseline to measure from and an assumption
+about the shape of the curve — and neither is available or honest. Counting is:
+
+- **Lower bound**: Key Results actually met, over the total.
+- **Upper bound**: those met plus those on track, over the total.
+
+*"Between 3 and 6 of 8 key results — 38% to 75% — against 62% of the budget
+spent."* Both ends are derived by counting, which needs no baseline and makes no
+claim about how growth is shaped. A KR that is stale counts toward neither
+bound, which is the honest treatment: not measuring something is not evidence
+that it is going well.
 
 ## Work, in order
 

@@ -145,10 +145,23 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
                 </div>
                 <div class="field-row">
                     <div class="field">
-                        <label for="kr_{{.ID}}_units">Target</label>
-                        <span class="hint">Include the number, the unit and the comparison.</span>
-                        <input type="text" id="kr_{{.ID}}_units" name="kr_{{.ID}}_units"
-                               value="{{.TargetUnits}}" placeholder="&gt;= 100 completions">
+                        <label for="kr_{{.ID}}_value">Target</label>
+                        <span class="hint">The comparison, the number, and what it counts.</span>
+                        {{$c := .TargetComparator}}
+                        <span class="target-fields">
+                            <select name="kr_{{.ID}}_comparator" class="target-comparator" aria-label="Comparison">
+                                <option value="&gt;=" {{if eq $c "&gt;="}}selected{{end}}>at least</option>
+                                <option value="&lt;=" {{if eq $c "&lt;="}}selected{{end}}>at most</option>
+                                <option value="&gt;" {{if eq $c "&gt;"}}selected{{end}}>more than</option>
+                                <option value="&lt;" {{if eq $c "&lt;"}}selected{{end}}>less than</option>
+                                <option value="=" {{if eq $c "="}}selected{{end}}>exactly</option>
+                            </select>
+                            <input type="text" inputmode="decimal" id="kr_{{.ID}}_value" name="kr_{{.ID}}_value"
+                                   class="target-value" value="{{if .TargetValue}}{{num .TargetValue}}{{end}}"
+                                   placeholder="100" aria-label="Target number">
+                            <input type="text" name="kr_{{.ID}}_unit" class="target-unit"
+                                   value="{{.TargetUnit}}" placeholder="completions" aria-label="Unit">
+                        </span>
                     </div>
                     <div class="field">
                         <label for="kr_{{.ID}}_date">By</label>

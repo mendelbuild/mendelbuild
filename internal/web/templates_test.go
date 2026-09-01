@@ -415,7 +415,8 @@ func TestSetupPagesRender(t *testing.T) {
 		}
 		kr := domain.KeyResult{
 			ID: uuid.New(), StrategyID: strategyID,
-			Description: "People finish the calculator", TargetUnits: ">= 100 completions",
+			Description: "People finish the calculator",
+			TargetComparator: ">=", TargetValue: 100, TargetUnit: "completions",
 			TargetDate: &target, TuneScore: &score, TuneFeedback: &feedback,
 			CreatedAt: now, UpdatedAt: now,
 		}
@@ -444,10 +445,12 @@ func TestSetupPagesRender(t *testing.T) {
 			"A budgeting tool for people in their first job.",
 			"Is there an existing audience to launch to?",
 			objective.Description,
-			"&gt;= 100 completions", // html/template escapes the comparison in the value attribute
+			"completions", // html/template escapes the comparison in the value attribute
 			feedback,
 			"obj_" + objective.ID.String(),
-			"kr_" + kr.ID.String() + "_units",
+			"kr_" + kr.ID.String() + "_comparator",
+			"kr_" + kr.ID.String() + "_value",
+			"kr_" + kr.ID.String() + "_unit",
 			"$250",
 		}
 		for _, w := range want {
@@ -471,7 +474,7 @@ func TestSetupScreenEditsRoundTrip(t *testing.T) {
 		Strategy: &domain.Strategy{ID: uuid.New(), Name: "s"},
 		Objectives: []SetupObjectiveView{{
 			Objective:  domain.Objective{ID: objID, Description: "o"},
-			KeyResults: []domain.KeyResult{{ID: krID, Description: "k", TargetUnits: ">= 1"}},
+			KeyResults: []domain.KeyResult{{ID: krID, Description: "k", TargetComparator: ">=", TargetValue: 1}},
 		}},
 		Ribbon: ribbonView(domain.OnboardingLifecycle(domain.OnboardingState{HasStrategy: true, HasDraftOKRs: true})),
 	}
@@ -481,7 +484,9 @@ func TestSetupScreenEditsRoundTrip(t *testing.T) {
 	for _, name := range []string{
 		`name="obj_` + objID.String() + `"`,
 		`name="kr_` + krID.String() + `_desc"`,
-		`name="kr_` + krID.String() + `_units"`,
+		`name="kr_` + krID.String() + `_comparator"`,
+		`name="kr_` + krID.String() + `_value"`,
+		`name="kr_` + krID.String() + `_unit"`,
 		`name="kr_` + krID.String() + `_date"`,
 	} {
 		if !strings.Contains(body, name) {
@@ -618,7 +623,7 @@ func TestStrategyPageShowsObjectivesAndSpend(t *testing.T) {
 		Objectives: []ObjectiveView{
 			{
 				Objective:  domain.Objective{ID: uuid.New(), Description: "People can sign in"},
-				KeyResults: []domain.KeyResult{{Description: "Weekly active users", TargetUnits: "1000 users", TargetDate: &target}},
+				KeyResults: []domain.KeyResult{{Description: "Weekly active users", TargetComparator: ">=", TargetValue: 1000, TargetUnit: "users", TargetDate: &target}},
 				HopCount:   2,
 			},
 			{

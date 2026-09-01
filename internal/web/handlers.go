@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/bhs/mendelbuild/internal/domain"
@@ -62,6 +63,10 @@ var templateFuncs = template.FuncMap{
 	},
 
 	"usd": formatUSD,
+
+	// num prints a target value without a trailing ".0" -- a key result of
+	// "1000 users" should not render its target as "1000.0".
+	"num": func(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) },
 
 	// Status renderers. Templates must never switch on a raw status string, so
 	// every status a page shows arrives as a StatusView carrying a word and a

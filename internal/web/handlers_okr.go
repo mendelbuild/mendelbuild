@@ -2,7 +2,10 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bhs/mendelbuild/internal/agent"
@@ -357,10 +360,9 @@ func (s *Server) handleCreateKeyResult(w http.ResponseWriter, r *http.Request) {
 	}
 
 	description := r.FormValue("description")
-	targetUnits := r.FormValue("target_units")
 	objectiveIDStr := r.FormValue("objective_id")
 
-	if description == "" || targetUnits == "" {
+	if description == "" {
 		http.Error(w, "description and target_units are required", http.StatusBadRequest)
 		return
 	}
@@ -382,11 +384,19 @@ func (s *Server) handleCreateKeyResult(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	comparator, value, unit, err := keyResultTargetFromForm(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	kr := &domain.KeyResult{
-		StrategyID:  strategyID,
-		Description: description,
-		TargetUnits: targetUnits,
-		TargetDate:  targetDate,
+		StrategyID:       strategyID,
+		Description:      description,
+		TargetComparator: comparator,
+		TargetValue:      value,
+		TargetUnit:       unit,
+		TargetDate:       targetDate,
 	}
 
 	if err := s.db.CreateKeyResult(ctx, kr); err != nil {
@@ -430,9 +440,8 @@ func (s *Server) handleUpdateKeyResult(w http.ResponseWriter, r *http.Request) {
 	}
 
 	description := r.FormValue("description")
-	targetUnits := r.FormValue("target_units")
 
-	if description == "" || targetUnits == "" {
+	if description == "" {
 		http.Error(w, "description and target_units are required", http.StatusBadRequest)
 		return
 	}
@@ -443,8 +452,16 @@ func (s *Server) handleUpdateKeyResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	comparator, value, unit, err := keyResultTargetFromForm(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	kr.Description = description
-	kr.TargetUnits = targetUnits
+	kr.TargetComparator = comparator
+	kr.TargetValue = value
+	kr.TargetUnit = unit
 
 	// Parse optional target date
 	if td := r.FormValue("target_date"); td != "" {
@@ -623,7 +640,7 @@ func (s *Server) apiTuneOKRs(w http.ResponseWriter, r *http.Request) {
 		input.KeyResults = append(input.KeyResults, agent.KeyResultForTuning{
 			ID:          kr.ID.String(),
 			Description: kr.Description,
-			TargetUnits: kr.TargetUnits,
+			TargetUnits: kr.Target(),
 		})
 	}
 
@@ -670,4 +687,47 @@ func (s *Server) apiTuneOKRs(w http.ResponseWriter, r *http.Request) {
 		"tuned":   tunedCount,
 		"results": result,
 	})
+}
+
+// keyResultTargetFromForm reads the three fields that make up a Key Result's
+// target.
+//
+// One parse path for every form that sets a target, so the editor and the setup
+// screen cannot disagree about what counts as valid. The value is the only part
+// that can fail: a comparator comes from a fixed list and a unit is free text.
+func keyResultTargetFromForm(r *http.Request) (comparator string, value float64, unit string, err error) {
+	return keyResultTargetFields(
+		r.FormValue("target_comparator"), r.FormValue("target_value"), r.FormValue("target_unit"))
+}
+
+// keyResultTargetFields validates the three parts of a target.
+//
+// Split from the request so the setup screen, which reads many key results out
+// of one form with prefixed field names, uses the same rules as the editor.
+func keyResultTargetFields(rawComparator, rawValue, rawUnit string) (comparator string, value float64, unit string, err error) {
+	comparator = strings.TrimSpace(rawComparator)
+	switch comparator {
+	case ">=", "<=", ">", "<", "=":
+	case "":
+		// The commonest target by far is "at least this much", and defaulting
+		// spares every form a required select.
+		comparator = ">="
+	default:
+		return "", 0, "", fmt.Errorf("%q is not a comparison Mendel understands", comparator)
+	}
+
+	raw := strings.TrimSpace(rawValue)
+	if raw == "" {
+		return "", 0, "", fmt.Errorf("a key result needs a target number")
+	}
+	// Tolerate the separators people type; refuse anything that is not a number,
+	// because a target nobody can compare against is the thing this replaced.
+	raw = strings.ReplaceAll(raw, ",", "")
+	raw = strings.TrimPrefix(raw, "$")
+	value, parseErr := strconv.ParseFloat(raw, 64)
+	if parseErr != nil {
+		return "", 0, "", fmt.Errorf("%q is not a number", strings.TrimSpace(rawValue))
+	}
+
+	return comparator, value, strings.TrimSpace(rawUnit), nil
 }

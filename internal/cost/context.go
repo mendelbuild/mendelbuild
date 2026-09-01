@@ -50,7 +50,7 @@ func BuildStrategyContext(ctx context.Context, database StrategyContextDB, strat
 			info := agent.KeyResultInfo{
 				ID:          kr.ID.String(),
 				Description: kr.Description,
-				TargetUnits: kr.TargetUnits,
+				Target:      kr.Target(),
 			}
 			if kr.TargetDate != nil {
 				d := kr.TargetDate.Format("2006-01-02")

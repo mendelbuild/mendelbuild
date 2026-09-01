@@ -169,13 +169,19 @@ CREATE TABLE key_results (
 
     description TEXT NOT NULL,
 
-    -- Target expressed with units, e.g., "1000 users", "99.9%", "< 200ms p99"
-    -- MendelBuild Core parses this to extract:
-    --   - numeric target
-    --   - unit type (count, percentage, duration, currency, etc.)
-    --   - comparison operator (=, <, >, >=, <=)
-    --   - measurement horizon if applicable (e.g., "per week", "7-day rolling")
-    target_units TEXT NOT NULL,
+    -- The target, structured [037]. It was one free-text column, with a comment
+    -- claiming Core parsed it into these parts; no parser was ever written, so
+    -- a Key Result could be shown but never compared against a measurement.
+    --
+    -- The drafting agent returns the three separately and the OKR editor takes
+    -- them as three fields, so nothing parses a target at either end and the
+    -- prose form ("1000 users") is derived for display rather than stored.
+    target_comparator TEXT NOT NULL
+        CHECK (target_comparator IN ('>=', '<=', '>', '<', '=')),
+    target_value REAL NOT NULL,
+    -- Display only -- comparison is value against value -- so this absorbs any
+    -- qualifier ("ms p99", "signups per week") without a further column.
+    target_unit TEXT NOT NULL,
 
     target_date DATE,  -- The day we expect to hit target (a date, not an instant)
 

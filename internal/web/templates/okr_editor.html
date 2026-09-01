@@ -189,7 +189,7 @@
         <div class="okr-header">
             <div class="okr-content">
                 <strong class="kr-text-{{.ID}}">{{.Description}}</strong>
-                <span class="target-info">{{.TargetUnits}}</span>
+                <span class="target-info">{{.Target}}</span>
                 {{if .TargetDate}}
                 <div class="kr-meta">Target: {{.TargetDate.Format "Jan 2, 2006"}}</div>
                 {{end}}
@@ -218,7 +218,7 @@
             <form method="POST" action="/p/{{$.ProjectID}}/okr/key-results/{{.ID}}">
                 <input type="hidden" name="redirect" value="/p/{{$.ProjectID}}/okr/objectives/{{$.CurrentObjective.Objective.ID}}">
                 <input type="text" name="description" value="{{.Description}}" required placeholder="Description">
-                <input type="text" name="target_units" value="{{.TargetUnits}}" required placeholder="Target (e.g., '100 users', '99.9%')">
+                <div class="target-fields">{{template "target-fields" .}}</div>
                 <input type="date" name="target_date" value="{{if .TargetDate}}{{.TargetDate.Format "2006-01-02"}}{{end}}" placeholder="Target Date">
                 <div class="btn-group">
                     <button type="submit" class="btn btn-primary">Save</button>
@@ -238,7 +238,7 @@
             <input type="hidden" name="objective_id" value="{{$.CurrentObjective.Objective.ID}}">
             <div class="add-form-row">
                 <input type="text" name="description" class="description-field" required placeholder="What will you measure?">
-                <input type="text" name="target_units" class="target-field" required placeholder="Target">
+                <span class="target-fields">{{template "target-fields" .}}</span>
                 <input type="date" name="target_date" class="date-field">
                 <button type="submit" class="btn btn-primary">Add Key Result</button>
             </div>
@@ -251,7 +251,7 @@
                     <select name="key_result_id" class="description-field" required>
                         <option value="">Select a key result...</option>
                         {{range $.OKR.AvailableKRs}}
-                        <option value="{{.ID}}">{{.Description}} ({{.TargetUnits}})</option>
+                        <option value="{{.ID}}">{{.Description}} ({{.Target}})</option>
                         {{end}}
                     </select>
                     <button type="submit" class="btn btn-secondary">Link Key Result</button>
@@ -321,7 +321,7 @@
             <div class="okr-header">
                 <div class="okr-content">
                     <span class="kr-text-{{.ID}}">{{.Description}}</span>
-                    <span class="target-info">{{.TargetUnits}}</span>
+                    <span class="target-info">{{.Target}}</span>
                 </div>
                 <div class="okr-actions">
                     <span class="quality-badge-wrapper" data-id="{{.ID}}" data-type="keyresult">
@@ -347,7 +347,7 @@
                 <form method="POST" action="/p/{{$.ProjectID}}/okr/key-results/{{.ID}}">
                     <input type="hidden" name="redirect" value="{{if $.CurrentObjective}}/p/{{$.ProjectID}}/okr/objectives/{{$.CurrentObjective.Objective.ID}}{{else}}/p/{{$.ProjectID}}/okr{{end}}">
                     <input type="text" name="description" value="{{.Description}}" required placeholder="Description">
-                    <input type="text" name="target_units" value="{{.TargetUnits}}" required placeholder="Target">
+                    <div class="target-fields">{{template "target-fields" .}}</div>
                     <input type="date" name="target_date" value="{{if .TargetDate}}{{.TargetDate.Format "2006-01-02"}}{{end}}">
                     <div class="btn-group">
                         <button type="submit" class="btn btn-primary">Save</button>
