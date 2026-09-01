@@ -24,7 +24,7 @@ func TestSetupScriptsSurviveASecondRun(t *testing.T) {
 
 	for _, platform := range DefaultPlatforms() {
 		if strings.TrimSpace(platform.SetupScript) == "" {
-			continue // Platforms predating the field; see CLAUDE.md.
+			continue // Unselectable platforms carry no script; see CLAUDE.md.
 		}
 
 		for i, line := range strings.Split(platform.SetupScript, "\n") {
@@ -78,5 +78,34 @@ func TestGKESetupScriptEditsOneLine(t *testing.T) {
 	body := script[strings.Index(script, "your-project-id"):]
 	if !strings.Contains(body, `"$PROJECT"`) {
 		t.Error("script does not use $PROJECT after the line the user edits")
+	}
+}
+
+
+// TestSelectableChannelsHaveASetupScript makes the rule enforceable rather than
+// merely written down: a channel a user can actually choose must tell them how
+// to obtain its credentials.
+//
+// Only platforms in DefaultCombos can be chosen. The rest are entries with no
+// pairing, so they are exempt -- writing setup guidance nobody can reach, and
+// nobody has run, is the failure this whole area already had once.
+func TestSelectableChannelsHaveASetupScript(t *testing.T) {
+	scripts := map[string]string{}
+	for _, p := range DefaultPlatforms() {
+		scripts[p.Slug] = p.SetupScript
+	}
+
+	for _, combo := range DefaultCombos() {
+		script, known := scripts[combo.PlatformSlug]
+		if !known {
+			t.Errorf("combo %s/%s names a platform that does not exist",
+				combo.ArtifactKind, combo.PlatformSlug)
+			continue
+		}
+		if strings.TrimSpace(script) == "" {
+			t.Errorf("%s is selectable as a %s channel but has no setup script, so a user "+
+				"who picks it is told which credentials are needed and not how to get them",
+				combo.PlatformSlug, combo.ArtifactKind)
+		}
 	}
 }

@@ -209,10 +209,16 @@ The same applies to the deterministic Go paths around them: `deployToGKE`
 creates its namespace only if absent, and teardown passes
 `--ignore-not-found` so tearing down twice is not an error.
 
-**Only `gke` currently carries a `SetupScript`.** The other platforms predate
-the field and still have terse, AI-prompt-shaped `Instructions`. Any channel
-given a script from here on follows the rule above; converting the existing ones
-is outstanding.
+**Every selectable channel carries a `SetupScript`**, and
+`TestSelectableChannelsHaveASetupScript` keeps it that way: a new entry in
+`DefaultCombos` fails the suite until its platform has one. Picking a channel
+and being told which credentials are needed but not how to obtain them is not a
+state a user should be able to reach.
+
+`railway`, `vercel` and `render` have no script because they have no combo — they
+cannot be selected at all. Writing setup guidance nobody can reach, and nobody
+has run, is the failure this area already had once; they get a script when they
+get a combo, and the test exempts them until then.
 
 ### No Hardcoded Platform Options
 

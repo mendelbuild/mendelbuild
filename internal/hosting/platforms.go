@@ -37,22 +37,86 @@ func DefaultPlatforms() []domain.HostingPlatform {
 			Slug:          "fly-io",
 			Name:          "Fly.io",
 			DeployerImage: "alpine:latest",
-			Instructions: `Fly.io deployment:
-- First install flyctl: curl -L https://fly.io/install.sh | sh && export PATH="$HOME/.fly/bin:$PATH"
-- Use 'flyctl' CLI commands
-- Required env var: FLY_API_TOKEN
-- Deploy script should create app if needed, deploy using fly.toml or Dockerfile
-- Teardown script should destroy the app`,
+			Instructions: `Deploy to your own Fly.io organization.
+
+Before you start:
+  1. Install flyctl — curl -L https://fly.io/install.sh | sh
+     (then add $HOME/.fly/bin to your PATH)
+  2. Sign in — flyctl auth login
+  3. Know which organization Mendel should deploy into — flyctl orgs list
+
+Mendel creates an app per demo and destroys it on teardown, so it needs a token
+scoped to the organization rather than to one app. Run the setup script; it
+prints the token as its last line.
+
+  FLY_API_TOKEN  the token the script prints, including the "FlyV1 " prefix
+
+Each demo becomes its own Fly app, named after the project and variation, and
+is destroyed when the demo stops.`,
+			SetupScript: `# Edit this line to the organization Mendel should deploy into
+# (flyctl orgs list shows them), then paste the rest unchanged.
+ORG=personal
+
+# Nothing here destroys or replaces anything: creating a second token leaves the
+# first one working, so re-running is safe and simply mints a fresh token.
+flyctl orgs show "$ORG" > /dev/null
+
+echo; echo "--- FLY_API_TOKEN: copy the whole line below, including FlyV1 ---"; echo
+flyctl tokens create org --org "$ORG" --name "Mendel" --expiry 8760h`,
 		},
 		{
 			Slug:          "cloud-run",
 			Name:          "Google Cloud Run",
 			DeployerImage: "google/cloud-sdk:slim",
-			Instructions: `Google Cloud Run deployment:
-- Use 'gcloud run deploy' command
-- Required env vars: GCP_PROJECT_ID, GCP_SERVICE_ACCOUNT_KEY (JSON)
-- Deploy script should authenticate with service account key, build and push to gcr.io, deploy to Cloud Run
-- Teardown script should delete the Cloud Run service`,
+			Instructions: `Deploy to your own Google Cloud Run project.
+
+Before you start:
+  1. Install the gcloud CLI — https://cloud.google.com/sdk/docs/install
+  2. Sign in — gcloud auth login
+  3. Have rights to manage IAM on the project you want to deploy into.
+
+Mendel cannot mint a service account key on your behalf, so run the setup script
+once. Edit its first line; everything after that pastes as-is, and it is safe to
+run again if you lose the key or need to repeat a step.
+
+  GCP_PROJECT_ID           what you set PROJECT to
+  GCP_SERVICE_ACCOUNT_KEY  the whole contents of mendel-key.json, which the
+                           script prints at the end
+
+Mendel deploys each demo as its own Cloud Run service in us-central1, built from
+your Dockerfile, and deletes the service on teardown.`,
+			SetupScript: `# Edit this line, then paste the rest unchanged.
+PROJECT=your-project-id
+
+# Cloud Run itself, the build that produces the image, and the registry it is
+# pushed to. Enabling an enabled API is a no-op.
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com --project "$PROJECT"
+
+# A service account for Mendel. Harmless if it already exists.
+gcloud iam service-accounts create mendel-deployer --project "$PROJECT" --display-name "Mendel Deployer" || true
+
+# Deploying services and making them public, building the image, pushing it, the
+# Cloud Build staging bucket, and permission to act as the service's runtime
+# identity. Adding a binding that is already there is a no-op.
+for ROLE in run.admin cloudbuild.builds.editor artifactregistry.admin storage.admin iam.serviceAccountUser; do
+  gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:mendel-deployer@$PROJECT.iam.gserviceaccount.com" --role "roles/$ROLE" --condition None --quiet > /dev/null
+done
+
+# gcloud run deploy --source builds as the project's Compute Engine service
+# account, so Mendel's account has to be allowed to act as it.
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format "value(projectNumber)")
+gcloud iam service-accounts add-iam-policy-binding "$PROJECT_NUMBER-compute@developer.gserviceaccount.com" --project "$PROJECT" --member "serviceAccount:mendel-deployer@$PROJECT.iam.gserviceaccount.com" --role roles/iam.serviceAccountUser --quiet > /dev/null
+
+# gcloud run deploy --source pushes the built image here. Creating the
+# repository now means the first deploy does not have to, which also keeps it
+# from racing the grants above: a token minted moments after a binding can still
+# be refused, and the failure reads as a missing role rather than a stale token.
+gcloud artifacts repositories create cloud-run-source-deploy --repository-format docker --location us-central1 --project "$PROJECT" --quiet 2> /dev/null || true
+
+gcloud iam service-accounts keys create mendel-key.json --iam-account "mendel-deployer@$PROJECT.iam.gserviceaccount.com"
+
+echo; echo "--- GCP_SERVICE_ACCOUNT_KEY: copy everything below ---"; echo
+cat mendel-key.json`,
 		},
 		{
 			Slug:          "railway",
