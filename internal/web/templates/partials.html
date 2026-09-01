@@ -387,3 +387,56 @@ document.querySelectorAll('[data-meter-mark]').forEach(function (el) {
 </div>
 {{end}}
 {{end}}
+
+{{/*
+    support-matrix is the grid of what Mendel can deploy where. Takes a
+    *web.SupportMatrix.
+
+    The channel list above says what you may choose; it cannot say what you may
+    not, which is the question someone asks when the thing they wanted is not
+    there. A grid answers both at once.
+*/}}
+{{define "support-matrix"}}
+{{if .HasAny}}
+<div class="card">
+    <div class="card-head"><h2 class="card-title">What Mendel can deploy where</h2></div>
+    <p class="card-note">
+        Rows are hosting platforms, columns are what a project produces. Only the
+        ticked pairings can be run, and each is proved by a validation deploy before
+        Mendel uses it for anything real.
+    </p>
+    <div class="table-scroll">
+        <table class="table table-ruled">
+            <thead>
+                <tr>
+                    <th>Platform</th>
+                    {{range .ArtifactKinds}}<th class="table-num">{{.}}</th>{{end}}
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Rows}}
+                <tr>
+                    <td>{{.Platform}}</td>
+                    {{range .Cells}}
+                    <td class="table-num">
+                        {{if .Current}}
+                        <span class="badge badge-success" title="This project&rsquo;s channel">&check; in use</span>
+                        {{else if .Supported}}
+                        <span class="cell-yes" title="{{if .Note}}{{.Note}}{{else}}Supported{{end}}" aria-label="supported">&check;</span>
+                        {{else}}
+                        <span class="cell-no" aria-label="not supported">&middot;</span>
+                        {{end}}
+                    </td>
+                    {{end}}
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    <p class="text-xs subtle">
+        This list is seeded on startup and refreshed with <code>mendel platforms refresh</code>,
+        so it follows what Mendel actually supports rather than a list written into the page.
+    </p>
+</div>
+{{end}}
+{{end}}

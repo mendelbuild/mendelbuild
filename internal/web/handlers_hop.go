@@ -239,7 +239,6 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 		"ProjectID": projectID.String(),
 		"View":      view,
 	}
-	s.addOpenInputCount(ctx, data)
 
 	if err := s.renderPageFor(w, r, "hop_detail.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -565,7 +564,6 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		"ProjectID": projectID.String(),
 		"View":      view,
 	}
-	s.addOpenInputCount(ctx, data)
 
 	if err := s.renderPageFor(w, r, "variation_detail.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

@@ -270,12 +270,21 @@ code {
     font-size: var(--text-sm);
     white-space: nowrap;
 }
+/* A note under a heading.
+   This used to carry a negative top margin, tuned to sit snugly under a
+   .card-head's bottom margin. Anywhere else -- under a bare <h3>, which has no
+   bottom margin of its own -- the negative pulled the note up over the heading
+   and the two overlapped. A component whose spacing only works beneath one
+   specific sibling is a component that will be wrong somewhere, so the note now
+   owns ordinary margins and the head tightens itself instead. */
 .card-note {
     color: var(--ink-2);
     font-size: var(--text-sm);
-    margin: calc(var(--sp-3) * -1) 0 var(--sp-4);
+    margin: var(--sp-2) 0 var(--sp-4);
     max-width: var(--measure);
 }
+.card-head:has(+ .card-note) { margin-bottom: 0; }
+.card-title + .card-note { margin-top: var(--sp-1); }
 
 /* A rule between stacked blocks inside one card. */
 .divider {
@@ -471,6 +480,10 @@ code {
    the colour; the template chooses the tone from domain.Tone, never by eye. */
 .callout {
     display: block;
+    /* Spacing of its own, because a callout is not always inside a stack. It
+       was not, on the deployment page, and the buttons beneath it sat flush
+       against the error they were responding to. */
+    margin-bottom: var(--sp-4);
     border: 1px solid var(--tone-neutral);
     border-left-width: 4px;
     border-radius: var(--radius-md);
@@ -514,8 +527,26 @@ a.callout:hover {
     background: var(--surface-hover);
     border-color: var(--line-strong);
 }
-a.callout .callout-title { text-decoration: underline; text-underline-offset: 2px; }
-a.callout:hover .callout-title { color: var(--tone-progress); }
+a.callout /* A stack manages the gaps between its own children, so a callout inside one
+   must not add a second. */
+.stack > .callout,
+.stack-tight > .callout,
+.stack-loose > .callout { margin-bottom: 0; }
+
+.callout-title { text-decoration: underline; text-underline-offset: 2px; }
+a.callout:hover /* A stack manages the gaps between its own children, so a callout inside one
+   must not add a second. */
+.stack > .callout,
+.stack-tight > .callout,
+.stack-loose > .callout { margin-bottom: 0; }
+
+.callout-title { color: var(--tone-progress); }
+
+/* A stack manages the gaps between its own children, so a callout inside one
+   must not add a second. */
+.stack > .callout,
+.stack-tight > .callout,
+.stack-loose > .callout { margin-bottom: 0; }
 
 .callout-title {
     font-weight: 650;
@@ -585,7 +616,18 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
 }
 .table tbody tr:last-child td { border-bottom: 0; }
 .table tbody tr:hover { background: var(--surface-sunken); }
-.table-num { text-align: right; font-variant-numeric: tabular-nums; }
+/* A right-aligned column needs a right-aligned header, or the label floats off
+   over the neighbouring column and the reader has to count across to work out
+   which figure is which. */
+.table th.table-num,
+.table td.table-num { text-align: right; }
+.table td.table-num { font-variant-numeric: tabular-nums; }
+
+/* Vertical rules, for a table wide enough that the eye loses the column on the
+   way across. Not the default: on a narrow table they are clutter. */
+.table-ruled th + th,
+.table-ruled td + td { border-left: 1px solid var(--line); }
+.table-ruled th, .table-ruled td { padding-left: var(--sp-4); padding-right: var(--sp-4); }
 .table-fixed { table-layout: fixed; }
 /* Rows that link somewhere: the name cell carries the link and the whole
    row highlights, so the click target is obvious. */
@@ -655,6 +697,13 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
 /* A row for something that already exists, in a table about what is proposed.
    It is context, not the decision. */
 .table tr.is-existing td { background: var(--surface-sunken); color: var(--ink-2); }
+
+/* Supported / not, in a grid where most cells are one or the other. The
+   unsupported mark is deliberately faint: it is the absence of a fact, and a
+   grid of red crosses reads as a wall of failures rather than a capability
+   list. */
+.cell-yes { color: var(--tone-success); font-weight: 700; }
+.cell-no { color: var(--line-strong); }
 
 .diffstat-add { color: var(--tone-success); font-weight: 600; }
 .diffstat-del { color: var(--tone-failure); font-weight: 600; }
@@ -1137,11 +1186,19 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
     gap: var(--sp-2);
 }
 .disclosure > summary::-webkit-details-marker { display: none; }
+/* Drawn with borders rather than set as a glyph: the character forms are tiny
+   and vary by font, and this is a control, so its size should be a decision. */
 .disclosure > summary::before {
-    content: "\25B8";
-    color: var(--ink-3);
+    content: "";
+    width: 0;
+    height: 0;
+    flex-shrink: 0;
+    border-left: 8px solid var(--ink-3);
+    border-top: 5.5px solid transparent;
+    border-bottom: 5.5px solid transparent;
     transition: transform 0.12s ease;
 }
+.disclosure > summary:hover::before { border-left-color: var(--ink-1); }
 .disclosure[open] > summary::before { transform: rotate(90deg); }
 .disclosure > summary:hover { color: var(--ink-1); }
 .disclosure-body { margin-top: var(--sp-3); }

@@ -147,7 +147,6 @@ func (s *Server) handleProjectOverview(w http.ResponseWriter, r *http.Request) {
 		"ProjectID": projectID.String(),
 		"View":      view,
 	}
-	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)
 	s.addOnboardingRibbon(ctx, data)
 

@@ -119,10 +119,16 @@ func variationRibbonActions(projectID uuid.UUID, v *domain.Variation, o domain.V
 		})
 	}
 	if o.Rebase {
+		// "Rebase onto main" named the mechanism, which only helps a reader who
+		// already knows what it does. What it means here is that everything
+		// won and merged since this Variation started gets pulled underneath
+		// it, so it is being compared against the current state of the project
+		// rather than a stale one.
 		out = append(out, PageAction{
-			Label: "Rebase onto main",
+			Label: "Bring in completed Hops",
 			Post:  base + "/rebase",
 			Role:  "secondary",
+			Note:  "Rebuilds this on top of everything merged since it started.",
 		})
 	}
 	if o.Terminate {

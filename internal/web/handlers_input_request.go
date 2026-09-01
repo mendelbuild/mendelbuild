@@ -525,7 +525,6 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 		"ProjectID": projectID,
 		"View":      view,
 	}
-	s.addOpenInputCount(ctx, data)
 
 	if err := s.renderPageFor(w, r, templateName, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

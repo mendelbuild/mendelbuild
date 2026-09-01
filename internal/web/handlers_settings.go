@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -127,7 +128,6 @@ func (s *Server) handleProjectSettings(w http.ResponseWriter, r *http.Request) {
 		"DemoHostingPlatform": demoHostingPlatform,
 		"DemoScriptStatus":    demoScriptStatus,
 	}
-	s.addOpenInputCount(ctx, data)
 
 	if err := s.renderPageFor(w, r, "project_settings.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -633,6 +633,7 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 	data := map[string]interface{}{
 		"Title":                "Deployment: " + project.Name,
 		"SettingsTab":          "deployment",
+		"SupportMatrix":        s.buildSupportMatrix(ctx, channel),
 		"CloudCredentials":     cloudCredentials,
 		"RequiredCredentials":  requiredCredentials,
 		"ProjectID":            projectID.String(),
@@ -1304,4 +1305,99 @@ func (s *Server) cloudCredentialViews(ctx context.Context, projectID uuid.UUID) 
 		configured[c.Name] = true
 	}
 	return views, configured
+}
+
+// SupportMatrix is the grid of what Mendel can deploy where: one row per
+// hosting platform, one column per artifact kind, and a cell saying whether
+// that pairing is a channel Mendel knows how to run.
+//
+// The list on the deployment page says what you may choose. It does not say
+// what you may not, which is the question someone asks when the thing they
+// wanted is absent -- is it unsupported, or have I misread the list?
+//
+// Both axes come from the database. CLAUDE.md forbids hardcoding platform lists
+// in Go, and that applies to the shape of a table about them as much as to the
+// options in a form: seeding a new platform must make it appear here on its own.
+type SupportMatrix struct {
+	ArtifactKinds []string
+	Rows          []SupportRow
+}
+
+// SupportRow is one platform and its cell for each artifact kind.
+type SupportRow struct {
+	Platform string
+	Cells    []SupportCell
+}
+
+// SupportCell is one platform/artifact pairing.
+type SupportCell struct {
+	Supported bool
+	Current   bool   // The channel this project is using
+	Note      string // The combo's own note, when it has one
+}
+
+// HasAny reports whether the matrix is worth drawing.
+func (m *SupportMatrix) HasAny() bool {
+	return m != nil && len(m.Rows) > 0 && len(m.ArtifactKinds) > 0
+}
+
+// buildSupportMatrix reads the platforms and combos, then pivots them.
+func (s *Server) buildSupportMatrix(ctx context.Context, current *domain.ProjectDeploymentChannel) *SupportMatrix {
+	platforms, err := s.db.ListHostingPlatforms(ctx)
+	if err != nil {
+		return nil
+	}
+	combos, err := s.db.ListSupportedDeploymentCombos(ctx)
+	if err != nil {
+		return nil
+	}
+	return pivotSupportMatrix(platforms, combos, current)
+}
+
+// pivotSupportMatrix is the pivot itself, kept free of the database so every
+// shape it can produce is reachable in a test.
+func pivotSupportMatrix(platforms []domain.HostingPlatform, combos []domain.SupportedDeploymentCombo,
+	current *domain.ProjectDeploymentChannel) *SupportMatrix {
+
+	if len(platforms) == 0 {
+		return nil
+	}
+
+	// Columns are the artifact kinds that appear in the combo table. A kind
+	// nothing supports is a kind Mendel has never heard of, and inventing a
+	// column for it would be inventing the fact that it exists.
+	var kinds []string
+	seen := map[string]bool{}
+	supported := map[string]*domain.SupportedDeploymentCombo{}
+	for i := range combos {
+		c := &combos[i]
+		kind := string(c.ArtifactKind)
+		if !seen[kind] {
+			seen[kind] = true
+			kinds = append(kinds, kind)
+		}
+		supported[kind+"\x00"+c.HostingPlatformID.String()] = c
+	}
+	sort.Strings(kinds)
+
+	matrix := &SupportMatrix{ArtifactKinds: kinds}
+	for i := range platforms {
+		p := &platforms[i]
+		row := SupportRow{Platform: p.Name}
+		for _, kind := range kinds {
+			cell := SupportCell{}
+			if combo, ok := supported[kind+"\x00"+p.ID.String()]; ok {
+				cell.Supported = true
+				if combo.Notes != nil {
+					cell.Note = *combo.Notes
+				}
+				cell.Current = current != nil &&
+					string(current.ArtifactKind) == kind &&
+					current.HostingPlatformID == p.ID
+			}
+			row.Cells = append(row.Cells, cell)
+		}
+		matrix.Rows = append(matrix.Rows, row)
+	}
+	return matrix
 }

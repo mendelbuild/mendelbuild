@@ -357,7 +357,6 @@ func (s *Server) handleStrategy(w http.ResponseWriter, r *http.Request) {
 		"Strategy":    view,
 		"Cost":        costView,
 	}
-	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)
 	s.addOnboardingRibbon(ctx, data)
 
@@ -396,7 +395,6 @@ func (s *Server) handleCosts(w http.ResponseWriter, r *http.Request) {
 		"Project":   project,
 		"Cost":      s.strategyCostView(ctx, projectID, strategies[0].ID),
 	}
-	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)
 
 	if err := s.renderPageFor(w, r, "costs.html", data); err != nil {
@@ -451,7 +449,6 @@ func (s *Server) handleInputRequests(w http.ResponseWriter, r *http.Request) {
 		"ResolvedInputRequests": resolvedInputRequests,
 		"ActiveTab":         activeTab,
 	}
-	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)
 	s.addOnboardingRibbon(ctx, data)
 
@@ -552,7 +549,6 @@ func (s *Server) handleRoadmap(w http.ResponseWriter, r *http.Request) {
 		"EdgesJSON": edgesJSON,
 		"Hops":      hopRows,
 	}
-	s.addOpenInputCount(ctx, data)
 	s.addProjectReadiness(ctx, data)
 
 	if err := s.renderPageFor(w, r, "roadmap.html", data); err != nil {
