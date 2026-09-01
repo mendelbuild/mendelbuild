@@ -236,6 +236,10 @@ extensions. Implemented by Istio, Envoy Gateway, kgateway, Contour, Cilium,
 NGINX Gateway Fabric, GKE Gateway, and AWS's controller. Mendel emits one
 resource kind and works across every conformant implementation.
 
+The implementation — what Mendel emits, who installs the gateway, and how an
+allocation reaches a running request — is
+[16_experiment_routing.md](16_experiment_routing.md).
+
 ### 6.3 Assignment is the platform-specific seam
 
 Gateway API can **match** on a header; it cannot **compute** the bucket. That
