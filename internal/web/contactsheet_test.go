@@ -62,7 +62,32 @@ func TestMain(m *testing.M) {
 }
 
 var (
-	bodyRE  = regexp.MustCompile(`(?s)<body>(.*)</body>`)
+	bodyRE = regexp.MustCompile(`(?s)<body>(.*)</body>`)
+
+	// A dumped page carries the behaviour of the real thing, and on one sheet
+	// that behaviour is destructive: the deployment page refreshes itself every
+	// three seconds while a validation runs, the decision queue and the setup
+	// screen each reload after a timeout, and the log tailer reloads when a
+	// status changes. Any one of them reloads the whole contact sheet out from
+	// under whoever is reading it.
+	//
+	// The sheet is for looking at layout, copy and state. None of that needs a
+	// script, and the two things scripts would have drawn -- the roadmap graph
+	// and streamed log lines -- are already absent or server-rendered. So they
+	// come out.
+	scriptRE = regexp.MustCompile(`(?s)<script\b[^>]*>.*?</script>`)
+	metaRE   = regexp.MustCompile(`(?i)<meta[^>]*http-equiv[^>]*>`)
+
+	// A bar's length is data, so the app carries it in a data attribute and a
+	// script applies it -- which keeps `style=` out of the templates, where the
+	// lint forbids it. With the scripts gone, the sheet has to do that job
+	// itself, or every meter renders full-width and every budget looks spent.
+	//
+	// Writing an inline style is right here and wrong there: this file is a
+	// generated artifact, not a template, and it has no second render in which
+	// to drift.
+	widthRE = regexp.MustCompile(`data-(?:meter-fill|w)="([0-9.]+)"`)
+	leftRE  = regexp.MustCompile(`data-(?:meter-mark|x)="([0-9.]+)"`)
 	titleRE = regexp.MustCompile(`(?s)<title>(.*?)</title>`)
 	// Dump filenames are "<TestName>--<template>.html".
 	nameRE = regexp.MustCompile(`^(.*)--([^-]+)\.html$`)
@@ -120,8 +145,16 @@ func buildContactSheet(dumpDir, out string) error {
 		if m := bodyRE.FindSubmatch(raw); m != nil {
 			body = string(m[1])
 		}
+		body = scriptRE.ReplaceAllString(body, "")
+		body = metaRE.ReplaceAllString(body, "")
+		body = widthRE.ReplaceAllString(body, `style="width:$1%"`)
+		body = leftRE.ReplaceAllString(body, `style="left:$1%"`)
 		body = strings.ReplaceAll(body, `src="/static/mendel-logo-transparent-32.png"`,
 			`src="`+logoURI+`"`)
+		body = scriptRE.ReplaceAllString(body, "")
+		body = metaRE.ReplaceAllString(body, "")
+		body = widthRE.ReplaceAllString(body, `style="width:$1%"`)
+		body = leftRE.ReplaceAllString(body, `style="left:$1%"`)
 		body = strings.ReplaceAll(body, `src="/static/mendel-logo-transparent-32.png"`,
 			`src="`+logoURI+`"`)
 		pages = append(pages, specimenPage{
@@ -153,14 +186,19 @@ func buildContactSheet(dumpDir, out string) error {
 	page.WriteString(`
 /* Contact-sheet chrome. Prefixed so nothing here can be mistaken for, or
    collide with, the app's own components. */
-.cs-head { position: sticky; top: 0; z-index: 50; background: var(--surface-card);
-  border-bottom: 1px solid var(--line-strong); padding: var(--sp-3) var(--sp-5); }
-.cs-index { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3);
+/* The index sits at the top and scrolls away. Pinned, forty entries took most
+   of the window and left a letterbox to review through. The specimen label is
+   the part worth pinning: it says which screen you are looking at, which is the
+   thing you lose when you scroll. */
+.cs-head { background: var(--surface-card); border-bottom: 1px solid var(--line-strong);
+  padding: var(--sp-3) var(--sp-5); }
+.cs-index { display: flex; flex-wrap: wrap; gap: 2px var(--sp-3);
   max-width: var(--page-max); margin: 0 auto; }
-.cs-index a { font-size: var(--text-xs); color: var(--ink-2); text-decoration: none; }
+.cs-index a { font-size: var(--text-xs); color: var(--ink-2); text-decoration: none;
+  white-space: nowrap; }
 .cs-index a:hover { color: var(--tone-progress); text-decoration: underline; }
 .cs-specimen { border-top: 8px solid var(--surface-page); }
-.cs-label { position: sticky; top: 44px; z-index: 40; display: flex; gap: var(--sp-3);
+.cs-label { position: sticky; top: 0; z-index: 40; display: flex; gap: var(--sp-3);
   align-items: baseline; background: var(--ink-1); color: var(--ink-inverse);
   padding: var(--sp-2) var(--sp-5); font-size: var(--text-sm); }
 .cs-num { font-weight: 700; font-variant-numeric: tabular-nums; }
