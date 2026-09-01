@@ -1,0 +1,92 @@
+{{define "page-content"}}
+{{template "decision-head" .}}
+{{with .View}}
+
+{{if .Open}}
+<div class="card">
+    <div class="card-head">
+        <h2 class="card-title">Where does each key result stand?</h2>
+        <span class="badge badge-quiet">{{len .Measurements}}</span>
+    </div>
+    <p class="card-note">
+        Leave anything blank that you cannot measure right now &mdash; a skipped row
+        records nothing, which is not the same as recording a zero. If you know last
+        week&rsquo;s figure rather than today&rsquo;s, say so in the date.
+    </p>
+
+    <form method="POST" action="/p/{{$.ProjectID}}/inputs/{{.InputRequest.ID}}/measurements">
+        <div class="table-scroll">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Key result</th>
+                        <th>Target</th>
+                        <th>Last reading</th>
+                        <th class="table-num">Now</th>
+                        <th>As of</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Measurements}}
+                    <tr>
+                        <td>
+                            {{.KeyResult.Description}}
+                            {{with .Staleness.StatusView}}
+                            <span class="table-sub"><span class="badge badge-{{.Tone}}">{{.Label}}</span></span>
+                            {{end}}
+                        </td>
+                        <td class="nowrap">{{.KeyResult.Target}}</td>
+                        <td class="subtle nowrap">
+                            {{if .Latest}}
+                            {{.LastValue}} {{.KeyResult.TargetUnit}}
+                            <span class="table-sub">{{.Latest.MeasuredAt.Format "2 Jan"}}</span>
+                            {{else}}&mdash;{{end}}
+                        </td>
+                        <td class="table-num">
+                            {{if .KeyResult.IsBoolean}}
+                            <label class="check">
+                                <input type="checkbox" name="kr_{{.KeyResult.ID}}_done" value="1">
+                                <span>Done</span>
+                            </label>
+                            {{else}}
+                            <input type="text" inputmode="decimal" class="target-value"
+                                   name="kr_{{.KeyResult.ID}}_value"
+                                   aria-label="Current value for {{.KeyResult.Description}}">
+                            {{end}}
+                        </td>
+                        <td>
+                            <input type="date" name="kr_{{.KeyResult.ID}}_at"
+                                   aria-label="As of, for {{.KeyResult.Description}}">
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="actions">
+            <button type="submit" class="btn btn-primary">Record these</button>
+        </div>
+    </form>
+</div>
+{{else}}
+{{template "decision-resolved" .}}
+{{end}}
+
+<div class="card">
+    <div class="card-head"><h2 class="card-title">Why Mendel asks</h2></div>
+    <p class="card-note">
+        Nothing is blocked on this. Without it, though, Mendel can show what a project
+        has spent and not whether the spending is working &mdash; the roadmap says what
+        is being built, and only these numbers say whether it is landing.
+    </p>
+    <p class="text-sm subtle">
+        Asked weekly. A key result that can only be measured at the end of the quarter
+        cannot tell anyone whether the work is going well while there is still time to
+        change it, so it is worth rewriting rather than answering late.
+    </p>
+</div>
+
+{{template "decision-activity" .}}
+{{end}}
+{{end}}

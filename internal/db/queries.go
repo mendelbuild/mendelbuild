@@ -285,7 +285,7 @@ func (db *DB) GetProjectReadiness(ctx context.Context, projectID uuid.UUID) (dom
 func (db *DB) GetStrategiesByProject(ctx context.Context, projectID uuid.UUID) ([]domain.Strategy, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT id, project_id, parent_id, name, okrs_approved_at, draft_notes,
-		       draft_status, draft_error, draft_started_at, created_at, updated_at
+		       measurements_asked_at, draft_status, draft_error, draft_started_at, created_at, updated_at
 		FROM strategies WHERE project_id = $1
 		ORDER BY name
 	`, projectID)
@@ -298,7 +298,7 @@ func (db *DB) GetStrategiesByProject(ctx context.Context, projectID uuid.UUID) (
 	for rows.Next() {
 		var s domain.Strategy
 		if err := rows.Scan(&s.ID, &s.ProjectID, &s.ParentID, &s.Name, &s.OKRsApprovedAt,
-			&s.DraftNotes, &s.DraftStatus, &s.DraftError, &s.DraftStartedAt,
+			&s.DraftNotes, &s.MeasurementsAskedAt, &s.DraftStatus, &s.DraftError, &s.DraftStartedAt,
 			&s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -386,10 +386,10 @@ func (db *DB) GetStrategy(ctx context.Context, id uuid.UUID) (*domain.Strategy, 
 	var s domain.Strategy
 	err := db.Pool.QueryRow(ctx, `
 		SELECT id, project_id, parent_id, name, okrs_approved_at, draft_notes,
-		       draft_status, draft_error, draft_started_at, created_at, updated_at
+		       measurements_asked_at, draft_status, draft_error, draft_started_at, created_at, updated_at
 		FROM strategies WHERE id = $1
 	`, id).Scan(&s.ID, &s.ProjectID, &s.ParentID, &s.Name, &s.OKRsApprovedAt,
-		&s.DraftNotes, &s.DraftStatus, &s.DraftError, &s.DraftStartedAt,
+		&s.DraftNotes, &s.MeasurementsAskedAt, &s.DraftStatus, &s.DraftError, &s.DraftStartedAt,
 		&s.CreatedAt, &s.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -514,13 +514,14 @@ func (db *DB) UpdateInputRequest(ctx context.Context, d *domain.InputRequest) er
 			accepted_by = $7, accepted_at = $8,
 			resolved_by = $9, resolved_at = $10,
 			resolution = $11, rationale = $12,
+			importance_score = $13,
 			updated_at = NOW()
 		WHERE id = $1
 	`, d.ID, d.Title, d.Details, d.Status,
 		d.AssignedTo, d.AssignedAt,
 		d.AcceptedBy, d.AcceptedAt,
 		d.ResolvedBy, d.ResolvedAt,
-		d.Resolution, d.Rationale)
+		d.Resolution, d.Rationale, d.ImportanceScore)
 	return err
 }
 

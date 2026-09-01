@@ -118,6 +118,12 @@ CREATE TABLE strategies (
     draft_error TEXT,
     draft_started_at TIMESTAMPTZ,
 
+    -- When this strategy was last asked for Key Result measurements [039].
+    -- The cadence is judged from this rather than from the open request's
+    -- created_at, so that asking and resolving stay separate facts: a request
+    -- updated in place must not read as a fresh one.
+    measurements_asked_at TIMESTAMPTZ,
+
     -- What the drafting agent said about its own draft [added in 032]:
     -- how it read the brief, what it filled in, what it could not tell.
     -- Kept after approval -- when a hop overruns, the assumptions the plan
@@ -233,6 +239,10 @@ CREATE TABLE key_result_history (
 );
 
 CREATE INDEX idx_kr_history_kr_id ON key_result_history(key_result_id, measured_at);
+
+-- Answering the same measurement form twice is a double submit, not two
+-- readings [039].
+CREATE UNIQUE INDEX idx_kr_history_unique ON key_result_history(key_result_id, measured_at);
 
 --------------------------------------------------------------------------------
 -- FUNDING SOURCES
@@ -811,7 +821,7 @@ CREATE TABLE input_requests (
     kind TEXT NOT NULL CHECK (kind IN ('pass_fail', 'choose_one', 'choose_many', 'roadmap_review',
                                         'variation_review', 'variation_selection',
                                         'credential_request', 'manual_setup', 'confirmation',
-                                        'hosting_platform')),
+                                        'hosting_platform', 'measurement')),
 
     -- Human- and agent-readable summary
     title TEXT NOT NULL,

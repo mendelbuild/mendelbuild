@@ -215,18 +215,42 @@ that it is going well.
 
 ## Work, in order
 
-1. Migration 037: structured target columns; drop the old rows.
-2. `DraftedKeyResult` gains the three fields; OKR editor takes them; prose
-   derived. Tuner scores measurability against the structured target.
-3. `key_result_history` read/write queries.
-4. The recurring request: new `InputRequestKind`, the worker that files and
-   rolls it, the form that resolves it.
-5. Staleness and escalation.
-6. The timeline on the Strategy page.
+1. ~~Migration 037: structured target columns; drop the old rows.~~ Done.
+2. ~~`DraftedKeyResult` gains the three fields; OKR editor takes them; prose
+   derived.~~ Done, and 038 reduced five operators to three judgement modes.
+3. ~~`key_result_history` read/write queries.~~ Done.
+4. ~~The recurring request: new `InputRequestKind`, the worker that files and
+   rolls it, the form that resolves it.~~ Done, migration 039.
+5. ~~Staleness and escalation.~~ Done.
+6. **The timeline on the Strategy page.** Remaining.
 
-Steps 1–3 are inert on their own: nothing changes for a user until 4. That is
-deliberate — it means the data model can land and be lived with before any of it
-is drawn.
+Steps 1–5 change nothing a user sees except the measurement ask itself. The
+numbers are being collected; nothing yet draws them.
+
+### What 4 and 5 settled in the building
+
+- **The ask is filed against the strategy**, and there is at most one open per
+  strategy ever. When the period rolls over on an unanswered one it is updated
+  in place: a project that has ignored the ask for a month should face one
+  insistent request, not four polite ones.
+- **`measurements_asked_at` lives on the strategy**, not on the request. Asking
+  and answering are separate facts, and a request updated in place must not read
+  as a fresh one.
+- **A strategy is as stale as its least measured Key Result.** Reading the newest
+  measurement instead would let one diligently updated goal hide five nobody has
+  touched.
+- **Escalation is the title and the importance score**, nothing else. The ask
+  starts at 0.2 — "Low" in the queue's own words — and goes to 0.8 when overdue.
+  A request that shouted from the day it was filed would teach people that the
+  queue exaggerates.
+- **Answering closes the ask even with rows skipped.** Holding it open until
+  every Key Result has a number would let one unmeasurable goal keep it open for
+  ever, which is the failure mode that makes queues get ignored.
+- **A blank row records nothing, and a zero records a zero.** The form is
+  explicit about this, because a Key Result nobody could measure this week must
+  not appear as a collapse.
+- **The previous reading is shown but never prefilled.** A form that pre-answers
+  itself collects last week's number again from anyone who taps through it.
 
 ## Verification
 

@@ -147,6 +147,7 @@ func TestDetailPagesCarryABreadcrumb(t *testing.T) {
 		"input_request_roadmap.html",
 		"input_request_selection.html",
 		"input_request_variation.html",
+		"input_request_measurement.html",
 	}
 	for _, name := range needsCrumb {
 		body, err := os.ReadFile(filepath.Join("templates", name))

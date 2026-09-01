@@ -45,6 +45,10 @@ type InputRequestDetailView struct {
 	ObjectivesJSON             template.JS  // JSON map of objective ID to description
 	NeedsProductionCredentials bool         // requires_production but no credentials configured
 	HostingPlatforms           []HostingPlatformOption // For hosting_platform kind
+
+	// Measurements is the form for a measurement request: one row per Key
+	// Result, least recently measured first.
+	Measurements []MeasurementRow
 	SetupScript                string                  // For credential_request: commands the user pastes into a terminal
 
 }
@@ -505,6 +509,17 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 				// Can select if all variations are done (none creating) and at least one is pending
 				view.CanSelect = creatingCount == 0 && pendingCount > 0 && inputRequest.Status != domain.InputRequestStatusResolved
 			}
+		}
+
+	case domain.InputRequestKindMeasurement:
+		templateName = "input_request_measurement.html"
+		if inputRequest.SubjectID != nil {
+			rows, err := s.measurementRows(ctx, *inputRequest.SubjectID, time.Now())
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			view.Measurements = rows
 		}
 
 	case domain.InputRequestKindHostingPlatform:

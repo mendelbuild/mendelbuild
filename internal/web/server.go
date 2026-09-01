@@ -118,6 +118,13 @@ func (s *Server) startVariationWorker() {
 		hostingTicker := time.NewTicker(10 * time.Minute)
 		defer hostingTicker.Stop()
 
+		// The measurement ask is weekly, so checking whether one is due needs
+		// nothing like the other cadences. Quarter-hourly is often enough that
+		// a newly approved strategy is asked the same afternoon, and rare
+		// enough to be invisible.
+		measurementTicker := time.NewTicker(15 * time.Minute)
+		defer measurementTicker.Stop()
+
 		for {
 			select {
 			case <-s.stopWorker:
@@ -129,6 +136,8 @@ func (s *Server) startVariationWorker() {
 				s.processHopStatusUpdates()
 			case <-hostingTicker.C:
 				s.settleHostingSpend()
+			case <-measurementTicker.C:
+				s.processMeasurementRequests()
 			}
 		}
 	}()
@@ -723,6 +732,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/inputs/{inputRequestID}/request-more-variations", s.handleRequestMoreVariations)
 		r.Post("/inputs/{inputRequestID}/resolve-conflicts", s.handleResolveConflicts)
 			r.Post("/inputs/{inputRequestID}/provide-credential", s.handleProvideCredential)
+			r.Post("/inputs/{inputRequestID}/measurements", s.handleRecordMeasurements)
 			r.Post("/roadmap/propose", s.handleProposeRoadmap)
 		})
 

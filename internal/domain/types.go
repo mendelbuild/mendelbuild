@@ -109,6 +109,11 @@ type Strategy struct {
 	// Where the background draft is up to. Drafting takes 30-45 seconds, longer
 	// than an HTTP request may safely block, so it runs detached and the review
 	// screen polls these.
+	// MeasurementsAskedAt is when this strategy was last asked for Key Result
+	// values [039]. Separate from the open request's created_at, so a request
+	// updated in place as the period rolls over does not read as a fresh one.
+	MeasurementsAskedAt *time.Time `json:"measurements_asked_at,omitempty"`
+
 	DraftStatus    StrategyDraftStatus `json:"draft_status"`
 	DraftError     *string             `json:"draft_error,omitempty"`
 	DraftStartedAt *time.Time          `json:"draft_started_at,omitempty"`
@@ -669,6 +674,10 @@ const (
 	InputRequestKindManualSetup        InputRequestKind = "manual_setup"
 	InputRequestKindConfirmation       InputRequestKind = "confirmation"
 	InputRequestKindHostingPlatform    InputRequestKind = "hosting_platform" // Select demo hosting platform
+	// InputRequestKindMeasurement asks for this period's Key Result values
+	// [039]. The only kind that blocks nothing: everything else in the queue is
+	// holding up work, and this one would merely improve what Mendel knows.
+	InputRequestKindMeasurement InputRequestKind = "measurement"
 )
 
 // InputRequestStatus represents the lifecycle state of an InputRequest.

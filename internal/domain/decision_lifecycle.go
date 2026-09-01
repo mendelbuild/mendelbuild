@@ -110,6 +110,8 @@ func DecisionKindLabel(k InputRequestKind) string {
 		return "Confirmation"
 	case InputRequestKindHostingPlatform:
 		return "Hosting choice"
+	case InputRequestKindMeasurement:
+		return "This week's numbers"
 	default:
 		return string(k)
 	}
@@ -138,6 +140,9 @@ func DecisionAsk(k InputRequestKind) string {
 		return "Confirm whether Mendel should proceed."
 	case InputRequestKindHostingPlatform:
 		return "Choose where Mendel should deploy demos for this project."
+	case InputRequestKindMeasurement:
+		return "Record where each key result stands. Nothing is waiting on this, " +
+			"but without it Mendel cannot say whether the work is paying off."
 	default:
 		return "Provide the input Mendel is asking for."
 	}
