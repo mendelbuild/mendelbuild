@@ -53,16 +53,17 @@ prints the token as its last line.
 
 Each demo becomes its own Fly app, named after the project and variation, and
 is destroyed when the demo stops.`,
-			SetupScript: `# Edit this line to the organization Mendel should deploy into
-# (flyctl orgs list shows them), then paste the rest unchanged.
-ORG=personal
+			SetupScript: `# Replace <YOUR_FLY_ORG_HERE> with the slug from "flyctl orgs list" (often
+# "personal"), angle brackets and all. Pasted unedited this line is a shell
+# syntax error, which is deliberate: it stops here rather than running on.
+export FLY_ORG=<YOUR_FLY_ORG_HERE>
 
 # Nothing here destroys or replaces anything: creating a second token leaves the
 # first one working, so re-running is safe and simply mints a fresh token.
-flyctl orgs show "$ORG" > /dev/null
+flyctl orgs show "$FLY_ORG" > /dev/null
 
 echo; echo "--- FLY_API_TOKEN: copy the whole line below, including FlyV1 ---"; echo
-flyctl tokens create org --org "$ORG" --name "Mendel" --expiry 8760h`,
+flyctl tokens create org --org "$FLY_ORG" --name "Mendel" --expiry 8760h`,
 		},
 		{
 			Slug:          "cloud-run",
@@ -76,44 +77,47 @@ Before you start:
   3. Have rights to manage IAM on the project you want to deploy into.
 
 Mendel cannot mint a service account key on your behalf, so run the setup script
-once. Edit its first line; everything after that pastes as-is, and it is safe to
-run again if you lose the key or need to repeat a step.
+below. Replace the placeholder on its first line; everything after that pastes
+as-is, and the whole thing is safe to run again if you lose the key or need to
+repeat a step.
 
-  GCP_PROJECT_ID           what you set PROJECT to
+  GCP_PROJECT_ID           what you set GCP_PROJECT to
   GCP_SERVICE_ACCOUNT_KEY  the whole contents of mendel-key.json, which the
                            script prints at the end
 
 Mendel deploys each demo as its own Cloud Run service in us-central1, built from
 your Dockerfile, and deletes the service on teardown.`,
-			SetupScript: `# Edit this line, then paste the rest unchanged.
-PROJECT=your-project-id
+			SetupScript: `# Replace <YOUR_PROJECT_ID_HERE>, angle brackets and all. Pasted unedited
+# this line is a shell syntax error, which is deliberate: it stops here rather
+# than running the whole script against a project that does not exist.
+export GCP_PROJECT=<YOUR_PROJECT_ID_HERE>
 
 # Cloud Run itself, the build that produces the image, and the registry it is
 # pushed to. Enabling an enabled API is a no-op.
-gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com --project "$PROJECT"
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com --project "$GCP_PROJECT"
 
 # A service account for Mendel. Harmless if it already exists.
-gcloud iam service-accounts create mendel-deployer --project "$PROJECT" --display-name "Mendel Deployer" || true
+gcloud iam service-accounts create mendel-deployer --project "$GCP_PROJECT" --display-name "Mendel Deployer" || true
 
 # Deploying services and making them public, building the image, pushing it, the
 # Cloud Build staging bucket, and permission to act as the service's runtime
 # identity. Adding a binding that is already there is a no-op.
 for ROLE in run.admin cloudbuild.builds.editor artifactregistry.admin storage.admin iam.serviceAccountUser; do
-  gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:mendel-deployer@$PROJECT.iam.gserviceaccount.com" --role "roles/$ROLE" --condition None --quiet > /dev/null
+  gcloud projects add-iam-policy-binding "$GCP_PROJECT" --member "serviceAccount:mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com" --role "roles/$ROLE" --condition None --quiet > /dev/null
 done
 
 # gcloud run deploy --source builds as the project's Compute Engine service
 # account, so Mendel's account has to be allowed to act as it.
-PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format "value(projectNumber)")
-gcloud iam service-accounts add-iam-policy-binding "$PROJECT_NUMBER-compute@developer.gserviceaccount.com" --project "$PROJECT" --member "serviceAccount:mendel-deployer@$PROJECT.iam.gserviceaccount.com" --role roles/iam.serviceAccountUser --quiet > /dev/null
+PROJECT_NUMBER=$(gcloud projects describe "$GCP_PROJECT" --format "value(projectNumber)")
+gcloud iam service-accounts add-iam-policy-binding "$PROJECT_NUMBER-compute@developer.gserviceaccount.com" --project "$GCP_PROJECT" --member "serviceAccount:mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com" --role roles/iam.serviceAccountUser --quiet > /dev/null
 
 # gcloud run deploy --source pushes the built image here. Creating the
 # repository now means the first deploy does not have to, which also keeps it
 # from racing the grants above: a token minted moments after a binding can still
 # be refused, and the failure reads as a missing role rather than a stale token.
-gcloud artifacts repositories create cloud-run-source-deploy --repository-format docker --location us-central1 --project "$PROJECT" --quiet 2> /dev/null || true
+gcloud artifacts repositories create cloud-run-source-deploy --repository-format docker --location us-central1 --project "$GCP_PROJECT" --quiet 2> /dev/null || true
 
-gcloud iam service-accounts keys create mendel-key.json --iam-account "mendel-deployer@$PROJECT.iam.gserviceaccount.com"
+gcloud iam service-accounts keys create mendel-key.json --iam-account "mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com"
 
 echo; echo "--- GCP_SERVICE_ACCOUNT_KEY: copy everything below ---"; echo
 cat mendel-key.json`,
@@ -161,13 +165,14 @@ Before you start:
   3. Have a GKE cluster running, and rights to manage IAM on its project.
 
 Mendel cannot mint a service account key on your behalf, so run the setup script
-once. Edit its first line; everything after that pastes as-is, and it is safe to
-run again if you lose the key or need to repeat a step.
+below. Replace the placeholder on its first line; everything after that pastes
+as-is, and the whole thing is safe to run again if you lose the key or need to
+repeat a step.
 
 The script ends by printing your clusters and the key. Those supply the four
 values:
 
-  GCP_PROJECT_ID           what you set PROJECT to
+  GCP_PROJECT_ID           what you set GCP_PROJECT to
   GCP_SERVICE_ACCOUNT_KEY  the whole contents of mendel-key.json
   GKE_CLUSTER_NAME         NAME, from the cluster list
   GKE_ZONE                 LOCATION, from the cluster list — a zone
@@ -175,24 +180,26 @@ values:
 
 Mendel deploys into a namespace of its own, ` + Namespace + `, creating it if
 absent, and removes the Deployment, Service and Secret it created on teardown.`,
-			SetupScript: `# Edit this line, then paste the rest unchanged.
-PROJECT=your-project-id
+			SetupScript: `# Replace <YOUR_PROJECT_ID_HERE>, angle brackets and all. Pasted unedited
+# this line is a shell syntax error, which is deliberate: it stops here rather
+# than running the whole script against a project that does not exist.
+export GCP_PROJECT=<YOUR_PROJECT_ID_HERE>
 
 # The APIs Mendel uses: the cluster, the image build, and the image registry.
-gcloud services enable container.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com --project "$PROJECT"
+gcloud services enable container.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com --project "$GCP_PROJECT"
 
 # A service account for Mendel. Harmless if it already exists.
-gcloud iam service-accounts create mendel-deployer --project "$PROJECT" --display-name "Mendel Deployer" || true
+gcloud iam service-accounts create mendel-deployer --project "$GCP_PROJECT" --display-name "Mendel Deployer" || true
 
 # Cluster access, image build and push, the Cloud Build staging bucket, and
 # permission to act as the build's own service account.
 for ROLE in container.developer cloudbuild.builds.editor artifactregistry.writer storage.admin iam.serviceAccountUser; do
-  gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:mendel-deployer@$PROJECT.iam.gserviceaccount.com" --role "roles/$ROLE" --condition None --quiet > /dev/null
+  gcloud projects add-iam-policy-binding "$GCP_PROJECT" --member "serviceAccount:mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com" --role "roles/$ROLE" --condition None --quiet > /dev/null
 done
 
 # The key itself, and the clusters you can deploy to.
-gcloud iam service-accounts keys create mendel-key.json --iam-account "mendel-deployer@$PROJECT.iam.gserviceaccount.com"
-gcloud container clusters list --project "$PROJECT"
+gcloud iam service-accounts keys create mendel-key.json --iam-account "mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com"
+gcloud container clusters list --project "$GCP_PROJECT"
 
 echo; echo "--- GCP_SERVICE_ACCOUNT_KEY: copy everything below ---"; echo
 cat mendel-key.json`,

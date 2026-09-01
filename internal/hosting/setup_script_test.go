@@ -1,6 +1,8 @@
 package hosting
 
 import (
+	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -55,32 +57,72 @@ func isGuarded(line string) bool {
 		strings.Contains(line, "if !")
 }
 
-// TestGKESetupScriptEditsOneLine checks the shape the instructions promise:
-// edit the first line, paste the rest unchanged. If the placeholder moves or
-// gains a second occurrence, the prose stops being true.
-func TestGKESetupScriptEditsOneLine(t *testing.T) {
-	var script string
-	for _, p := range DefaultPlatforms() {
-		if p.Slug == "gke" {
-			script = p.SetupScript
+// TestSetupScriptsFailLoudlyWhenUnedited covers the one line the user must
+// change before pasting.
+//
+// A placeholder that is merely a plausible-looking value gets pasted unedited,
+// and the script then runs happily against a project that does not exist. The
+// convention is a bracketed <YOUR_..._HERE> token, which bash refuses to parse,
+// so an unedited paste stops on line one instead of part-way through.
+//
+// The syntax error is asserted by running bash over the line, not assumed:
+// whether a given placeholder actually fails to parse is exactly the sort of
+// thing that is obvious right up until it is wrong.
+func TestSetupScriptsFailLoudlyWhenUnedited(t *testing.T) {
+	placeholder := regexp.MustCompile(`<YOUR_[A-Z_]+_HERE>`)
+
+	for _, platform := range DefaultPlatforms() {
+		if strings.TrimSpace(platform.SetupScript) == "" {
+			continue
+		}
+
+		// Comments may name the placeholder to explain it; what must be unique
+		// is the line the user actually edits.
+		var editLines []string
+		for _, line := range strings.Split(platform.SetupScript, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			if placeholder.MatchString(trimmed) {
+				editLines = append(editLines, trimmed)
+			}
+		}
+		if len(editLines) != 1 {
+			t.Errorf("%s: %d lines carry a placeholder, want exactly one to edit: %v",
+				platform.Slug, len(editLines), editLines)
+			continue
+		}
+		editLine := editLines[0]
+		var varName string
+		if !strings.HasPrefix(editLine, "export ") {
+			t.Errorf("%s: edit line should export the value so the rest of the script reads it: %s",
+				platform.Slug, editLine)
+			continue
+		}
+		varName = strings.TrimPrefix(strings.SplitN(editLine, "=", 2)[0], "export ")
+
+		// Unedited, the line must not parse.
+		if err := exec.Command("bash", "-n", "-c", editLine).Run(); err == nil {
+			t.Errorf("%s: %q parses as valid shell, so pasting it unedited would run the "+
+				"whole script against a placeholder", platform.Slug, editLine)
+		}
+
+		// Edited, it must parse — a guard that also breaks the working case is
+		// not a guard, it is a broken script.
+		edited := placeholder.ReplaceAllString(editLine, "a-real-value")
+		if err := exec.Command("bash", "-n", "-c", edited).Run(); err != nil {
+			t.Errorf("%s: %q does not parse once edited: %v", platform.Slug, edited, err)
+		}
+
+		// And the rest of the script has to read what was exported.
+		rest := platform.SetupScript[strings.Index(platform.SetupScript, editLine)+len(editLine):]
+		if !strings.Contains(rest, "$"+varName) {
+			t.Errorf("%s: nothing after the edit line uses $%s, so editing it would change nothing",
+				platform.Slug, varName)
 		}
 	}
-	if script == "" {
-		t.Fatal("the gke platform has no setup script")
-	}
-
-	if n := strings.Count(script, "your-project-id"); n != 1 {
-		t.Errorf("placeholder appears %d times; the instructions promise a single edit", n)
-	}
-
-	// Everything after the assignment has to read the value rather than repeat
-	// the literal, or editing one line would not be enough.
-	body := script[strings.Index(script, "your-project-id"):]
-	if !strings.Contains(body, `"$PROJECT"`) {
-		t.Error("script does not use $PROJECT after the line the user edits")
-	}
 }
-
 
 // TestSelectableChannelsHaveASetupScript makes the rule enforceable rather than
 // merely written down: a channel a user can actually choose must tell them how

@@ -28,7 +28,8 @@ func TestCredentialFormAsksForTheNamedValues(t *testing.T) {
 			Status:               domain.InputRequestStatusNeedsAssignment,
 			RequiredCapabilities: required,
 		},
-		SetupScript: "PROJECT=your-project-id\ngcloud iam service-accounts create mendel-deployer",
+		SetupScript:      "export GCP_PROJECT=<YOUR_PROJECT_ID_HERE>\ngcloud iam service-accounts create mendel-deployer",
+		SetupScriptLines: markUpSetupScript("export GCP_PROJECT=<YOUR_PROJECT_ID_HERE>\n# a comment\ngcloud iam service-accounts create mendel-deployer"),
 	}
 
 	body := renderForTest(t, "input_request_credential.html", projectID, view)
@@ -49,6 +50,44 @@ func TestCredentialFormAsksForTheNamedValues(t *testing.T) {
 	}
 	if !strings.Contains(body, "gcloud iam service-accounts create mendel-deployer") {
 		t.Error("setup script contents missing")
+	}
+	if !strings.Contains(body, `data-copy="setup-script"`) {
+		t.Error("no copy control points at the script")
+	}
+
+	// The line the user must edit has to be visually distinct, since pasting it
+	// unchanged is the mistake the block exists to prevent.
+	if !strings.Contains(body, "script-line-edit") {
+		t.Error("the line needing an edit is not called out")
+	}
+
+	// What the copy button reads must be the script verbatim. If the highlighted
+	// block were the source, the markup would travel with it.
+	if strings.Contains(body, `id="setup-script" class=`) {
+		t.Error("the copy source is the marked-up block rather than the raw script")
+	}
+}
+
+// TestSetupScriptMarkupFlagsOnlyTheEditableLine keeps the highlight on the one
+// line it belongs to: a comment mentioning the placeholder explains it, and
+// highlighting that too would point at a line there is nothing to do to.
+func TestSetupScriptMarkupFlagsOnlyTheEditableLine(t *testing.T) {
+	lines := markUpSetupScript("# set <YOUR_PROJECT_ID_HERE> below\nexport GCP_PROJECT=<YOUR_PROJECT_ID_HERE>\ngcloud services enable foo")
+
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3", len(lines))
+	}
+	if lines[0].NeedsEdit {
+		t.Error("the explanatory comment should not be flagged as needing an edit")
+	}
+	if !lines[0].Comment {
+		t.Error("the comment should be marked as one")
+	}
+	if !lines[1].NeedsEdit {
+		t.Error("the export line carrying the placeholder should be flagged")
+	}
+	if lines[2].NeedsEdit {
+		t.Error("an ordinary command should not be flagged")
 	}
 }
 

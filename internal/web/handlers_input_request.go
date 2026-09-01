@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -50,6 +51,7 @@ type InputRequestDetailView struct {
 	// Result, least recently measured first.
 	Measurements []MeasurementRow
 	SetupScript                string                  // For credential_request: commands the user pastes into a terminal
+	SetupScriptLines           []SetupScriptLine       // The same script, marked up so the line to edit stands out
 
 }
 
@@ -380,6 +382,7 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 			if channel, cerr := s.db.GetActiveProjectDeploymentChannel(ctx, projUUID); cerr == nil &&
 				channel != nil && channel.HostingPlatform != nil {
 				view.SetupScript = channel.HostingPlatform.SetupScript
+				view.SetupScriptLines = markUpSetupScript(channel.HostingPlatform.SetupScript)
 			}
 		}
 		// Load the blocked variation
@@ -2557,4 +2560,37 @@ func outstandingCapabilities(ctx context.Context, s *Server, projectID uuid.UUID
 		}
 	}
 	return missing
+}
+
+// SetupScriptLine is one line of a platform's setup script, with the line the
+// user has to change flagged so the page can make it unmissable.
+type SetupScriptLine struct {
+	Text      string
+	NeedsEdit bool
+	Comment   bool
+}
+
+// setupPlaceholder matches the token a user must replace before pasting.
+var setupPlaceholder = regexp.MustCompile(`<YOUR_[A-Z_]+_HERE>`)
+
+// markUpSetupScript splits a setup script into lines and marks the one carrying
+// a placeholder.
+//
+// Highlighting is done here rather than in the template because the copy button
+// must hand over the script exactly as written — a marked-up line that copied
+// its own markup would paste something that does not run.
+func markUpSetupScript(script string) []SetupScriptLine {
+	if strings.TrimSpace(script) == "" {
+		return nil
+	}
+	var lines []SetupScriptLine
+	for _, text := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(text)
+		lines = append(lines, SetupScriptLine{
+			Text:      text,
+			Comment:   strings.HasPrefix(trimmed, "#"),
+			NeedsEdit: !strings.HasPrefix(trimmed, "#") && setupPlaceholder.MatchString(text),
+		})
+	}
+	return lines
 }

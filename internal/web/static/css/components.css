@@ -1396,3 +1396,51 @@ a.callout:hover /* A stack manages the gaps between its own children, so a callo
     font-family: var(--font-mono);
     font-size: var(--text-sm);
 }
+
+/* Copy button: an icon, because the block is something to take away rather
+   than read, and the label doubles as the "Copied" acknowledgement. */
+.btn-copy {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: var(--sp-1) var(--sp-3);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface-card);
+    color: var(--ink-2);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.btn-copy:hover { background: var(--surface-hover); color: var(--ink-1); }
+.btn-copy:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+.copy-icon { flex-shrink: 0; }
+.btn-copy-label { line-height: 1; }
+
+/* One line of a setup script. The line the user must edit is called out, since
+   pasting it unchanged is the mistake the whole block is arranged to prevent. */
+.script-line { display: block; }
+.script-line-comment { color: var(--ink-3); }
+
+.script-line-edit {
+    display: block;
+    background: var(--tone-warning-bg);
+    color: var(--tone-warning-ink);
+    font-weight: 600;
+    border-left: 3px solid var(--tone-warning);
+    margin-left: calc(-1 * var(--sp-4));
+    padding-left: calc(var(--sp-4) - 3px);
+    margin-right: calc(-1 * var(--sp-4));
+    padding-right: var(--sp-4);
+}
+
+.script-note {
+    margin: 0;
+    padding: var(--sp-2) var(--sp-3);
+    background: var(--surface-sunken);
+    border-top: 1px solid var(--line);
+    font-size: var(--text-xs);
+    color: var(--ink-3);
+}

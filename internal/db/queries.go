@@ -507,6 +507,11 @@ func (db *DB) CountOpenInputRequestsByProject(ctx context.Context, projectID uui
 
 // UpdateInputRequest updates a decision.
 func (db *DB) UpdateInputRequest(ctx context.Context, d *domain.InputRequest) error {
+	// instructions, link and required_capabilities are written here as well as at
+	// creation. They were not, so an ask could never be brought up to date: a
+	// credential request filed before its channel named what it needed kept an
+	// empty capability list forever, and the form went on offering one blank box
+	// no matter how often the code recomputed the right answer.
 	_, err := db.Pool.Exec(ctx, `
 		UPDATE input_requests SET
 			title = $2, details = $3, status = $4,
@@ -515,13 +520,15 @@ func (db *DB) UpdateInputRequest(ctx context.Context, d *domain.InputRequest) er
 			resolved_by = $9, resolved_at = $10,
 			resolution = $11, rationale = $12,
 			importance_score = $13,
+			instructions = $14, link = $15, required_capabilities = $16,
 			updated_at = NOW()
 		WHERE id = $1
 	`, d.ID, d.Title, d.Details, d.Status,
 		d.AssignedTo, d.AssignedAt,
 		d.AcceptedBy, d.AcceptedAt,
 		d.ResolvedBy, d.ResolvedAt,
-		d.Resolution, d.Rationale, d.ImportanceScore)
+		d.Resolution, d.Rationale, d.ImportanceScore,
+		d.Instructions, d.Link, d.RequiredCapabilities)
 	return err
 }
 
