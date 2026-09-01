@@ -136,7 +136,52 @@ Every subsequent request from that visitor carries the cookie and is routed by
 header matching, which *is* core Gateway API — so the portability claim holds on
 every conformant implementation, with no Envoy-specific extension anywhere.
 
-### 3.1 What this costs
+### 3.1 One service, or the Arm leaks
+
+Everything above routes traffic **at the edge**. Once a request is inside the
+cluster, an Arm's service calls its collaborators by their ordinary names, and
+those resolve to mainline. So Arm b's service A talks to mainline B.
+
+When a Variation changes only A that is not a flaw, it is correct: B is
+byte-identical in both Arms, and there is nothing to isolate. When a Variation
+changes A *and* B, it is broken — new A talking to old B is neither Arm, and
+whatever the experiment measures is a mixture nobody designed.
+
+**So: a Variation may change exactly one deployable service.** Mendel can see
+this in the diff — more than one service's directory touched — and decline with
+that reason, the same way §13 declines a migration it cannot prove additive.
+This is a real narrowing, and for a monolith it is no narrowing at all.
+
+### 3.2 What lifting that restriction actually takes
+
+A service mesh is the usual answer and it is the right one eventually, but it
+solves less of this than it appears to. Two things are needed, and a mesh
+provides one:
+
+1. **Routing on the Arm at each hop.** A sidecar intercepting outbound calls can
+   route on a header. This is what a mesh is for, and Istio's canonical example
+   is precisely this.
+2. **The Arm identity reaching each hop.** A sidecar sees an inbound request and
+   an outbound request as separate connections and **cannot correlate them**.
+   Istio is explicit that applications must forward the trace headers
+   themselves; the mesh does not do it. The same is true of anything else
+   carried per request, including an Arm.
+
+So propagation is an application responsibility whether or not a mesh is
+present. That is the same problem as trace context, and the same answer applies:
+**Arm identity is baggage.** An application already instrumented with
+OpenTelemetry propagates W3C `baggage` end to end, and an Arm can ride it rather
+than inventing a second mechanism — in which case much of the plumbing exists
+already.
+
+Two things follow. Mendel writes the application's code, so the propagation ask
+is far cheaper here than for a vendor who must persuade someone to add it —
+the same argument that settled the isolated `MeterProvider` in §13 §10. And a
+mesh should not be adopted for the routing half until the propagation half is
+in place, because a mesh with unpropagated headers routes every internal call to
+mainline while looking like it works.
+
+### 3.3 What this costs
 
 - **One extra round trip on a visitor's first request.** Acceptable; it happens
   once per Assignment Unit per experiment.
@@ -149,7 +194,7 @@ every conformant implementation, with no Envoy-specific extension anywhere.
   refuses cookies, the assigner marks the redirect (`?_ma=1`) and sends a second
   cookie-less arrival straight to mainline.
 
-### 3.2 Where the weights live
+### 3.4 Where the weights live
 
 In a `ConfigMap` the assigner reads, written by Mendel — **not** fetched from
 Mendel's API at request time. The user's production traffic must not depend on
@@ -288,6 +333,8 @@ channel, which §13 §15 records as the remaining staging move.
 | D24 | Weights in a ConfigMap the assigner reads | Assigner queries Mendel per request | Production traffic must not depend on Mendel being up |
 | D25 | Weights not in `backendRefs` | Weighted backendRefs | They pick per request, splitting one visitor across Arms |
 | D26 | Kill switch removes the match rules | Set allocation to 100% mainline | Allocation only affects new visitors; the already-assigned keep their cookie |
+| D27 | A Variation may change one deployable service | Route east-west from day one | Edge routing is correct for one service; more than one needs propagation the app must do |
+| D28 | When multi-service arrives, Arm identity rides W3C `baggage` | A Mendel-specific header | A mesh cannot propagate either; an OTel-instrumented app already carries baggage |
 
 ## 10. Open questions
 
@@ -301,6 +348,11 @@ cookie names an Arm that no longer routes, so they fall through to mainline,
 which is correct. But if the Arm wrote per-Assignment-Unit state they will see
 some of it and not the rest, which is exactly the §13 §5 dissonance the user
 approved in the abstract. Worth checking that the approval text covers it.
+
+**O13 — How does Mendel identify a "deployable service" in an arbitrary repo?**
+D27 rests on counting them in a diff, which needs a definition. A monolith is
+one; a repo of Dockerfiles is several; a monorepo with one deployed entrypoint
+is one again. Likely a `.mendel/` declaration rather than inference.
 
 **O12 — One HTTPRoute per experiment, or one per project?** Two experiments on
 different paths of one application both want to attach to the same parent
