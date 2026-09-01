@@ -172,6 +172,48 @@ Deployment is deterministic (no AI-generated scripts). Platform-specific deploym
 
 Before demos can run, the deployment channel must be **validated** via a hello-world deploy → health check → teardown test. This ensures credentials are correct.
 
+### Channel Setup Must Be Idempotent
+
+A platform's `SetupScript` is a script the user pastes into a terminal to mint
+the credentials Mendel asked for. **Every one of them must be safe to run
+again**, start to finish, even when that costs some complexity in the script.
+
+Re-running is the normal case, not the edge case. People lose the key file, hit
+a permission error halfway down and fix it, get a fresh laptop, or hand the
+setup to a colleague. A script that only works on a pristine project fails
+exactly when someone is already stuck, and it fails in the least helpful way: a
+red error from a step that had *already succeeded*, which reads as "setup is
+broken" rather than "that part is done".
+
+What that means in practice:
+
+- **Creating something that may exist must not abort the run.** GKE's
+  `gcloud iam service-accounts create ... || true` is the pattern. Prefer a real
+  upsert where the platform offers one.
+- **Granting, enabling and configuring should be naturally repeatable.** Adding
+  an IAM binding twice or enabling an enabled API is a no-op; prefer those forms
+  over "check, then branch".
+- **Only the last step should produce a secret.** Minting a key on every run is
+  acceptable — sometimes it is the reason someone is re-running — but nothing
+  before it should have destroyed anything.
+- **Never destroy to make room.** Deleting the existing service account so the
+  create succeeds would revoke a key that other deployments are still using.
+- **Say so in a comment** where a line exists only for idempotency, so the next
+  person does not tidy the `|| true` away.
+
+Test the script by running it twice against a real project before writing it
+down. Idempotency is the property most likely to be assumed and least likely to
+be true — the same failure mode that left `deployToGKE` broken for months.
+
+The same applies to the deterministic Go paths around them: `deployToGKE`
+creates its namespace only if absent, and teardown passes
+`--ignore-not-found` so tearing down twice is not an error.
+
+**Only `gke` currently carries a `SetupScript`.** The other platforms predate
+the field and still have terse, AI-prompt-shaped `Instructions`. Any channel
+given a script from here on follows the rule above; converting the existing ones
+is outstanding.
+
 ### No Hardcoded Platform Options
 
 **NEVER hardcode lists of hosting platforms, cloud providers, or deployment options in Go code.** These change frequently and vary by Mendel installation.
