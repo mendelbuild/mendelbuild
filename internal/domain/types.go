@@ -829,35 +829,6 @@ type HostingDeploymentLog struct {
 	Message      string    `json:"message"`
 }
 
-// TrafficAllocation defines how traffic is split for a hop.
-type TrafficAllocation struct {
-	ID         uuid.UUID `json:"id"`
-	HopID      uuid.UUID `json:"hop_id"`
-	BucketSalt string    `json:"bucket_salt"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-}
-
-// TrafficAllocationSlice defines a portion of traffic for a variation.
-type TrafficAllocationSlice struct {
-	ID                    uuid.UUID `json:"id"`
-	TrafficAllocationID   uuid.UUID `json:"traffic_allocation_id"`
-	VariationID           uuid.UUID `json:"variation_id"`
-	Fraction              float64   `json:"fraction"`
-	BucketOrder           int       `json:"bucket_order"`
-	CreatedAt             time.Time `json:"created_at"`
-}
-
-// TrafficAllocationEnvoyConfig stores a generated Envoy configuration.
-type TrafficAllocationEnvoyConfig struct {
-	ID           uuid.UUID  `json:"id"`
-	ProjectID    uuid.UUID  `json:"project_id"`
-	ConfigYAML   string     `json:"config_yaml"`
-	GeneratedAt  time.Time  `json:"generated_at"`
-	AppliedAt    *time.Time `json:"applied_at,omitempty"`
-	SupersededAt *time.Time `json:"superseded_at,omitempty"`
-}
-
 // HostingPlatform defines a cloud platform available for demo deployments.
 type HostingPlatform struct {
 	ID            uuid.UUID `json:"id"`
