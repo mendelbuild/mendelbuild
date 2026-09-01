@@ -707,13 +707,18 @@ func keyResultTargetFromForm(r *http.Request) (comparator string, value float64,
 func keyResultTargetFields(rawComparator, rawValue, rawUnit string) (comparator string, value float64, unit string, err error) {
 	comparator = strings.TrimSpace(rawComparator)
 	switch comparator {
-	case ">=", "<=", ">", "<", "=":
+	case domain.TargetAtLeast, domain.TargetAtMost:
+	case domain.TargetDone:
+		// A boolean Key Result has no number to supply and no unit to name it
+		// in, so whatever the form carried in those fields is discarded rather
+		// than stored as decoration.
+		return domain.TargetDone, 1, "", nil
 	case "":
 		// The commonest target by far is "at least this much", and defaulting
 		// spares every form a required select.
-		comparator = ">="
+		comparator = domain.TargetAtLeast
 	default:
-		return "", 0, "", fmt.Errorf("%q is not a comparison Mendel understands", comparator)
+		return "", 0, "", fmt.Errorf("%q is not a way Mendel knows how to judge a key result", comparator)
 	}
 
 	raw := strings.TrimSpace(rawValue)

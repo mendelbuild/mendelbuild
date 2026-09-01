@@ -340,9 +340,9 @@ type StrategyBrief struct {
 // DraftedKeyResult is one measurable target in a drafted strategy.
 type DraftedKeyResult struct {
 	Description string `json:"description" desc:"What is being measured, in plain English. One sentence, no target figure in it. It must be something a person could put a number to every week: a key result that can only be measured at the end of the quarter cannot tell anyone whether the work is going well while there is still time to change it."`
-	TargetComparator string  `json:"target_comparator" desc:"How a measurement is compared against the target. One of: >=, <=, >, <, =. Use >= for things that should grow and <= for things that should shrink."`
-	TargetValue      float64 `json:"target_value" desc:"The number to compare against. Just the number: no unit, no symbol, no thousands separator."`
-	TargetUnit       string  `json:"target_unit" desc:"What the number counts, for display: 'users', '%', 'ms p99', 'signups per week'. Carries any qualifier, since only the number is compared."`
+	TargetComparator string  `json:"target_comparator" desc:"How this is judged. 'at_least' for something that should grow, 'at_most' for something that should shrink, and 'done' only when there is genuinely no number -- a launch, a certification. Prefer a number: 'done' cannot say whether the work is going well until it flips, so it gives no warning while there is still time to act."`
+	TargetValue      float64 `json:"target_value" desc:"The number to compare against. Just the number: no unit, no symbol, no thousands separator. Use 1 when target_comparator is 'done'."`
+	TargetUnit       string  `json:"target_unit" desc:"What the number counts, for display: 'users', '%', 'ms p99', 'signups per week'. Carries any qualifier, since only the number is compared. Empty when target_comparator is 'done'."`
 	TargetDate  string `json:"target_date" desc:"When this should be hit, YYYY-MM-DD. Must fall on or before the deadline and on or after today. Empty only if the user gave no deadline."`
 }
 

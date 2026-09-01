@@ -176,8 +176,15 @@ CREATE TABLE key_results (
     -- The drafting agent returns the three separately and the OKR editor takes
     -- them as three fields, so nothing parses a target at either end and the
     -- prose form ("1000 users") is derived for display rather than stored.
+    -- How the target is judged [038]. Named rather than punctuated, because
+    -- one of the three is not an operator:
+    --   at_least  the number should reach the target or pass it
+    --   at_most   the number should stay at the target or below
+    --   done      it happened, or it has not (target_value 1, no unit)
+    -- The strict operators were dropped: "more than 1000" and "at least 1000"
+    -- differ only on the boundary and nobody writing a Key Result means it.
     target_comparator TEXT NOT NULL
-        CHECK (target_comparator IN ('>=', '<=', '>', '<', '=')),
+        CHECK (target_comparator IN ('at_least', 'at_most', 'done')),
     target_value REAL NOT NULL,
     -- Display only -- comparison is value against value -- so this absorbs any
     -- qualifier ("ms p99", "signups per week") without a further column.

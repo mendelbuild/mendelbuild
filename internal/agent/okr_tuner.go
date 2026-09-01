@@ -16,6 +16,11 @@ For Objectives, evaluate:
 
 For Key Results, evaluate:
 - Is the target measurable and quantifiable?
+- Could someone put a number to it every week? A key result that can only be
+  settled at the end of the period cannot say whether the work is going well
+  while there is still time to change it.
+- A "done, or not" target is weaker than a number for that reason, and should
+  score lower unless there is genuinely nothing to count.
 - Is the unit clear (e.g., "100 users" vs just "more users")?
 - Is it ambitious but realistic?
 - Does it have a clear success threshold?

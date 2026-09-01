@@ -203,10 +203,11 @@ type KeyResult struct {
 	StrategyID  uuid.UUID `json:"strategy_id"`
 	Description string    `json:"description"`
 
-	// The target, structured [037]. Comparator and value are what a measurement
-	// is judged against; unit is for display only, and so carries any qualifier
-	// ("ms p99", "signups per week") that does not affect the arithmetic.
-	TargetComparator string  `json:"target_comparator"`
+	// The target, structured [037], judged one of three ways [038]. Value is
+	// what a measurement is compared against; unit is for display only, and so
+	// carries any qualifier ("ms p99", "signups per week") that does not affect
+	// the arithmetic.
+	TargetComparator string  `json:"target_comparator"` // TargetAtLeast, TargetAtMost, TargetDone
 	TargetValue      float64 `json:"target_value"`
 	TargetUnit       string  `json:"target_unit"`
 
@@ -218,41 +219,59 @@ type KeyResult struct {
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
-// Target renders the target as a phrase: "≥ 1000 users", "< 200 ms p99".
+// How a Key Result is judged [038].
+const (
+	// TargetAtLeast: the number should reach the target or pass it.
+	TargetAtLeast = "at_least"
+	// TargetAtMost: the number should stay at the target or below it.
+	TargetAtMost = "at_most"
+	// TargetDone: it happened, or it has not.
+	//
+	// Available, and weaker on purpose. A number says on the Tuesday of week
+	// three whether the work is on course; a checkbox says nothing at all until
+	// it flips, so a `done` Key Result can never be reported as on track --
+	// only as met or not yet. See ProgressSignal.
+	TargetDone = "done"
+)
+
+// IsBoolean reports whether this Key Result is judged as done-or-not.
+func (k KeyResult) IsBoolean() bool { return k.TargetComparator == TargetDone }
+
+// Target renders the target as a phrase: "at least 1000 users", "at most 200 ms
+// p99", "Done".
 //
-// Derived rather than stored, so the words and the number cannot disagree. The
-// bare "=" is dropped because "= 3 releases" reads worse than "3 releases".
+// Derived rather than stored, so the words and the number cannot disagree.
 func (k KeyResult) Target() string {
+	if k.IsBoolean() {
+		return "Done"
+	}
 	value := strconv.FormatFloat(k.TargetValue, 'f', -1, 64)
-	symbol := map[string]string{">=": "\u2265", "<=": "\u2264"}[k.TargetComparator]
-	if symbol == "" && k.TargetComparator != "=" {
-		symbol = k.TargetComparator
+	lead := "at least"
+	if k.TargetComparator == TargetAtMost {
+		lead = "at most"
 	}
-	if symbol == "" {
-		return strings.TrimSpace(value + " " + k.TargetUnit)
-	}
-	return strings.TrimSpace(symbol + " " + value + " " + k.TargetUnit)
+	return strings.TrimSpace(lead + " " + value + " " + k.TargetUnit)
 }
 
-// Met reports whether a measured value satisfies this target.
+// Met reports whether a measured value satisfies this target. A boolean Key
+// Result stores a target of 1, so anything at or above it counts as done.
 func (k KeyResult) Met(measured float64) bool {
 	switch k.TargetComparator {
-	case ">=":
+	case TargetAtLeast, TargetDone:
 		return measured >= k.TargetValue
-	case "<=":
+	case TargetAtMost:
 		return measured <= k.TargetValue
-	case ">":
-		return measured > k.TargetValue
-	case "<":
-		return measured < k.TargetValue
-	case "=":
-		return measured == k.TargetValue
 	default:
-		// An unrecognised comparator cannot be satisfied. Reporting a KR met on
-		// a comparator nobody defined is the worse of the two failures.
+		// A mode nobody defined cannot be satisfied. Of the two ways to be
+		// wrong, reporting a Key Result met is the worse one.
 		return false
 	}
 }
+
+// ProgressSignal reports whether this Key Result can say anything before it is
+// met. A numeric target can be compared against the pace needed to reach it; a
+// boolean one cannot, and pretending otherwise would invent a reading.
+func (k KeyResult) ProgressSignal() bool { return !k.IsBoolean() }
 
 // KeyResultHistory is a single measurement for a KeyResult.
 type KeyResultHistory struct {

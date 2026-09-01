@@ -450,17 +450,19 @@ document.querySelectorAll('[data-meter-mark]').forEach(function (el) {
     structured. That is what lets a measurement be compared against it -- and it
     means nothing ever has to parse "1000 users" back into a number.
 
+    Choosing "done, or not" hides the number and the unit, since a boolean Key
+    Result has neither. That is done in CSS rather than script, so the form is
+    correct before anything runs; the server discards those fields either way.
+
     `prefix` is not a parameter Go templates can take, so the setup screen,
     which puts many Key Results in one form, writes its own fields.
 */}}
 {{define "target-fields"}}
-<select name="target_comparator" class="target-comparator" aria-label="Comparison">
+<select name="target_comparator" class="target-comparator" aria-label="How this is judged">
     {{$c := .TargetComparator}}
-    <option value="&gt;=" {{if eq $c "&gt;="}}selected{{end}}>at least</option>
-    <option value="&lt;=" {{if eq $c "&lt;="}}selected{{end}}>at most</option>
-    <option value="&gt;" {{if eq $c "&gt;"}}selected{{end}}>more than</option>
-    <option value="&lt;" {{if eq $c "&lt;"}}selected{{end}}>less than</option>
-    <option value="=" {{if eq $c "="}}selected{{end}}>exactly</option>
+    <option value="at_least" {{if eq $c "at_least"}}selected{{end}}>at least</option>
+    <option value="at_most" {{if eq $c "at_most"}}selected{{end}}>at most</option>
+    <option value="done" {{if eq $c "done"}}selected{{end}}>done, or not</option>
 </select>
 <input type="text" inputmode="decimal" name="target_value" class="target-value" required
        value="{{if .TargetValue}}{{num .TargetValue}}{{end}}" placeholder="1000" aria-label="Target number">

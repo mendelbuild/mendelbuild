@@ -146,15 +146,13 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
                 <div class="field-row">
                     <div class="field">
                         <label for="kr_{{.ID}}_value">Target</label>
-                        <span class="hint">The comparison, the number, and what it counts.</span>
+                        <span class="hint">How it is judged, the number, and what it counts.</span>
                         {{$c := .TargetComparator}}
                         <span class="target-fields">
                             <select name="kr_{{.ID}}_comparator" class="target-comparator" aria-label="Comparison">
-                                <option value="&gt;=" {{if eq $c "&gt;="}}selected{{end}}>at least</option>
-                                <option value="&lt;=" {{if eq $c "&lt;="}}selected{{end}}>at most</option>
-                                <option value="&gt;" {{if eq $c "&gt;"}}selected{{end}}>more than</option>
-                                <option value="&lt;" {{if eq $c "&lt;"}}selected{{end}}>less than</option>
-                                <option value="=" {{if eq $c "="}}selected{{end}}>exactly</option>
+                                <option value="at_least" {{if eq $c "at_least"}}selected{{end}}>at least</option>
+                                <option value="at_most" {{if eq $c "at_most"}}selected{{end}}>at most</option>
+                                <option value="done" {{if eq $c "done"}}selected{{end}}>done, or not</option>
                             </select>
                             <input type="text" inputmode="decimal" id="kr_{{.ID}}_value" name="kr_{{.ID}}_value"
                                    class="target-value" value="{{if .TargetValue}}{{num .TargetValue}}{{end}}"

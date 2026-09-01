@@ -416,7 +416,7 @@ func TestSetupPagesRender(t *testing.T) {
 		kr := domain.KeyResult{
 			ID: uuid.New(), StrategyID: strategyID,
 			Description: "People finish the calculator",
-			TargetComparator: ">=", TargetValue: 100, TargetUnit: "completions",
+			TargetComparator: "at_least", TargetValue: 100, TargetUnit: "completions",
 			TargetDate: &target, TuneScore: &score, TuneFeedback: &feedback,
 			CreatedAt: now, UpdatedAt: now,
 		}
@@ -474,7 +474,7 @@ func TestSetupScreenEditsRoundTrip(t *testing.T) {
 		Strategy: &domain.Strategy{ID: uuid.New(), Name: "s"},
 		Objectives: []SetupObjectiveView{{
 			Objective:  domain.Objective{ID: objID, Description: "o"},
-			KeyResults: []domain.KeyResult{{ID: krID, Description: "k", TargetComparator: ">=", TargetValue: 1}},
+			KeyResults: []domain.KeyResult{{ID: krID, Description: "k", TargetComparator: "at_least", TargetValue: 1}},
 		}},
 		Ribbon: ribbonView(domain.OnboardingLifecycle(domain.OnboardingState{HasStrategy: true, HasDraftOKRs: true})),
 	}
@@ -623,7 +623,7 @@ func TestStrategyPageShowsObjectivesAndSpend(t *testing.T) {
 		Objectives: []ObjectiveView{
 			{
 				Objective:  domain.Objective{ID: uuid.New(), Description: "People can sign in"},
-				KeyResults: []domain.KeyResult{{Description: "Weekly active users", TargetComparator: ">=", TargetValue: 1000, TargetUnit: "users", TargetDate: &target}},
+				KeyResults: []domain.KeyResult{{Description: "Weekly active users", TargetComparator: "at_least", TargetValue: 1000, TargetUnit: "users", TargetDate: &target}},
 				HopCount:   2,
 			},
 			{

@@ -57,7 +57,7 @@ is a bad timeline.
 ### Shape
 
 ```
-target_comparator  TEXT   -- one of >=, <=, >, <, =
+target_comparator  TEXT   -- at_least | at_most | done
 target_value       REAL
 target_unit        TEXT   -- "users", "%", "ms p99", "signups per week"
 ```
@@ -66,7 +66,35 @@ Three columns, not four. The unit is display-only — comparison is value agains
 value — so it can absorb any qualifier (`p99`, `per week`) without a fourth
 column that nothing would compute on.
 
-Display renders as `≥ 1000 users`, `< 200 ms p99`.
+**Three judgement modes, not five operators** [038]. The first cut offered
+`>=, <=, >, <, =`, and three of those earn nothing: "more than 1000" and "at
+least 1000" differ only on the boundary and nobody writing a Key Result means
+the distinction, while "exactly" is almost always "at least" in disguise. Where
+it genuinely is not — one launch, one certification — what is meant is *did this
+happen*, which is now its own mode. The column is named rather than punctuated
+because `done` is not an operator.
+
+Display renders as `at least 1000 users`, `at most 200 ms p99`, `Done`.
+
+### Boolean Key Results are available, and weaker on purpose
+
+A `done` target stores a value of `1` and no unit, so every row keeps a number
+and the comparison stays one function. Measurements record `0` or `1`.
+
+It is worth being precise about why this is bad practice rather than just
+asserting it: **a boolean carries no early signal.** A number can be compared
+against the pace needed to reach it, and says on the Tuesday of week three
+whether the work is on course. A checkbox says nothing at all until it flips, by
+which time it is too late to act on. That is a property of the target, not an
+opinion about it, so it is encoded rather than editorialised:
+
+- `KeyResult.ProgressSignal()` returns false for a boolean, and the timeline
+  can therefore only report it as *met* or *not yet* — never *on track*. It
+  counts toward the lower bound of progress and never the upper.
+- The drafting agent is told to prefer a number and to reach for `done` only
+  when there is genuinely nothing to count.
+- The OKR tuner is told to score a `done` target lower on measurability for the
+  same reason.
 
 ### Existing rows
 
