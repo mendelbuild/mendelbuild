@@ -177,7 +177,7 @@ func (s *Server) runChannelProdDeployment(
 	case "cloud-run":
 		url, err = s.deployToCloudRun(ctx, appName, workDir, env, appSecrets, logMilestone, logInfo)
 	case "gke":
-		url, err = s.deployToGKE(ctx, projectID, appName, workDir, env, appSecrets, logMilestone, logInfo)
+		url, err = s.deployToGKE(ctx, projectID, true, appName, workDir, env, appSecrets, logMilestone, logInfo)
 	default:
 		return fail(fmt.Errorf("unsupported platform: %s", channel.HostingPlatform.Slug))
 	}

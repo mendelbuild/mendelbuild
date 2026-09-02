@@ -67,9 +67,10 @@ func teardownCommandFor(platformSlug, appName string, env map[string]string) str
 		// The Secret holding the app's required values is named after the
 		// deployment and has to go with it; left behind, the user's cluster
 		// accumulates the secrets of every variation ever demoed.
-		// The Ingress carries this demo's host rule; left behind, the hostname
-		// goes on resolving to a backend that no longer exists.
-		return fmt.Sprintf("kubectl delete --namespace %s --ignore-not-found deployment,service,secret,ingress %s %s-env",
+		// The HTTPRoute carries this demo's host rule; left behind, the hostname
+		// goes on resolving to a backend that no longer exists. The Gateway is
+		// shared and stays.
+		return fmt.Sprintf("kubectl delete --namespace %s --ignore-not-found deployment,service,secret,httproute %s %s-env",
 			hosting.Namespace, appName, appName)
 	}
 	return ""
@@ -396,7 +397,7 @@ func (s *Server) runChannelDemoDeployment(
 	case "cloud-run":
 		url, deployErr = s.deployToCloudRun(ctx, appName, workDir, env, appSecrets, logMilestone, logInfo)
 	case "gke":
-		url, deployErr = s.deployToGKE(ctx, projectID, appName, workDir, env, appSecrets, logMilestone, logInfo)
+		url, deployErr = s.deployToGKE(ctx, projectID, false, appName, workDir, env, appSecrets, logMilestone, logInfo)
 	default:
 		failDemo("Unsupported platform: " + channel.HostingPlatform.Slug)
 		return
@@ -720,34 +721,90 @@ spec:
 	// removes its own rule and teardown needs no edit of a shared object --
 	// which would otherwise be a read-modify-write race between demos starting
 	// and stopping at once.
-	staticIP := ""
-	if staticIPName != "" {
-		// Without this the load balancer takes whatever address is free, which is
-		// not the one the user's DNS record points at.
-		staticIP = fmt.Sprintf("\n    kubernetes.io/ingress.global-static-ip-name: %q", staticIPName)
-	}
-
+	// An HTTPRoute attached to the namespace's one Gateway, rather than an
+	// Ingress of its own.
+	//
+	// An Ingress cannot carry the wildcard certificate these names need: applied
+	// with networking.gke.io/certmap it provisions port 80 and no HTTPS listener,
+	// with no error to read. Gateway API is the supported path for a Certificate
+	// Manager certificate, and it is where the per-Arm routing in
+	// 13_live_traffic_experiments.md is headed regardless.
 	manifest += fmt.Sprintf(`---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
 metadata:
   name: %s
-  annotations:
-    kubernetes.io/ingress.class: "gce"%s
 spec:
+  parentRefs:
+  - name: %s
+  hostnames:
+  - %s
   rules:
-  - host: %s
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: %s
-            port:
-              number: 80
-`, deploymentName, staticIP, hostname, deploymentName)
+  - backendRefs:
+    - name: %s
+      port: 80
+`, deploymentName, gatewayName, hostname, deploymentName)
 	return manifest
+}
+
+// gatewayName is the one Gateway every deployment in the namespace routes
+// through. One address and one certificate serve all of them, which is what a
+// single wildcard record and a single reserved address require.
+const gatewayName = "mendel"
+
+// gatewayManifest is that Gateway: the address the DNS records point at, and the
+// certificate covering the names under them.
+//
+// The certificate is attached by annotation rather than by certificateRefs,
+// because a Certificate Manager map is not a Kubernetes Secret and has no
+// reference to point at.
+func gatewayManifest(staticIPName, certMapName string) string {
+	annotations := ""
+	if certMapName != "" {
+		annotations = fmt.Sprintf("\n  annotations:\n    networking.gke.io/certmap: %q", certMapName)
+	}
+
+	// Named, so the Gateway takes the address the user's records already name
+	// rather than whichever one is free.
+	addresses := ""
+	if staticIPName != "" {
+		addresses = fmt.Sprintf("\n  addresses:\n  - type: NamedAddress\n    value: %q", staticIPName)
+	}
+
+	// http always, https only once there is a certificate to serve.
+	//
+	// An https listener with nothing to present does not come up, and a Gateway
+	// that does not come up routes nothing at all -- so emitting https alone
+	// would mean a project with a domain and no certificate yet lost the plain
+	// http it used to have. The names work as soon as the records exist, and
+	// gain https when the certificate is issued.
+	listeners := `
+  - name: http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces:
+        from: Same`
+	if certMapName != "" {
+		listeners += `
+  - name: https
+    protocol: HTTPS
+    port: 443
+    tls:
+      mode: Terminate
+    allowedRoutes:
+      namespaces:
+        from: Same`
+	}
+
+	return fmt.Sprintf(`apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: %s%s
+spec:
+  gatewayClassName: gke-l7-global-external-managed%s
+  listeners:%s
+`, gatewayName, annotations, addresses, listeners)
 }
 
 // gkeSession is an authenticated, isolated CLI environment for one GKE operation.
@@ -906,6 +963,7 @@ func (g *gkeSession) buildImage(ctx context.Context, deploymentName, workDir str
 func (s *Server) deployToGKE(
 	ctx context.Context,
 	projectID uuid.UUID,
+	isProd bool,
 	deploymentName string,
 	workDir string,
 	env map[string]string,
@@ -972,13 +1030,31 @@ func (s *Server) deployToGKE(
 	hostname, ipName := "", ""
 	if pd, err := s.db.GetProjectDomain(ctx, projectID); err == nil && pd != nil && pd.BaseDomain != "" {
 		if _, err := s.ensureStaticIP(ctx, projectID, session); err != nil {
-			logInfo("Could not reserve an address, so this demo keeps a bare one: " + err.Error())
+			logInfo("Could not reserve an address, so this deployment keeps a bare one: " + err.Error())
 		} else {
-			hostname, ipName = pd.DemoHost(deploymentName), staticIPName(projectID)
-			// Best effort: a demo reachable over http is still a demo, and the
-			// Domain page reports the certificate separately.
+			// Production answers at the name the user chose for it; a demo gets
+			// one invented under the demo wildcard. Giving production a demo
+			// name would put it somewhere nobody was told to look.
+			hostname = pd.DemoHost(deploymentName)
+			if isProd {
+				hostname = pd.ProdHost()
+			}
+			ipName = staticIPName(projectID)
+
+			// Best effort: a deployment reachable over http is still deployed,
+			// and the Domain page reports the certificate separately.
 			if err := s.ensureCertificate(ctx, projectID, pd, session); err != nil {
 				logInfo("Could not request a certificate: " + err.Error())
+			}
+			if hostname != "" {
+				certMap := ""
+				if fresh, err := s.db.GetProjectDomain(ctx, projectID); err == nil && fresh != nil {
+					certMap = fresh.CertificateName
+				}
+				if err := s.ensureGateway(ctx, session, ipName, certMap); err != nil {
+					logInfo("Could not raise the gateway, so this deployment keeps a bare address: " + err.Error())
+					hostname, ipName = "", ""
+				}
 			}
 		}
 	}
@@ -1619,6 +1695,26 @@ func (s *Server) ensureStaticIP(ctx context.Context, projectID uuid.UUID, sessio
 //
 // A wildcard authorization is created against the parent of the wildcard: for
 // *.mendel-demos.example.com the domain authorized is mendel-demos.example.com.
+// ensureGateway applies the namespace's one Gateway, so an HTTPRoute has
+// something to attach to.
+//
+// Applied on every deploy rather than once: it is the same object each time, and
+// a Gateway that has been deleted or predates a certificate would otherwise stay
+// wrong until someone noticed.
+func (s *Server) ensureGateway(ctx context.Context, session *gkeSession, staticIPName, certMapName string) error {
+	path := filepath.Join(os.TempDir(), "mendel-gateway-"+staticIPName+".yaml")
+	if err := os.WriteFile(path, []byte(gatewayManifest(staticIPName, certMapName)), 0600); err != nil {
+		return fmt.Errorf("write gateway manifest: %w", err)
+	}
+	defer os.Remove(path)
+
+	cmd := session.kubectl(ctx, "apply", "-f", path)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("apply gateway: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
 func (s *Server) ensureCertificate(ctx context.Context, projectID uuid.UUID, pd *domain.ProjectDomain, session *gkeSession) error {
 	if pd == nil || pd.BaseDomain == "" {
 		return nil

@@ -654,7 +654,6 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 				Name:         name,
 				IsConfigured: configured[name],
 				Optional:     true,
-				Purpose:      hosting.CredentialPurpose(name),
 			})
 		}
 	}

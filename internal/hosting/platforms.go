@@ -212,11 +212,10 @@ absent, and removes what it created on teardown.
 
 A cluster hands out addresses, not names, so a deployment here has no identity to
 register anywhere: an OAuth redirect URI or a webhook target needs a host name
-and https, and neither can be had for an IP. Supplying ` + domain.BaseDomainCredential + `
-— a domain you control, with a wildcard record pointing at the cluster — gives
-each demo a name of its own. It is optional: without it deployments still run and
-are still reachable, and only the variations that must be registered by name are
-affected.`,
+and https, and neither can be had for an IP. Setting a domain you control on the
+Domain tab gives each demo a name of its own. It is optional: without it
+deployments still run and are still reachable, and only the variations that must
+be registered by name are affected.`,
 			SetupPrerequisites: []string{
 				"Install the gcloud CLI — https://cloud.google.com/sdk/docs/install",
 				"Sign in — gcloud auth login",
@@ -229,8 +228,10 @@ affected.`,
 # whole script against a project that does not exist.
 export GCP_PROJECT=<YOUR_PROJECT_ID_HERE>
 
-# The APIs Mendel uses: the cluster, the image build, and the image registry.
-gcloud services enable container.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com --project "$GCP_PROJECT"
+# The APIs Mendel uses: the cluster, the image build, the image registry, and the
+# certificate for your own names. Leaving the last one off is silent -- the
+# deployment works, and only the certificate is never requested.
+gcloud services enable container.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com certificatemanager.googleapis.com --project "$GCP_PROJECT"
 
 # A service account for Mendel. Harmless if it already exists.
 gcloud iam service-accounts create mendel-deployer --project "$GCP_PROJECT" --display-name "Mendel Deployer" || true
@@ -525,14 +526,3 @@ func OptionalCredentialsForCombo(artifactKind domain.DeployArtifactKind, platfor
 	return nil
 }
 
-// CredentialPurpose says what an optional credential buys, since nobody supplies
-// one without knowing what it is for.
-func CredentialPurpose(name string) string {
-	if name == domain.BaseDomainCredential {
-		return "A domain you control, with a wildcard record pointing at the cluster. " +
-			"Deployments get a name under it instead of a bare address, which is what an " +
-			"OAuth redirect URI or a webhook target needs. Without it they still run and " +
-			"are still reachable."
-	}
-	return ""
-}

@@ -16,8 +16,8 @@ func TestManifestWithoutHostnameKeepsLoadBalancer(t *testing.T) {
 	if !strings.Contains(m, "type: LoadBalancer") {
 		t.Error("without a hostname the Service should still be a LoadBalancer")
 	}
-	if strings.Contains(m, "kind: Ingress") {
-		t.Error("no hostname means there is no host to route on, so no Ingress")
+	if strings.Contains(m, "kind: HTTPRoute") {
+		t.Error("no hostname means there is no host to route on, so no HTTPRoute")
 	}
 }
 
@@ -39,15 +39,19 @@ func TestManifestWithHostnameRoutesByHost(t *testing.T) {
 	if strings.Contains(m, "type: LoadBalancer") {
 		t.Error("a LoadBalancer per demo defeats the single address a wildcard record points at")
 	}
-	if !strings.Contains(m, "kind: Ingress") {
-		t.Fatal("no Ingress, so nothing routes the hostname anywhere")
+	if !strings.Contains(m, "kind: HTTPRoute") {
+		t.Fatal("no HTTPRoute, so nothing routes the hostname anywhere")
 	}
-	if !strings.Contains(m, "host: "+host) {
-		t.Errorf("Ingress does not match on %s", host)
+	if !strings.Contains(m, "- "+host) {
+		t.Errorf("HTTPRoute does not match on %s", host)
 	}
-	// The rule has to point back at this deployment's own Service.
+	// The route has to attach to the shared Gateway and point back at this
+	// deployment's own Service.
+	if !strings.Contains(m, "name: "+gatewayName) {
+		t.Error("HTTPRoute names no parent Gateway")
+	}
 	if !strings.Contains(m, "name: pong-abc123") {
-		t.Error("Ingress backend does not name the Service")
+		t.Error("HTTPRoute backend does not name the Service")
 	}
 }
 
@@ -80,47 +84,44 @@ func TestDeploymentHostnameIsOneLabel(t *testing.T) {
 	}
 }
 
-// TestIngressUsesTheClassAnnotation pins a line that looks like an oversight and
-// is not.
+// TestGatewayCarriesTheAddressAndCertificate covers the two things that make a
+// name usable: it answers at the address the DNS record points at, and it can
+// prove itself over https.
 //
-// kubectl warns that kubernetes.io/ingress.class is deprecated in favour of
-// spec.ingressClassName, and following that advice stops the Ingress working:
-// GKE ships no IngressClass resource, so ingressClassName: gce names a class
-// nothing provides. The Ingress is then never reconciled -- no address, and no
-// events at all, so there is nothing to read that would explain it.
-//
-// Verified both ways against a real cluster: the annotation draws a "Scheduled
-// for sync" from the load balancer controller within a minute and serves
-// traffic; the documented replacement draws no events at all and never gets an
-// address.
-func TestIngressUsesTheClassAnnotation(t *testing.T) {
-	m := k8sManifestFor("pong-abc123", "img", "", "pong-abc123.demos.example.com", "")
+// This replaced an Ingress because an Ingress cannot do the second. Applied with
+// networking.gke.io/certmap it provisions port 80 and no HTTPS listener at all,
+// with no error and no event -- verified on a real cluster, which is the only way
+// that shows.
+func TestGatewayCarriesTheAddressAndCertificate(t *testing.T) {
+	g := gatewayManifest("mendel-1a2b3c4d", "mendel-1a2b3c4d")
 
-	if !strings.Contains(m, `kubernetes.io/ingress.class: "gce"`) {
-		t.Error("the Ingress class annotation is missing; without it GKE never provisions the Ingress")
+	if !strings.Contains(g, "gatewayClassName: gke-l7-global-external-managed") {
+		t.Error("no GKE gateway class, so nothing provisions this")
 	}
-	if strings.Contains(m, "ingressClassName") {
-		t.Error("spec.ingressClassName names a class GKE does not create, and silently prevents provisioning")
+	if !strings.Contains(g, `value: "mendel-1a2b3c4d"`) || !strings.Contains(g, "NamedAddress") {
+		t.Error("gateway does not claim the reserved address the DNS records name")
 	}
-}
-
-// TestIngressPinsToTheReservedAddress covers the link between the DNS record a
-// user typed and the load balancer that answers it.
-//
-// The record points at one address. Without this annotation the load balancer
-// takes whichever address is free, so the name resolves somewhere nothing is
-// listening -- and the deployment itself is fine, which makes it look like a DNS
-// mistake the user made.
-func TestIngressPinsToTheReservedAddress(t *testing.T) {
-	pinned := k8sManifestFor("pong-abc123", "img", "", "pong-abc123.demos.example.com", "mendel-1a2b3c4d")
-	if !strings.Contains(pinned, `kubernetes.io/ingress.global-static-ip-name: "mendel-1a2b3c4d"`) {
-		t.Error("Ingress is not pinned to the reserved address")
+	if !strings.Contains(g, `networking.gke.io/certmap: "mendel-1a2b3c4d"`) {
+		t.Error("no certificate map, so the listener has nothing to serve https with")
+	}
+	if !strings.Contains(g, "protocol: HTTPS") || !strings.Contains(g, "port: 443") {
+		t.Error("gateway does not listen for https")
 	}
 
-	// A project with a hostname but no reserved address must not gain a broken
-	// annotation naming an address that does not exist.
-	unpinned := k8sManifestFor("pong-abc123", "img", "", "pong-abc123.demos.example.com", "")
-	if strings.Contains(unpinned, "global-static-ip-name") {
-		t.Error("named an address that was never reserved")
+	// Plain http is always served, so the names work as soon as the records
+	// exist rather than waiting on a certificate.
+	if !strings.Contains(g, "protocol: HTTP\n    port: 80") {
+		t.Error("gateway does not listen on http")
+	}
+
+	// Before a certificate exists the Gateway still has to come up. An https
+	// listener with nothing to present does not, and a Gateway that does not come
+	// up routes nothing -- which would lose the http that used to work.
+	bare := gatewayManifest("mendel-1a2b3c4d", "")
+	if strings.Contains(bare, "certmap") || strings.Contains(bare, "HTTPS") {
+		t.Error("offered https with no certificate to serve")
+	}
+	if !strings.Contains(bare, "protocol: HTTP\n    port: 80") {
+		t.Error("without a certificate the gateway should still serve http")
 	}
 }

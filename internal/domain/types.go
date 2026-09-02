@@ -894,11 +894,6 @@ const (
 	HostnameFromUser HostnameSource = "user"
 )
 
-// BaseDomainCredential is the name under which a user supplies the domain their
-// deployments get their names from. One record covers every deployment, so this
-// is configuration the user provides once rather than anything Mendel mints.
-const BaseDomainCredential = "DEPLOY_BASE_DOMAIN"
-
 // DeployArtifactKind describes what a project produces for deployment.
 type DeployArtifactKind string
 

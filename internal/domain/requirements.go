@@ -116,8 +116,8 @@ func DeployURLLimitation(deployURL string) string {
 		return "This deployment is reached at " + deployURL + ", a bare IP address over plain " +
 			"http. Sign-in providers accept neither: a redirect URI has to name a host rather " +
 			"than an address, and has to be https. Registering this one will be refused. " +
-			"This platform does not issue hostnames, so giving Mendel a domain you control " +
-			"as " + BaseDomainCredential + " is what lets a deployment have a name."
+			"This platform does not issue hostnames, so setting a domain you control on " +
+			"the Domain tab is what lets a deployment have a name."
 	case isIP:
 		return "This deployment is reached at " + deployURL + ", a bare IP address. Sign-in " +
 			"providers require a host name rather than an address, so registering this one " +
