@@ -1075,9 +1075,14 @@ func (s *Server) deployToGKE(
 					hostname, ipName = "", ""
 				} else {
 					// The gateway serves https only where there is a certificate
-					// to present, so that is the only case where Mendel may
-					// report one.
-					servesHTTPS = certMap != ""
+					// valid for *this* name. A certificate existing is not the
+					// same as it covering the host being deployed: the demo
+					// wildcard does not cover the production host, and reporting
+					// https on the strength of the row existing hands out a URL
+					// the browser rejects.
+					if fresh, err := s.db.GetProjectDomain(ctx, projectID); err == nil {
+						servesHTTPS = fresh.CertificateCovers(hostname)
+					}
 				}
 			}
 		}
@@ -1115,7 +1120,8 @@ func (s *Server) deployToGKE(
 		if servesHTTPS {
 			scheme = "https"
 		} else {
-			logInfo("No certificate yet, so this is http. The Domain tab lists the record that fixes that.")
+			logInfo("No certificate covering " + hostname + " yet, so this is http. " +
+				"The Domain tab lists what is outstanding.")
 		}
 		logInfo("Reachable at " + hostname + " once the gateway has programmed itself")
 		return scheme + "://" + hostname, nil

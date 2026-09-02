@@ -162,3 +162,32 @@ func TestLimitationFollowsTheSchemeActuallyServed(t *testing.T) {
 		t.Errorf("https on a real hostname is registerable, but got: %s", msg)
 	}
 }
+
+// The certificate Mendel requests is a wildcard over the demo zone, and a
+// wildcard covers exactly one label. The production host lives somewhere else
+// entirely, so presenting that certificate for it fails in the browser -- while
+// looking perfectly healthy from inside Mendel, where the certificate exists, is
+// ACTIVE, is attached to the gateway, and the name resolves.
+func TestCertificateDoesNotCoverTheProductionHost(t *testing.T) {
+	d := &ProjectDomain{
+		BaseDomain: "example.com", DemoSubdomain: "mendel-demos",
+		ProdSubdomain: "app", CertificateName: "mendel-abc",
+	}
+
+	if !d.CertificateCovers(d.DemoHost("pong-abc123")) {
+		t.Error("a demo host is one label under the wildcard and must be covered")
+	}
+	if d.CertificateCovers(d.ProdHost()) {
+		t.Errorf("%q is not under %q, so the certificate cannot be valid for it",
+			d.ProdHost(), d.DemoWildcard())
+	}
+	// A wildcard covers one label, not two.
+	if d.CertificateCovers("a.b.mendel-demos.example.com") {
+		t.Error("a wildcard covers exactly one label")
+	}
+	// Nothing is covered before a certificate has been requested.
+	none := &ProjectDomain{BaseDomain: "example.com", DemoSubdomain: "mendel-demos"}
+	if none.CertificateCovers(none.DemoHost("pong")) {
+		t.Error("no certificate means nothing is covered")
+	}
+}

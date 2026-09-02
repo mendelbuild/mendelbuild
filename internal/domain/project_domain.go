@@ -170,6 +170,26 @@ func (d *ProjectDomain) DNSRecords() []DNSRecord {
 	return records
 }
 
+// CertificateCovers reports whether the certificate Mendel requests would be
+// valid for a hostname.
+//
+// A wildcard covers exactly one label, so *.mendel-demos.example.com answers for
+// pong-abc.mendel-demos.example.com and for nothing else -- not for
+// app.example.com, which is a different zone. Presenting that certificate for the
+// production host gives ERR_CERT_COMMON_NAME_INVALID.
+//
+// Worth being explicit about because the failure is invisible from inside
+// Mendel: the certificate exists, it is ACTIVE, the gateway has it attached, the
+// name resolves. Everything reads as working except the page in the browser.
+func (d *ProjectDomain) CertificateCovers(host string) bool {
+	if d == nil || host == "" || d.CertificateName == "" {
+		return false
+	}
+	zone := d.demoZone()
+	label, ok := strings.CutSuffix(host, "."+zone)
+	return ok && label != "" && !strings.Contains(label, ".")
+}
+
 // CertificateOutstanding reports whether the names will resolve but not serve
 // https yet, which is the state that breaks sign-in while looking like it works.
 func (d *ProjectDomain) CertificateOutstanding() bool {
