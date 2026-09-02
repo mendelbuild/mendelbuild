@@ -39,23 +39,21 @@ func DefaultPlatforms() []domain.HostingPlatform {
 			DeployerImage: "alpine:latest",
 			Instructions: `Deploy to your own Fly.io organization.
 
-Before you start:
-  1. Install flyctl — curl -L https://fly.io/install.sh | sh
-     (then add $HOME/.fly/bin to your PATH)
-  2. Sign in — flyctl auth login
-  3. Know which organization Mendel should deploy into — flyctl orgs list
-
 Mendel creates an app per demo and destroys it on teardown, so it needs a token
-scoped to the organization rather than to one app. The script ends by printing
-it under the name it goes in here:
+scoped to the organization rather than to one app. Give the script your
+organization slug and it is ready to paste as-is; it ends by printing the token
+under the name it goes in here.
 
-  FLY_API_TOKEN
-
-Each demo becomes its own Fly app, named after the project and variation, and
-is destroyed when the demo stops.`,
-			SetupScript: `# Replace <YOUR_FLY_ORG_HERE> with the slug from "flyctl orgs list" (often
-# "personal"), angle brackets and all. Pasted unedited this line is a shell
-# syntax error, which is deliberate: it stops here rather than running on.
+Each demo becomes its own Fly app, named after the project and variation, and is
+destroyed when the demo stops.`,
+			SetupPrerequisites: []string{
+				"Install flyctl — curl -L https://fly.io/install.sh | sh, then add $HOME/.fly/bin to your PATH",
+				"Sign in — flyctl auth login",
+				"Know which organization to deploy into — flyctl orgs list",
+			},
+			SetupInputLabel: "Your Fly.io organization slug",
+			SetupScript: `# The organization on the next line comes from the box above. Left unfilled it
+# is a shell syntax error, deliberately: better to stop on line one than run on.
 export FLY_ORG=<YOUR_FLY_ORG_HERE>
 
 # Nothing here destroys or replaces anything: creating a second token leaves the
@@ -80,26 +78,24 @@ echo "-----------------------------------------------------------"`,
 			DeployerImage: "google/cloud-sdk:slim",
 			Instructions: `Deploy to your own Google Cloud Run project.
 
-Before you start:
-  1. Install the gcloud CLI — https://cloud.google.com/sdk/docs/install
-  2. Sign in — gcloud auth login
-  3. Have rights to manage IAM on the project you want to deploy into.
-
 Mendel cannot mint a service account key on your behalf, so run the setup script
-below. Replace the placeholder on its first line; everything after that pastes
-as-is, and the whole thing is safe to run again if you lose the key or need to
-repeat a step.
+below. Give it your project ID and it is ready to paste as-is; the whole thing
+is safe to run again if you lose the key or need to repeat a step.
 
-The script ends by printing both of these under the name it goes in here:
-
-  GCP_PROJECT_ID
-  GCP_SERVICE_ACCOUNT_KEY
+It ends by printing every value below under the name it goes in here.
 
 Mendel deploys each demo as its own Cloud Run service in us-central1, built from
 your Dockerfile, and deletes the service on teardown.`,
-			SetupScript: `# Replace <YOUR_PROJECT_ID_HERE>, angle brackets and all. Pasted unedited
-# this line is a shell syntax error, which is deliberate: it stops here rather
-# than running the whole script against a project that does not exist.
+			SetupPrerequisites: []string{
+				"Install the gcloud CLI — https://cloud.google.com/sdk/docs/install",
+				"Sign in — gcloud auth login",
+				"Have rights to manage IAM on the project you want to deploy into",
+			},
+			SetupInputLabel:      "Your GCP project ID",
+			SetupInputCredential: "GCP_PROJECT_ID",
+			SetupScript: `# The project ID on the next line comes from the box above. Left unfilled it is
+# a shell syntax error, deliberately: better to stop on line one than run the
+# whole script against a project that does not exist.
 export GCP_PROJECT=<YOUR_PROJECT_ID_HERE>
 
 # Cloud Run itself, the build that produces the image, and the registry it is
@@ -179,32 +175,27 @@ echo "-----------------------------------------------------------"`,
 			DeployerImage: "google/cloud-sdk:slim",
 			Instructions: `Deploy to your own Google Kubernetes Engine cluster.
 
-Before you start:
-  1. Install the gcloud CLI — https://cloud.google.com/sdk/docs/install
-  2. Sign in — gcloud auth login
-  3. Have a GKE cluster running, and rights to manage IAM on its project.
-
 Mendel cannot mint a service account key on your behalf, so run the setup script
-below. Replace the placeholder on its first line; everything after that pastes
-as-is, and the whole thing is safe to run again if you lose the key or need to
-repeat a step.
+below. Give it your project ID and it is ready to paste as-is; the whole thing
+is safe to run again if you lose the key or need to repeat a step.
 
-The script ends by printing each of these four values under the name it goes in
-here, so there is nothing to work out from its output:
-
-  GCP_PROJECT_ID
-  GCP_SERVICE_ACCOUNT_KEY
-  GKE_CLUSTER_NAME
-  GKE_ZONE
-
-If the project holds more than one cluster the script lists them and asks which,
-since that is the one choice it cannot make for you.
+It ends by printing every value below under the name it goes in here, so there
+is nothing to work out from its output. If the project holds more than one
+cluster it lists them and asks which, since that is the one choice it cannot
+make for you.
 
 Mendel deploys into a namespace of its own, ` + Namespace + `, creating it if
 absent, and removes the Deployment, Service and Secret it created on teardown.`,
-			SetupScript: `# Replace <YOUR_PROJECT_ID_HERE>, angle brackets and all. Pasted unedited
-# this line is a shell syntax error, which is deliberate: it stops here rather
-# than running the whole script against a project that does not exist.
+			SetupPrerequisites: []string{
+				"Install the gcloud CLI — https://cloud.google.com/sdk/docs/install",
+				"Sign in — gcloud auth login",
+				"Have a GKE cluster running, and rights to manage IAM on its project",
+			},
+			SetupInputLabel:      "Your GCP project ID",
+			SetupInputCredential: "GCP_PROJECT_ID",
+			SetupScript: `# The project ID on the next line comes from the box above. Left unfilled it is
+# a shell syntax error, deliberately: better to stop on line one than run the
+# whole script against a project that does not exist.
 export GCP_PROJECT=<YOUR_PROJECT_ID_HERE>
 
 # The APIs Mendel uses: the cluster, the image build, and the image registry.

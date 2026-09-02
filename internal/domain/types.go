@@ -846,6 +846,20 @@ type HostingPlatform struct {
 	DeployerImage string    `json:"deployer_image"` // Docker image with /bin/sh
 	Instructions  string    `json:"instructions"`   // Prose: what is needed, and where each value goes
 	SetupScript   string    `json:"setup_script"`   // Commands to paste into a terminal, offered with a copy button
+
+	// SetupPrerequisites is what must be true before the script will work,
+	// held as a list so the page renders one rather than imitating a list with
+	// indentation inside a paragraph.
+	SetupPrerequisites []string `json:"setup_prerequisites"`
+
+	// SetupInputLabel prompts for the one value the script cannot supply for
+	// itself. Given it, the page completes the script in place, so what reaches
+	// the clipboard runs as pasted.
+	SetupInputLabel string `json:"setup_input_label"`
+
+	// SetupInputCredential names the credential that same value provides, when
+	// it happens to be one Mendel also stores.
+	SetupInputCredential string `json:"setup_input_credential"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

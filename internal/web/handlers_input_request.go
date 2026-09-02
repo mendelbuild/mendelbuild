@@ -52,6 +52,10 @@ type InputRequestDetailView struct {
 	Measurements []MeasurementRow
 	SetupScript                string                  // For credential_request: commands the user pastes into a terminal
 	SetupScriptLines           []SetupScriptLine       // The same script, marked up so the line to edit stands out
+	SetupPrerequisites         []string                // What must be true before the script will work
+	SetupInputLabel            string                  // Prompt for the value that completes the script
+	SetupInputCredential       string                  // Credential that value also supplies, if any
+	SetupPlaceholder           string                  // The token the value replaces
 
 }
 
@@ -383,6 +387,10 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 				channel != nil && channel.HostingPlatform != nil {
 				view.SetupScript = channel.HostingPlatform.SetupScript
 				view.SetupScriptLines = markUpSetupScript(channel.HostingPlatform.SetupScript)
+				view.SetupPrerequisites = channel.HostingPlatform.SetupPrerequisites
+				view.SetupInputLabel = channel.HostingPlatform.SetupInputLabel
+				view.SetupInputCredential = channel.HostingPlatform.SetupInputCredential
+				view.SetupPlaceholder = setupPlaceholder.FindString(channel.HostingPlatform.SetupScript)
 			}
 		}
 		// Load the blocked variation

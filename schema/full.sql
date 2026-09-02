@@ -619,6 +619,9 @@ CREATE TABLE hosting_platforms (
     deployer_image TEXT NOT NULL,        -- Docker image with /bin/sh (e.g., "alpine:latest")
     instructions TEXT NOT NULL,          -- Prose a person reads: what is needed and where it goes
     setup_script TEXT NOT NULL DEFAULT '', -- Commands they paste into a terminal, offered with a copy button
+    setup_prerequisites JSONB NOT NULL DEFAULT '[]'::jsonb, -- Ordered list rendered as a real list, not indented prose
+    setup_input_label TEXT NOT NULL DEFAULT '',   -- Prompt for the one value the script needs before it will run
+    setup_input_credential TEXT NOT NULL DEFAULT '', -- The credential that value also supplies, if any
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );

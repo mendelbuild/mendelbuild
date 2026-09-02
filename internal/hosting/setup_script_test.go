@@ -1,7 +1,9 @@
 package hosting
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -108,11 +110,17 @@ func TestSetupScriptsFailLoudlyWhenUnedited(t *testing.T) {
 				"whole script against a placeholder", platform.Slug, editLine)
 		}
 
-		// Edited, it must parse — a guard that also breaks the working case is
-		// not a guard, it is a broken script.
-		edited := placeholder.ReplaceAllString(editLine, "a-real-value")
-		if err := exec.Command("bash", "-n", "-c", edited).Run(); err != nil {
-			t.Errorf("%s: %q does not parse once edited: %v", platform.Slug, edited, err)
+		// The whole script must behave the same way, not just that line: unedited
+		// it stops, and once the page has filled the value in it runs as pasted.
+		// That second half is the point of collecting the value in the browser,
+		// so it is worth asserting over the entire script rather than one line.
+		if err := exec.Command("bash", "-n", scriptFile(t, platform.SetupScript)).Run(); err == nil {
+			t.Errorf("%s: the unedited script parses, so nothing stops a blind paste", platform.Slug)
+		}
+		filled := placeholder.ReplaceAllString(platform.SetupScript, "a-real-value")
+		if err := exec.Command("bash", "-n", scriptFile(t, filled)).Run(); err != nil {
+			t.Errorf("%s: the script does not parse once the value is filled in, so what the "+
+				"copy button hands over would not run: %v", platform.Slug, err)
 		}
 
 		// And the rest of the script has to read what was exported.
@@ -179,4 +187,45 @@ func TestSetupScriptsPrintEveryRequiredCredential(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestSetupScriptsDeclareTheirInput ties the placeholder in a script to a prompt
+// the page can ask for.
+//
+// The script cannot supply this value itself, so either the user edits the
+// script or the page collects the value and completes it for them. The second
+// only works if the platform says what to ask for, and an undeclared prompt
+// silently falls back to the first.
+func TestSetupScriptsDeclareTheirInput(t *testing.T) {
+	placeholder := regexp.MustCompile(`<YOUR_[A-Z_]+_HERE>`)
+
+	for _, p := range DefaultPlatforms() {
+		if strings.TrimSpace(p.SetupScript) == "" {
+			continue
+		}
+		if !placeholder.MatchString(p.SetupScript) {
+			continue
+		}
+		if strings.TrimSpace(p.SetupInputLabel) == "" {
+			t.Errorf("%s: script has a placeholder but no SetupInputLabel, so the page cannot "+
+				"ask for the value and the user is left editing the script by hand", p.Slug)
+		}
+		if len(p.SetupPrerequisites) == 0 {
+			t.Errorf("%s: no prerequisites declared; they were prose before and read as ragged "+
+				"columns, which is the reason they are data now", p.Slug)
+		}
+	}
+}
+
+
+// scriptFile writes a script to a temp file so bash can parse it whole. Checking
+// one line at a time would miss anything spanning lines, which is most of what a
+// setup script is made of.
+func scriptFile(t *testing.T, script string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "setup.sh")
+	if err := os.WriteFile(path, []byte(script), 0600); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	return path
 }
