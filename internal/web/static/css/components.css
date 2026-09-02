@@ -1914,3 +1914,11 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
 .btn-copy-inline:hover { color: var(--ink-1); }
 .btn-copy-inline:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .btn-copy-inline.is-copied { opacity: 1; color: var(--tone-success); }
+
+/* The full name beneath a provider-relative host. Present because some providers
+   want it, quiet because most do not. */
+.record-alt {
+    display: block;
+    margin-top: 2px;
+    font-size: var(--text-xs);
+}

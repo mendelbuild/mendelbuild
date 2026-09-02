@@ -234,3 +234,63 @@ func TestBothChallengeRecordsAreListed(t *testing.T) {
 		t.Errorf("both challenge records must be listed, got %d", certRecords)
 	}
 }
+
+// Most providers ask for a host relative to the zone they manage, and the zone
+// is frequently not the domain the user gave Mendel.
+//
+// pong.mendel.build is not delegated; mendel.build is. So a record shown as
+// relative to the base domain would be created a level too shallow, landing at
+// mendel-demos.mendel.build -- correct-looking in the provider's list and
+// resolving for nobody. That is what this page used to print.
+func TestHostIsRelativeToTheZoneNotTheBaseDomain(t *testing.T) {
+	d := &ProjectDomain{
+		BaseDomain: "pong.mendel.build", DemoSubdomain: "mendel-demos",
+		ProdSubdomain: "app", StaticIP: "34.1.2.3",
+	}
+	d.Challenges = []ACMEChallenge{{
+		Domain:      "pong.mendel.build",
+		RecordName:  "_acme-challenge.pong.mendel.build",
+		RecordValue: "abc.authorize.certificatemanager.goog.",
+	}}
+
+	const zone = "mendel.build" // The delegated zone, not the base domain.
+
+	want := map[string]string{
+		"*.mendel-demos.pong.mendel.build":  "*.mendel-demos.pong",
+		"app.pong.mendel.build":             "app.pong",
+		"_acme-challenge.pong.mendel.build": "_acme-challenge.pong",
+	}
+	for _, r := range d.DNSRecords() {
+		got := r.HostIn(zone)
+		if expected, ok := want[r.Name]; !ok {
+			t.Errorf("unexpected record %q", r.Name)
+		} else if got != expected {
+			t.Errorf("%s: host is %q, want %q", r.Name, got, expected)
+		}
+	}
+}
+
+func TestHostInDeclinesRatherThanGuesses(t *testing.T) {
+	r := DNSRecord{Name: "app.example.com"}
+
+	if got := r.HostIn(""); got != "" {
+		t.Errorf("an unknown zone must produce no host, got %q", got)
+	}
+	// A record outside the zone cannot be expressed relative to it, and inventing
+	// something would be worse than showing the full name.
+	if got := r.HostIn("elsewhere.com"); got != "" {
+		t.Errorf("a record outside the zone must produce no host, got %q", got)
+	}
+	// The zone's own name is @ everywhere.
+	if got := (DNSRecord{Name: "example.com"}).HostIn("example.com"); got != "@" {
+		t.Errorf("the zone apex should be @, got %q", got)
+	}
+	// A suffix that is not a label boundary is not a match.
+	if got := (DNSRecord{Name: "notexample.com"}).HostIn("example.com"); got != "" {
+		t.Errorf("%q is not inside example.com, got host %q", "notexample.com", got)
+	}
+	// Case is not significant in DNS.
+	if got := (DNSRecord{Name: "App.Example.COM"}).HostIn("example.com"); got != "app" {
+		t.Errorf("case should not matter, got %q", got)
+	}
+}

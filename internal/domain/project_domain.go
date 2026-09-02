@@ -164,6 +164,35 @@ type DNSRecord struct {
 	Why   string        `json:"why"`
 }
 
+// HostIn renders a record's name the way most DNS providers ask for it: relative
+// to the zone, with the zone's own name stripped off.
+//
+// Namecheap, GoDaddy, Porkbun and Gandi all want a "Host" rather than a full
+// name, and a full name typed into that box creates the record one level too
+// deep -- _acme-challenge.example.com.example.com -- which looks plausible in a
+// list of records and resolves for nobody.
+//
+// The zone is not the base domain. Someone using pong.mendel.build has a zone of
+// mendel.build, so the host is _acme-challenge.mendel-demos.pong rather than
+// _acme-challenge.mendel-demos. Assuming the base domain was the apex is how this
+// page used to get it wrong.
+//
+// Empty when the name is not inside the zone or the zone is unknown, so a caller
+// can fall back to the full name instead of printing something invented.
+func (r DNSRecord) HostIn(zone string) string {
+	if zone == "" || r.Name == "" {
+		return ""
+	}
+	if strings.EqualFold(r.Name, zone) {
+		return "@" // Every provider's spelling of the zone's own name.
+	}
+	host, ok := strings.CutSuffix(strings.ToLower(r.Name), "."+strings.ToLower(zone))
+	if !ok || host == "" {
+		return ""
+	}
+	return host
+}
+
 // DNSRecords is exactly what the user must create, or nil with a reason when
 // Mendel cannot say yet.
 //

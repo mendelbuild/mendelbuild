@@ -170,11 +170,13 @@ func (s *Server) renderDomainPage(
 	var headline string
 	var waitingOnYou bool
 	var observedAt time.Time
+	var zone string
 	if shown.WantsNamedDemos() || shown.BaseDomain != "" {
 		var obs domain.DomainObservation
 		obs, observedAt = s.observationFor(projectID, shown)
 		steps = shown.DomainReadiness(obs)
 		headline, waitingOnYou = domain.DomainHeadline(steps)
+		zone = obs.Zone
 	}
 
 	data := map[string]interface{}{
@@ -184,6 +186,7 @@ func (s *Server) renderDomainPage(
 		"WaitingOnYou": waitingOnYou,
 		"Checking":     observedAt.IsZero(),
 		"CheckedLabel": checkedLabel(observedAt),
+		"Zone":         zone,
 		"AskNamedDemos": needsDomain && shown.ShouldAskAboutNamedDemos(),
 		"WantsNamed":   shown.WantsNamedDemos(),
 		"SettingsTab":  "domain",

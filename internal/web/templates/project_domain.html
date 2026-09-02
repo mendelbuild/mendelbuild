@@ -103,12 +103,24 @@
                 domain is yours, one per zone the certificate covers.
             </p>
             <table class="table">
-                <thead><tr><th>Type</th><th>Name</th><th>Value</th></tr></thead>
+                <thead><tr>
+                    <th>Type</th>
+                    <th>{{if $.Zone}}Host{{else}}Name{{end}}</th>
+                    <th>Value</th>
+                </tr></thead>
                 <tbody>
                     {{range .Records}}
+                    {{$host := .HostIn $.Zone}}
                     <tr>
                         <td class="mono">{{.Type}}</td>
-                        <td>{{template "copyable" .Name}}</td>
+                        <td>
+                            {{if $host}}
+                            {{template "copyable" $host}}
+                            <span class="record-alt subtle">full: {{template "copyable" .Name}}</span>
+                            {{else}}
+                            {{template "copyable" .Name}}
+                            {{end}}
+                        </td>
                         <td>{{template "copyable" .Value}}</td>
                     </tr>
                     <tr>
@@ -118,11 +130,22 @@
                     {{end}}
                 </tbody>
             </table>
+            {{if .Zone}}
             <p class="card-note">
-                Some providers want the name relative to the zone rather than in full &mdash;
-                <code>*.{{.Domain.DemoSubdomain}}</code> instead of
-                <code>{{.DemoWildcard}}</code>. Both mean the same record.
+                The <strong>Host</strong> column is relative to <code>{{.Zone}}</code>, which is
+                the zone your provider manages &mdash; Namecheap, GoDaddy, Porkbun and Gandi all
+                ask for it this way, and it is what their box expects. Providers that want the
+                whole name, such as Cloudflare and Route&nbsp;53, take the <em>full</em> value
+                instead. Pasting a full name into a Host box creates the record one level too
+                deep, which looks right in a list and resolves for nobody.
             </p>
+            {{else}}
+            <p class="card-note">
+                These are the full names. Most providers ask instead for a host relative to the
+                zone they manage &mdash; strip that zone's own name off the end. Mendel could not
+                work out which zone that is, so it is not guessing at where to cut.
+            </p>
+            {{end}}
             {{else}}
             <p class="empty">{{.Blocker}}</p>
             {{end}}

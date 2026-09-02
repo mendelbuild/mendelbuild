@@ -33,6 +33,12 @@ type DomainObservation struct {
 	// FAILED, or empty when no certificate has been requested.
 	CertificateState string
 
+	// Zone is the DNS zone the records live in -- the closest ancestor of the
+	// base domain that is delegated. Observed rather than assumed, because it is
+	// frequently not the base domain, and the difference decides what goes in a
+	// provider's "Host" box.
+	Zone string
+
 	// Known says an observation actually happened. The zero value of this struct
 	// is indistinguishable from "looked, and found nothing" -- which would tell a
 	// user to create records they created an hour ago. Not knowing yet is its own

@@ -51,6 +51,7 @@ func (s *Server) observeDomain(ctx context.Context, projectID uuid.UUID, pd *dom
 		}
 	}
 
+	obs.Zone = zoneFor(lookup, resolver, pd.BaseDomain)
 	obs.CertificateState = s.certificateState(ctx, projectID, pd)
 	obs.Known = true
 	return obs
@@ -89,4 +90,30 @@ func (s *Server) certificateState(ctx context.Context, projectID uuid.UUID, pd *
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// zoneFor finds the DNS zone a name lives in: the closest ancestor that is
+// delegated, which is the one whose provider the user is actually logged into.
+//
+// Needed because most providers ask for a host relative to the zone, and the
+// zone is often not the domain the user gave Mendel. pong.mendel.build is not
+// delegated -- mendel.build is -- so a record shown as relative to
+// pong.mendel.build would be created one level too shallow, at
+// mendel-demos.mendel.build, and would resolve for nobody while looking correct
+// in the provider's list.
+//
+// Walking up stops before a single label: every TLD has NS records, so a domain
+// that is delegated nowhere would otherwise report its zone as "com".
+func zoneFor(ctx context.Context, resolver *net.Resolver, name string) string {
+	for candidate := name; strings.Count(candidate, ".") >= 1; {
+		if ns, err := resolver.LookupNS(ctx, candidate); err == nil && len(ns) > 0 {
+			return candidate
+		}
+		cut := strings.Index(candidate, ".")
+		if cut < 0 {
+			break
+		}
+		candidate = candidate[cut+1:]
+	}
+	return ""
 }

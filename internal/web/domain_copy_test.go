@@ -7,7 +7,7 @@ import (
 	"github.com/bhs/mendelbuild/internal/domain"
 )
 
-func renderDomainPageContent(t *testing.T, pd *domain.ProjectDomain) string {
+func renderDomainPageContent(t *testing.T, pd *domain.ProjectDomain, zone string) string {
 	t.Helper()
 	steps := pd.DomainReadiness(domain.DomainObservation{Known: true})
 	headline, waiting := domain.DomainHeadline(steps)
@@ -18,7 +18,7 @@ func renderDomainPageContent(t *testing.T, pd *domain.ProjectDomain) string {
 		"Checking": false, "CheckedLabel": "just now", "ProjectID": "abc",
 		"Domain": pd, "Records": pd.DNSRecords(), "Blocker": "", "NeedsDomain": true,
 		"DemoWildcard": pd.DemoWildcard(), "ProdHost": pd.ProdHost(),
-		"ExampleHost": pd.DemoHost("pong-abc123"),
+		"ExampleHost": pd.DemoHost("pong-abc123"), "Zone": zone,
 	})
 	if err != nil {
 		t.Fatalf("domain page does not render: %v", err)
@@ -48,7 +48,7 @@ func domainWithRecords() *domain.ProjectDomain {
 // that never issued, with nothing pointing back at the typo.
 func TestEveryDNSValueIsCopyable(t *testing.T) {
 	pd := domainWithRecords()
-	html := renderDomainPageContent(t, pd)
+	html := renderDomainPageContent(t, pd, "")
 
 	records := pd.DNSRecords()
 	if len(records) < 4 {
@@ -71,7 +71,7 @@ func TestEveryDNSValueIsCopyable(t *testing.T) {
 // the failure this project keeps hitting: a feature that renders but cannot be
 // used.
 func TestCopyButtonsHaveTheirHandler(t *testing.T) {
-	html := renderDomainPageContent(t, domainWithRecords())
+	html := renderDomainPageContent(t, domainWithRecords(), "")
 
 	if !strings.Contains(html, "data-copy-adjacent") {
 		t.Fatal("no copy buttons on the domain page at all")
@@ -88,5 +88,47 @@ func TestCopyButtonsHaveTheirHandler(t *testing.T) {
 		if !strings.Contains(string(js), needed) {
 			t.Errorf("copy-button.js does not handle %s, which the markup relies on", needed)
 		}
+	}
+}
+
+// The Host column must be relative to the delegated zone, and the full name has
+// to stay reachable for the providers that want it.
+func TestRecordsTableShowsHostAndFullName(t *testing.T) {
+	pd := &domain.ProjectDomain{
+		BaseDomain: "pong.mendel.build", DemoSubdomain: "mendel-demos",
+		ProdSubdomain: "app", StaticIP: "34.1.2.3",
+	}
+	html := renderDomainPageContent(t, pd, "mendel.build")
+
+	for _, want := range []string{
+		`<code class="copy-value">*.mendel-demos.pong</code>`,       // what Namecheap wants
+		`<code class="copy-value">*.mendel-demos.pong.mendel.build`, // still there for Cloudflare
+		"<th>Host</th>",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("records table is missing %s", want)
+		}
+	}
+
+	// Relative to the base domain is the wrong cut and the bug this replaced: it
+	// would put the record at mendel-demos.mendel.build.
+	if strings.Contains(html, `<code class="copy-value">*.mendel-demos</code>`) {
+		t.Error("host is relative to the base domain rather than the zone")
+	}
+}
+
+// With no zone there is no honest way to shorten a name, so the page shows full
+// names and says so instead of cutting at a guess.
+func TestUnknownZoneShowsFullNamesOnly(t *testing.T) {
+	pd := &domain.ProjectDomain{
+		BaseDomain: "example.com", DemoSubdomain: "mendel-demos", StaticIP: "34.1.2.3",
+	}
+	html := renderDomainPageContent(t, pd, "")
+
+	if strings.Contains(html, "<th>Host</th>") {
+		t.Error("a Host column implies a zone Mendel does not know")
+	}
+	if !strings.Contains(html, `<code class="copy-value">*.mendel-demos.example.com</code>`) {
+		t.Error("the full name should be shown when the zone is unknown")
 	}
 }
