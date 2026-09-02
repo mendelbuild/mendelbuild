@@ -624,3 +624,25 @@ document.querySelectorAll('[data-tl-today]').forEach(function (el) {
 <input type="text" name="target_unit" class="target-unit"
        value="{{.TargetUnit}}" placeholder="users" aria-label="Unit">
 {{end}}
+
+{{/* A value the user has to retype somewhere else, with a button so they do not
+     have to select it with a mouse. Takes the value as its argument.
+
+     The copied text comes from the .copy-value element rather than from an
+     attribute, so what lands on the clipboard is exactly what is on screen --
+     the same reason the setup script copies from a hidden block rather than
+     from its syntax-highlighted markup. */}}
+{{define "copyable"}}
+<span class="copyable">
+    <code class="copy-value">{{.}}</code>
+    <button type="button" class="btn-copy-inline" data-copy-adjacent title="Copy"
+            aria-label="Copy {{.}} to the clipboard">
+        <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <rect x="5.25" y="5.25" width="8.25" height="8.25" rx="1.5"
+                  fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M10.75 5.25V3.75A1.5 1.5 0 0 0 9.25 2.25h-5.5A1.5 1.5 0 0 0 2.25 3.75v5.5a1.5 1.5 0 0 0 1.5 1.5h1.5"
+                  fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+    </button>
+</span>
+{{end}}

@@ -1875,3 +1875,42 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
 }
 .setup-details > summary:hover { color: var(--ink-1); }
 .setup-body { padding-top: var(--sp-2); }
+
+/* A value someone has to retype into another tool, with a button beside it.
+   Selecting a long TXT-style value with a mouse is fiddly and easy to get
+   wrong by a character, which is the kind of mistake that surfaces an hour
+   later as a certificate that never issued. */
+.copyable {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-1);
+    max-width: 100%;
+}
+
+.copy-value {
+    font-family: var(--font-mono);
+    word-break: break-all;
+}
+
+.btn-copy-inline {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--ink-3);
+    cursor: pointer;
+    /* Present but quiet until wanted: the value is what is being read, and a
+       button per row competing with it makes the table harder to scan. */
+    opacity: 0.45;
+    transition: opacity 0.12s ease, color 0.12s ease;
+}
+
+.copyable:hover .btn-copy-inline,
+.btn-copy-inline:focus-visible { opacity: 1; }
+.btn-copy-inline:hover { color: var(--ink-1); }
+.btn-copy-inline:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.btn-copy-inline.is-copied { opacity: 1; color: var(--tone-success); }
