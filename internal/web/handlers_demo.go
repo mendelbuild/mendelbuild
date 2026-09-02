@@ -788,12 +788,19 @@ func gatewayManifest(staticIPName, certMapName string) string {
       namespaces:
         from: Same`
 	if certMapName != "" {
+		// No tls block, deliberately. The certificate comes from the certmap
+		// annotation, and a listener that also declares `tls: mode: Terminate`
+		// is rejected outright -- "certificateRefs or options must be specified
+		// when mode is Terminate" -- because there is no Secret to reference.
+		//
+		// The Gateway then fails to apply, deployToGKE falls back to a bare
+		// address, and production comes up on an IP with its name unused. Which
+		// is what happened: the rejection was logged, the deploy reported
+		// success, and the only symptom was a URL that was not the domain.
 		listeners += `
   - name: https
     protocol: HTTPS
     port: 443
-    tls:
-      mode: Terminate
     allowedRoutes:
       namespaces:
         from: Same`
@@ -1077,7 +1084,12 @@ func (s *Server) deployToGKE(
 					certMap = fresh.CertificateMapName
 				}
 				if err := s.ensureGateway(ctx, session, ipName, certMap); err != nil {
-					logInfo("Could not raise the gateway, so this deployment keeps a bare address: " + err.Error())
+					// A milestone rather than a note: this changes the URL the
+					// deployment ends up with, which is the thing the user came
+					// to see. Logged quietly, it reads as an unexplained bare IP.
+					logMilestone(fmt.Sprintf("Could not raise the gateway, so %s is not in use "+
+						"and this deployment keeps a bare address", hostname))
+					logInfo("Gateway error: " + err.Error())
 					hostname, ipName = "", ""
 				} else {
 					// The gateway serves https only where there is a certificate

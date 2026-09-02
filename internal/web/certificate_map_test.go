@@ -107,3 +107,42 @@ func TestExistingAuthorizationIsReused(t *testing.T) {
 		t.Error("empty output cannot match anything")
 	}
 }
+
+// An HTTPS listener using a certificate map must not also declare a tls block.
+//
+// The certificate comes from the networking.gke.io/certmap annotation, and
+// `tls: mode: Terminate` without certificateRefs is rejected by the Gateway API
+// webhook -- "certificateRefs or options must be specified when mode is
+// Terminate" -- because there is no Secret to point at.
+//
+// The consequence is not an error the user sees. The Gateway fails to apply,
+// deployToGKE falls back to a bare address, and production comes up on an IP
+// with its own domain unused, reporting success the whole way.
+func TestHTTPSListenerHasNoTLSBlockWithACertMap(t *testing.T) {
+	withCert := gatewayManifest("mendel-ip", "mendel-map")
+
+	if !strings.Contains(withCert, "networking.gke.io/certmap") {
+		t.Fatal("the certificate map is not attached at all")
+	}
+	if !strings.Contains(withCert, "protocol: HTTPS") {
+		t.Fatal("no HTTPS listener despite a certificate map")
+	}
+	if strings.Contains(withCert, "mode: Terminate") {
+		t.Error("the HTTPS listener declares tls alongside a certmap, which the " +
+			"Gateway API rejects; the certmap annotation supplies the certificate")
+	}
+	if strings.Contains(withCert, "tls:") {
+		t.Error("no tls block belongs on a listener whose certificate comes from a certmap")
+	}
+
+	// Without a certificate there is nothing to present, so there must be no
+	// HTTPS listener: a listener that cannot come up takes the whole Gateway
+	// with it, and a project would lose the plain http it already had.
+	withoutCert := gatewayManifest("mendel-ip", "")
+	if strings.Contains(withoutCert, "HTTPS") {
+		t.Error("an HTTPS listener with no certificate stops the Gateway coming up at all")
+	}
+	if !strings.Contains(withoutCert, "protocol: HTTP") {
+		t.Error("http must survive when there is no certificate yet")
+	}
+}
