@@ -20,7 +20,7 @@
             <tr>
                 <td><a class="table-link" href="/p/{{.Project.ID}}">{{.Project.Name}}</a></td>
                 <td>{{with memberRole .Role}}<span class="badge badge-{{.Tone}}">{{.Label}}</span>{{end}}</td>
-                <td class="subtle nowrap">{{.Project.CreatedAt.Format "2 Jan 2006"}}</td>
+                <td class="subtle nowrap">{{at .Project.CreatedAt "date"}}</td>
             </tr>
             {{end}}
         </tbody>

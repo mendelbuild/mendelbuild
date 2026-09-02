@@ -159,7 +159,7 @@
                             {{.Feedback}}
                             {{if .ErrorMessage}}<span class="table-sub">{{derefString .ErrorMessage}}</span>{{end}}
                         </td>
-                        <td class="subtle nowrap">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                        <td class="subtle nowrap">{{at .CreatedAt "datetime"}}</td>
                     </tr>
                     {{end}}
                 </tbody>
@@ -186,8 +186,8 @@
                 {{else if .Variation.CommitRef}}
                 <dt>Commit</dt><dd><code>{{slice .Variation.CommitRef 0 8}}</code></dd>
                 {{end}}
-                <dt>Created</dt><dd class="subtle">{{.Variation.CreatedAt.Format "2006-01-02 15:04"}}</dd>
-                <dt>Updated</dt><dd class="subtle">{{.Variation.UpdatedAt.Format "2006-01-02 15:04"}}</dd>
+                <dt>Created</dt><dd class="subtle">{{at .Variation.CreatedAt "datetime"}}</dd>
+                <dt>Updated</dt><dd class="subtle">{{at .Variation.UpdatedAt "datetime"}}</dd>
             </dl>
         </div>
 

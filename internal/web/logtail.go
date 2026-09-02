@@ -10,9 +10,13 @@ import (
 	"github.com/google/uuid"
 )
 
-// LogTimeFormat is the timestamp shown on every log line. The date matters
+// LogTimeFormat is the shape a log line's timestamp takes. The date matters
 // because generation and deploy runs routinely straddle midnight, and a bare
 // clock time makes those lines ambiguous.
+//
+// The zone it is shown in is the reader's, decided in the browser: this is only
+// the no-JavaScript fallback, and the "log" shape in localTime and in
+// localtime.js are the two places that have to agree with it.
 const LogTimeFormat = "2006/01/02 15:04:05"
 
 // LogLine is the wire format for one tailed log line. Both variation logs and
@@ -23,10 +27,6 @@ type LogLine struct {
 	Level    string    `json:"level"`
 	Message  string    `json:"message"`
 }
-
-// Timestamp renders the line for server-side rendering, matching what the
-// client-side tailer produces for lines it appends.
-func (l LogLine) Timestamp() string { return l.LoggedAt.Format(LogTimeFormat) }
 
 // LevelLabel is the bracketed level as it appears in the panel. It lives here
 // rather than as a branch in the template for the same reason status colours

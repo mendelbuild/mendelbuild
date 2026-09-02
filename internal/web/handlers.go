@@ -68,6 +68,9 @@ var templateFuncs = template.FuncMap{
 	// num prints a target value without a trailing ".0" -- a key result of
 	// "1000 users" should not render its target as "1000.0".
 	"num": func(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) },
+
+	// at renders an instant in the reader's own zone. See localTime.
+	"at": localTime,
 	"add": func(a, b float64) float64 { return a + b },
 
 	// Status renderers. Templates must never switch on a raw status string, so
@@ -138,6 +141,66 @@ func formatUSD(f float64) string {
 	default:
 		return fmt.Sprintf("$%.0f", f)
 	}
+}
+
+// localTime renders an instant for the reader's own clock.
+//
+// A stored timestamp is an absolute moment with no zone (see the timestamp
+// section of CLAUDE.md), so the zone to display it in is the reader's, and only
+// their browser knows what that is. This emits the machine-readable instant
+// alongside the server's rendering of it in UTC, and static/js/localtime.js
+// replaces the text on load. Without JavaScript the reader is left with a
+// correct instant, labelled UTC, rather than a wrong one in a zone nobody
+// stated.
+//
+// Calendar dates must not come through here. "Due 1 November" is the 1st
+// wherever it is read, and shifting it by a zone shows 31 October to anyone
+// west of UTC -- an off-by-one on the very thing the row is about. Those stay
+// as plain .Format calls, and a test keeps them that way.
+//
+// Takes any, so a template can pass either a time.Time or the *time.Time that
+// an optional column produces.
+func localTime(value any, shape string) template.HTML {
+	var t time.Time
+	switch v := value.(type) {
+	case time.Time:
+		t = v
+	case *time.Time:
+		if v == nil {
+			return ""
+		}
+		t = *v
+	default:
+		return ""
+	}
+	if t.IsZero() {
+		return ""
+	}
+
+	layout, ok := timeShapes[shape]
+	if !ok {
+		shape, layout = "datetime", timeShapes["datetime"]
+	}
+
+	utc := t.UTC()
+	fallback := utc.Format(layout)
+	if shape != "date" {
+		// Name the clock, because without the script it is not the reader's.
+		fallback += " UTC"
+	}
+
+	return template.HTML(fmt.Sprintf(`<time datetime="%s" data-at="%s">%s</time>`,
+		utc.Format(time.RFC3339), shape, template.HTMLEscapeString(fallback)))
+}
+
+// timeShapes are the renderings a template may ask for. They exist in two
+// places -- here for the no-JavaScript fallback and in localtime.js for the
+// real thing -- so a name added to one needs adding to the other.
+var timeShapes = map[string]string{
+	"date":     "2 Jan 2006",
+	"datetime": "2 Jan 2006, 15:04",
+	"short":    "2 Jan, 15:04",
+	"log":      "2006/01/02 15:04:05",
 }
 
 // parsePageTemplate creates a template from layout + shared partials + a

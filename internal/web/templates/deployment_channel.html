@@ -62,7 +62,7 @@
                 </dd>
                 {{end}}
                 <dt>Configured</dt>
-                <dd class="subtle">{{.Channel.CreatedAt.Format "2 Jan 2006, 15:04"}}</dd>
+                <dd class="subtle">{{at .Channel.CreatedAt "datetime"}}</dd>
             </dl>
 
             <hr class="divider">
@@ -120,7 +120,7 @@
                 <p class="callout-title">Latest deploy: {{.Label}}</p>
             {{end}}
                 <p class="callout-body">
-                    Started {{.StartedAt.Format "2 Jan 2006, 15:04"}}
+                    Started {{at .StartedAt "datetime"}}
                     {{if .ShortCommit}}from <code>{{.ShortCommit}}</code>{{end}}
                     {{if .URL}}&middot; <a href="{{.URL}}" target="_blank">{{.URL}}</a>{{end}}
                 </p>
@@ -157,7 +157,7 @@
                         <tbody>
                             {{range .}}
                             <tr>
-                                <td class="subtle nowrap">{{.StartedAt.Format "2 Jan 2006 15:04"}}</td>
+                                <td class="subtle nowrap">{{at .StartedAt "datetime"}}</td>
                                 <td>{{if .ShortCommit}}<code>{{.ShortCommit}}</code>{{else}}&mdash;{{end}}</td>
                                 <td>{{with deploymentStatus .Status}}<span class="badge badge-{{.Tone}}">{{.Label}}</span>{{end}}</td>
                                 <td>{{if .URL}}<a href="{{.URL}}" target="_blank">{{.URL}}</a>{{else}}&mdash;{{end}}</td>
@@ -358,7 +358,7 @@
                     <p class="callout-title">{{.ArtifactKind}} &rarr;
                         {{if .HostingPlatform}}{{.HostingPlatform.Name}}{{end}}</p>
                     <p class="callout-body text-sm">
-                        {{if .IsActive}}Current{{else}}Retired {{.DisabledAt.Format "2 Jan 2006"}}{{end}}
+                        {{if .IsActive}}Current{{else}}Retired {{at .DisabledAt "date"}}{{end}}
                     </p>
                 </div>
                 {{end}}

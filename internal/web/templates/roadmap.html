@@ -40,7 +40,7 @@
                 </td>
                 <td><span class="badge badge-{{.Status.Tone}}">{{.Status.Label}}</span></td>
                 <td class="table-num">{{if .VariationCount}}{{.VariationCount}}{{else}}&mdash;{{end}}</td>
-                <td class="subtle nowrap">{{.Hop.CreatedAt.Format "2 Jan 2006"}}</td>
+                <td class="subtle nowrap">{{at .Hop.CreatedAt "date"}}</td>
             </tr>
             {{end}}
         </tbody>

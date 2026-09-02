@@ -16,15 +16,19 @@
   var POLL_MS = 2000;
   var BACKOFF_MS = 15000; // after repeated failures, back off rather than hammer
 
-  function pad(n) { return n < 10 ? '0' + n : '' + n; }
-
-  // Matches the server's LogTimeFormat ("2006/01/02 15:04:05") so appended
-  // lines are indistinguishable from server-rendered ones.
+  // Appended lines are formatted by the same code as the ones the server
+  // rendered, so a panel does not change clocks partway down.
+  //
+  // It used to claim it matched the server and did not: this built the string
+  // from getHours() and friends, which are the reader's zone, while the server
+  // had rendered UTC. The first lines of a log were therefore in one zone and
+  // everything that streamed in afterwards in another.
   function formatTimestamp(iso) {
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return iso;
-    return d.getFullYear() + '/' + pad(d.getMonth() + 1) + '/' + pad(d.getDate()) +
-      ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    if (window.MendelTime) {
+      var text = window.MendelTime.format(iso, 'log');
+      if (text !== null) return text;
+    }
+    return iso;
   }
 
   function levelCell(level) {

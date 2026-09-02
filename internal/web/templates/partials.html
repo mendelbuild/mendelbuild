@@ -161,7 +161,7 @@ full set rendered in every tone and state.
             <tbody data-log-body>
                 {{range .Lines}}
                 <tr>
-                    <td class="log-time">{{.Timestamp}}</td>
+                    <td class="log-time">{{at .LoggedAt "log"}}</td>
                     <td class="log-level log-level-{{.Level}}">{{.LevelLabel}}</td>
                     <td class="log-msg">{{.Message}}</td>
                 </tr>
@@ -335,7 +335,7 @@ document.querySelectorAll('[data-tl-today]').forEach(function (el) {
         <div class="msg msg-{{.Role}}">
             <div class="row row-baseline row-tight">
                 <span class="eyebrow">{{messageAuthor .Role}}</span>
-                <span class="row-spacer text-xs subtle">{{.CreatedAt.Format "2 Jan 2006, 15:04"}}</span>
+                <span class="row-spacer text-xs subtle">{{at .CreatedAt "datetime"}}</span>
             </div>
             <p class="pre-wrap">{{.Content}}</p>
         </div>
@@ -494,7 +494,7 @@ document.querySelectorAll('[data-tl-today]').forEach(function (el) {
                         {{if .Reading.Latest}}
                         <strong>{{num .Reading.Latest.MeasuredValue}}</strong>
                         {{.KeyResult.TargetUnit}}
-                        &middot; {{.Reading.Latest.MeasuredAt.Format "2 Jan"}}
+                        &middot; {{at .Reading.Latest.MeasuredAt "short"}}
                         {{else}}
                         <span class="subtle">not measured</span>
                         {{end}}

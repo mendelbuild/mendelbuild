@@ -37,7 +37,7 @@
                     <td>{{with decisionStatus .InputRequest}}<span class="badge badge-{{.Tone}}">{{.Label}}</span>{{end}}</td>
                     {{/* A weight of "0.72" means nothing without the scale. */}}
                     <td>{{decisionWeight .ImportanceScore}}</td>
-                    <td class="subtle nowrap">{{.CreatedAt.Format "2 Jan, 15:04"}}</td>
+                    <td class="subtle nowrap">{{at .CreatedAt "short"}}</td>
                 </tr>
                 {{end}}
             </tbody>
@@ -77,8 +77,8 @@
                     <td><a class="table-link" href="/p/{{$.ProjectID}}/inputs/{{.ID}}">{{.Title}}</a></td>
                     <td>{{decisionKind .Kind}}</td>
                     <td>{{with decisionResolution .ResolutionStr}}<span class="badge badge-{{.Tone}}">{{.Label}}</span>{{end}}</td>
-                    <td class="subtle nowrap">{{.CreatedAt.Format "2 Jan, 15:04"}}</td>
-                    <td class="subtle nowrap">{{if .ResolvedAt}}{{.ResolvedAt.Format "2 Jan, 15:04"}}{{else}}&mdash;{{end}}</td>
+                    <td class="subtle nowrap">{{at .CreatedAt "short"}}</td>
+                    <td class="subtle nowrap">{{if .ResolvedAt}}{{at .ResolvedAt "short"}}{{else}}&mdash;{{end}}</td>
                 </tr>
                 {{end}}
             </tbody>

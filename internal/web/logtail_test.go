@@ -28,17 +28,25 @@ func renderLogPanel(t *testing.T, panel *LogPanel) string {
 
 // TestLogPanelTimestampsCarryTheDate pins the format. Generation and deploy
 // runs straddle midnight, and a bare clock time makes those lines ambiguous.
+//
+// The zone is the reader's, chosen in the browser, so what the server renders
+// is the instant itself plus a UTC fallback for anyone without JavaScript.
 func TestLogPanelTimestampsCarryTheDate(t *testing.T) {
-	at := time.Date(2026, 8, 27, 19, 7, 5, 0, time.Local)
+	at := time.Date(2026, 8, 27, 19, 7, 5, 0, time.UTC)
 	line := LogLine{LoggedAt: at, Level: "info", Message: "cloning"}
 
-	if got, want := line.Timestamp(), "2026/08/27 19:07:05"; got != want {
-		t.Errorf("Timestamp() = %q, want %q", got, want)
-	}
-
 	body := renderLogPanel(t, &LogPanel{DOMID: "x", Lines: []LogLine{line}})
-	if !strings.Contains(body, "2026/08/27 19:07:05") {
-		t.Error("rendered panel should show the full date and time")
+
+	// The instant, for the browser to re-render in the reader's zone.
+	if !strings.Contains(body, `datetime="2026-08-27T19:07:05Z"`) {
+		t.Error("the line does not carry its instant in machine-readable form")
+	}
+	if !strings.Contains(body, `data-at="log"`) {
+		t.Error("the line does not say which shape it wants")
+	}
+	// And the fallback still carries the date, not just a clock time.
+	if !strings.Contains(body, "2026/08/27 19:07:05 UTC") {
+		t.Error("the no-JavaScript fallback should show the full date, and name its zone")
 	}
 }
 

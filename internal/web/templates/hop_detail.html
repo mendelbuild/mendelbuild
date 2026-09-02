@@ -58,7 +58,7 @@
                                     <tbody>
                                         {{range .RecentLogs}}
                                         <tr>
-                                            <td class="log-time">{{.LoggedAt.Format "15:04:05"}}</td>
+                                            <td class="log-time">{{at .LoggedAt "log"}}</td>
                                             <td class="log-msg">{{.Message}}</td>
                                         </tr>
                                         {{end}}
@@ -152,7 +152,7 @@
                 <dl class="kv">
                     <dt>Hop status</dt><dd><code>{{.Hop.Status}}</code></dd>
                     <dt>Requires production</dt><dd><code>{{.Hop.RequiresProduction}}</code></dd>
-                    <dt>Created</dt><dd class="subtle">{{.Hop.CreatedAt.Format "2 Jan 2006, 15:04"}}</dd>
+                    <dt>Created</dt><dd class="subtle">{{at .Hop.CreatedAt "datetime"}}</dd>
                 </dl>
             </div>
         </details>

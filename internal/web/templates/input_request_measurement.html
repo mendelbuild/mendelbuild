@@ -39,7 +39,7 @@
                         <td class="subtle nowrap">
                             {{if .Latest}}
                             {{.LastValue}} {{.KeyResult.TargetUnit}}
-                            <span class="table-sub">{{.Latest.MeasuredAt.Format "2 Jan"}}</span>
+                            <span class="table-sub">{{at .Latest.MeasuredAt "short"}}</span>
                             {{else}}&mdash;{{end}}
                         </td>
                         <td class="table-num">

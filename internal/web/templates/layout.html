@@ -15,6 +15,10 @@
     <link rel="stylesheet" href="/static/css/components.css">
 
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+
+    {{/* Rewrites every rendered instant into the reader's own zone. Loaded for
+         every page, because timestamps appear on nearly all of them. */}}
+    <script src="/static/js/localtime.js"></script>
 </head>
 <body>
     <nav class="nav">
