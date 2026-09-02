@@ -36,10 +36,18 @@ type CloudCredentialView struct {
 	HasValue bool // true if a value is set (don't expose actual value)
 }
 
-// RequiredCredentialView shows a credential required by deploy-config.yml
+// RequiredCredentialView shows a credential the chosen channel asks for.
 type RequiredCredentialView struct {
 	Name         string
 	IsConfigured bool
+
+	// Optional marks a credential that adds a capability rather than gating a
+	// deployment, so its absence is a choice rather than a fault.
+	Optional bool
+
+	// Purpose says what supplying it gets you, which is the only thing that
+	// makes an optional credential worth the trouble of finding.
+	Purpose string
 }
 
 func (s *Server) handleProjectSettings(w http.ResponseWriter, r *http.Request) {
@@ -616,7 +624,7 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 	// the chosen channel, not from a file in the user's repository: the channel
 	// is what actually gates a demo.
 	cloudCredentials, configured := s.cloudCredentialViews(ctx, projectID)
-	var requiredCredentials []RequiredCredentialView
+	var requiredCredentials, optionalCredentials []RequiredCredentialView
 	if channel != nil {
 		platformSlug := ""
 		if channel.HostingPlatform != nil {
@@ -628,6 +636,18 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 				IsConfigured: configured[name],
 			})
 		}
+		// Optional credentials need somewhere to be entered too. Listed only
+		// with the required ones they would read as missing; listed nowhere,
+		// the capability they unlock is unreachable however carefully it is
+		// implemented.
+		for _, name := range hosting.OptionalCredentialsForCombo(channel.ArtifactKind, platformSlug) {
+			optionalCredentials = append(optionalCredentials, RequiredCredentialView{
+				Name:         name,
+				IsConfigured: configured[name],
+				Optional:     true,
+				Purpose:      hosting.CredentialPurpose(name),
+			})
+		}
 	}
 
 	data := map[string]interface{}{
@@ -636,6 +656,7 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 		"SupportMatrix":        s.buildSupportMatrix(ctx, projectID, channel),
 		"CloudCredentials":     cloudCredentials,
 		"RequiredCredentials":  requiredCredentials,
+		"OptionalCredentials":  optionalCredentials,
 		"ProjectID":            projectID.String(),
 		"Project":              project,
 		"Channel":              channel,

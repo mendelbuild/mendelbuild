@@ -189,6 +189,22 @@
             <hr class="divider">
             {{end}}
 
+            {{if .OptionalCredentials}}
+            <p class="eyebrow">Optional &mdash; adds a capability</p>
+            {{range .OptionalCredentials}}
+            <div class="optional-credential">
+                <div class="row row-tight">
+                    <span class="badge badge-{{if .IsConfigured}}success{{else}}neutral{{end}}">
+                        {{if .IsConfigured}}&check; {{end}}{{.Name}}
+                    </span>
+                    <span class="subtle">{{if .IsConfigured}}in use{{else}}not set &mdash; deployments still run without it{{end}}</span>
+                </div>
+                {{if .Purpose}}<p class="callout-body">{{.Purpose}}</p>{{end}}
+            </div>
+            {{end}}
+            <hr class="divider">
+            {{end}}
+
             {{if .CloudCredentials}}
             <table class="table">
                 <thead><tr><th>Name</th><th>Value</th><th></th></tr></thead>

@@ -1772,3 +1772,13 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
     padding: var(--sp-2) var(--sp-3);
     border-radius: var(--radius-sm);
 }
+
+/* A credential that buys a capability rather than gating a deploy. Listed apart
+   from the required ones, because shown among them its absence reads as a fault
+   rather than as a choice not yet made. */
+.optional-credential {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    padding: var(--sp-3) 0;
+}

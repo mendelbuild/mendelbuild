@@ -82,6 +82,7 @@ func (s *Server) deployCredentialsForChannel(ctx context.Context, projectID uuid
 		}
 		env[name] = string(decrypted)
 	}
+	s.addOptionalCredentials(ctx, projectID, channel, key, env)
 	return env, nil
 }
 

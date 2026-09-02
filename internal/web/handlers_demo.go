@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"log"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -380,6 +381,11 @@ func (s *Server) runChannelDemoDeployment(
 	if len(appSecrets) > 0 {
 		logInfo(fmt.Sprintf("Injecting %d required value(s) into the deployment", len(appSecrets)))
 	}
+
+	// Optional credentials add a capability rather than gate the deploy, so a
+	// missing one is not an error -- but it has to be loaded, or the capability
+	// it unlocks can never switch on.
+	s.addOptionalCredentials(ctx, projectID, channel, key, env)
 
 	var url string
 	var deployErr error
@@ -1495,4 +1501,35 @@ func getRecentlyModifiedFiles(workDir string, lastModTimes map[string]time.Time)
 	}
 
 	return modified
+}
+
+// addOptionalCredentials loads the credentials that add a capability rather than
+// gate a deployment, and says nothing when they are absent.
+//
+// Loading them is easy to forget, because nothing fails without them: the
+// deployment proceeds, the capability is simply never available, and the code
+// reading env for the value sees an empty string that looks exactly like a user
+// who chose not to supply one.
+func (s *Server) addOptionalCredentials(
+	ctx context.Context,
+	projectID uuid.UUID,
+	channel *domain.ProjectDeploymentChannel,
+	key []byte,
+	env map[string]string,
+) {
+	if channel == nil || channel.HostingPlatform == nil {
+		return
+	}
+	for _, name := range hosting.OptionalCredentialsForCombo(channel.ArtifactKind, channel.HostingPlatform.Slug) {
+		cred, err := s.db.GetProjectCredential(ctx, projectID, name)
+		if err != nil {
+			continue // Not supplied, which is what "optional" means.
+		}
+		decrypted, err := crypto.Decrypt(cred.EncryptedValue, key)
+		if err != nil {
+			log.Printf("deployment: could not decrypt optional credential %s: %v", name, err)
+			continue
+		}
+		env[name] = string(decrypted)
+	}
 }

@@ -506,3 +506,15 @@ func OptionalCredentialsForCombo(artifactKind domain.DeployArtifactKind, platfor
 	}
 	return nil
 }
+
+// CredentialPurpose says what an optional credential buys, since nobody supplies
+// one without knowing what it is for.
+func CredentialPurpose(name string) string {
+	if name == domain.BaseDomainCredential {
+		return "A domain you control, with a wildcard record pointing at the cluster. " +
+			"Deployments get a name under it instead of a bare address, which is what an " +
+			"OAuth redirect URI or a webhook target needs. Without it they still run and " +
+			"are still reachable."
+	}
+	return ""
+}
