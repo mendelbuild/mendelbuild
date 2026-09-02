@@ -23,6 +23,12 @@ func TestManifestWithoutHostnameKeepsLoadBalancer(t *testing.T) {
 
 // TestManifestWithHostnameRoutesByHost covers the shape a wildcard record needs:
 // every demo answering at one address, told apart by Host.
+//
+// Confirmed against a real cluster rather than only asserted here: applied to
+// GKE, the Ingress took an address and answered 200 for a request carrying the
+// matching Host and 404 for one without it. The 404 is the half that matters --
+// it shows the rule discriminates, which is what lets many demos share one
+// address and one wildcard record.
 func TestManifestWithHostnameRoutesByHost(t *testing.T) {
 	host := "pong-abc123.demos.example.com"
 	m := k8sManifestFor("pong-abc123", "gcr.io/x/pong:1", "", host)
@@ -84,8 +90,9 @@ func TestDeploymentHostnameIsOneLabel(t *testing.T) {
 // events at all, so there is nothing to read that would explain it.
 //
 // Verified both ways against a real cluster: the annotation draws a "Scheduled
-// for sync" from the load balancer controller within a minute, and the
-// documented replacement draws nothing.
+// for sync" from the load balancer controller within a minute and serves
+// traffic; the documented replacement draws no events at all and never gets an
+// address.
 func TestIngressUsesTheClassAnnotation(t *testing.T) {
 	m := k8sManifestFor("pong-abc123", "img", "", "pong-abc123.demos.example.com")
 
