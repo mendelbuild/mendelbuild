@@ -96,3 +96,42 @@ func TestValidateDomainRejectsWhatCannotWork(t *testing.T) {
 		t.Error("a multi-label demo subdomain should be refused")
 	}
 }
+
+// TestCertificateRecordIsListedWithTheOthers covers the record that is easiest
+// to leave out, because unlike the address records its value cannot be worked
+// out from the domain -- it is minted by the certificate authority.
+//
+// Leaving it out of this list because Mendel could not yet serve https would put
+// the user in exactly the position the Domain page exists to prevent: needing a
+// record, and having to be told about it somewhere other than where records are.
+func TestCertificateRecordIsListedWithTheOthers(t *testing.T) {
+	d := &ProjectDomain{
+		BaseDomain: "example.com", DemoSubdomain: "mendel-demos", StaticIP: "34.1.2.3",
+	}
+	if !d.CertificateOutstanding() {
+		t.Error("no challenge minted yet, so the certificate is outstanding")
+	}
+	for _, r := range d.DNSRecords() {
+		if r.Kind == DNSRecordCertificate {
+			t.Fatal("a certificate record was offered before its value was known")
+		}
+	}
+
+	d.ACMERecordName = "_acme-challenge.mendel-demos.example.com"
+	d.ACMERecordValue = "bbeef8e0-9922-46f4-8537-2107e1d4d9b0.4.authorize.certificatemanager.goog."
+
+	if d.CertificateOutstanding() {
+		t.Error("the challenge is known, so nothing is outstanding")
+	}
+	recs := d.DNSRecords()
+	if len(recs) != 2 {
+		t.Fatalf("want the wildcard and the certificate record, got %d", len(recs))
+	}
+	cert := recs[1]
+	if cert.Type != "CNAME" {
+		t.Errorf("certificate record is a %s; providers need to be told CNAME", cert.Type)
+	}
+	if cert.Name != d.ACMERecordName || cert.Value != d.ACMERecordValue {
+		t.Errorf("record does not repeat what the authority minted: %+v", cert)
+	}
+}

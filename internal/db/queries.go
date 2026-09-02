@@ -3031,10 +3031,12 @@ func (db *DB) GetProjectDomain(ctx context.Context, projectID uuid.UUID) (*domai
 	var d domain.ProjectDomain
 	err := db.Pool.QueryRow(ctx, `
 		SELECT project_id, base_domain, demo_subdomain, prod_subdomain,
-		       static_ip, static_ip_name, created_at, updated_at
+		       static_ip, static_ip_name, acme_record_name, acme_record_value,
+		       certificate_name, created_at, updated_at
 		FROM project_domains WHERE project_id = $1
 	`, projectID).Scan(&d.ProjectID, &d.BaseDomain, &d.DemoSubdomain, &d.ProdSubdomain,
-		&d.StaticIP, &d.StaticIPName, &d.CreatedAt, &d.UpdatedAt)
+		&d.StaticIP, &d.StaticIPName, &d.ACMERecordName, &d.ACMERecordValue,
+		&d.CertificateName, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -3070,5 +3072,20 @@ func (db *DB) SetProjectStaticIP(ctx context.Context, projectID uuid.UUID, ip, n
 			static_ip_name = EXCLUDED.static_ip_name,
 			updated_at = NOW()
 	`, projectID, ip, name)
+	return err
+}
+
+// SetProjectCertificateChallenge records the ownership record a certificate
+// authority minted, so the Domain page can list it with the others.
+func (db *DB) SetProjectCertificateChallenge(ctx context.Context, projectID uuid.UUID, name, value, certName string) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO project_domains (project_id, base_domain, acme_record_name, acme_record_value, certificate_name)
+		VALUES ($1, '', $2, $3, $4)
+		ON CONFLICT (project_id) DO UPDATE SET
+			acme_record_name = EXCLUDED.acme_record_name,
+			acme_record_value = EXCLUDED.acme_record_value,
+			certificate_name = EXCLUDED.certificate_name,
+			updated_at = NOW()
+	`, projectID, name, value, certName)
 	return err
 }

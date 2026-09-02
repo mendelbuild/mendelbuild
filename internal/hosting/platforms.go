@@ -236,10 +236,11 @@ gcloud services enable container.googleapis.com cloudbuild.googleapis.com artifa
 gcloud iam service-accounts create mendel-deployer --project "$GCP_PROJECT" --display-name "Mendel Deployer" || true
 
 # Cluster access, image build and push, the Cloud Build staging bucket, permission
-# to act as the build's own service account, and reserving the static address the
-# demos' DNS record points at -- container.developer does not include that last
-# one, so without it Mendel cannot tell you which record to create.
-for ROLE in container.developer cloudbuild.builds.editor artifactregistry.writer storage.admin iam.serviceAccountUser compute.publicIpAdmin; do
+# to act as the build's own service account, reserving the static address the
+# demos' DNS record points at, and requesting the certificate for their names.
+# container.developer includes neither of those last two, and without them Mendel
+# cannot tell you which records to create.
+for ROLE in container.developer cloudbuild.builds.editor artifactregistry.writer storage.admin iam.serviceAccountUser compute.publicIpAdmin certificatemanager.editor; do
   gcloud projects add-iam-policy-binding "$GCP_PROJECT" --member "serviceAccount:mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com" --role "roles/$ROLE" --condition None --quiet > /dev/null
 done
 

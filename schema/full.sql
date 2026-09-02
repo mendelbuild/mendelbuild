@@ -1134,6 +1134,12 @@ CREATE TABLE project_domains (
     static_ip TEXT NOT NULL DEFAULT '',
     static_ip_name TEXT NOT NULL DEFAULT '',
 
+    -- The domain-ownership record for the wildcard certificate. Minted by
+    -- Certificate Manager, so its value cannot be worked out in advance.
+    acme_record_name TEXT NOT NULL DEFAULT '',
+    acme_record_value TEXT NOT NULL DEFAULT '',
+    certificate_name TEXT NOT NULL DEFAULT '',
+
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

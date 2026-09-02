@@ -35,6 +35,14 @@ type ProjectDomain struct {
 	StaticIP     string `json:"static_ip"`
 	StaticIPName string `json:"static_ip_name"`
 
+	// ACMERecordName and ACMERecordValue are the ownership challenge for the
+	// wildcard certificate. Minted by the certificate authority, so unlike the
+	// address records these cannot be worked out from the domain: Mendel has to
+	// ask for them and then repeat them back.
+	ACMERecordName  string `json:"acme_record_name"`
+	ACMERecordValue string `json:"acme_record_value"`
+	CertificateName string `json:"certificate_name"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -84,8 +92,9 @@ func (d *ProjectDomain) demoZone() string {
 type DNSRecordKind string
 
 const (
-	DNSRecordDemo DNSRecordKind = "demo"
-	DNSRecordProd DNSRecordKind = "prod"
+	DNSRecordDemo        DNSRecordKind = "demo"
+	DNSRecordProd        DNSRecordKind = "prod"
+	DNSRecordCertificate DNSRecordKind = "certificate"
 )
 
 // DNSRecord is one row a user types into their DNS provider.
@@ -131,7 +140,25 @@ func (d *ProjectDomain) DNSRecords() []DNSRecord {
 				"the same address as the demos.",
 		})
 	}
+
+	if d.ACMERecordName != "" && d.ACMERecordValue != "" {
+		records = append(records, DNSRecord{
+			Kind:  DNSRecordCertificate,
+			Type:  "CNAME",
+			Name:  d.ACMERecordName,
+			Value: d.ACMERecordValue,
+			Why: "Proves the domain is yours so a certificate can be issued for it. " +
+				"Without this the names resolve but only over http, and a sign-in " +
+				"provider will not accept an http redirect URI.",
+		})
+	}
 	return records
+}
+
+// CertificateOutstanding reports whether the names will resolve but not serve
+// https yet, which is the state that breaks sign-in while looking like it works.
+func (d *ProjectDomain) CertificateOutstanding() bool {
+	return d != nil && d.BaseDomain != "" && d.StaticIP != "" && d.ACMERecordName == ""
 }
 
 // DomainBlocker explains what stands between the settings as they are and
