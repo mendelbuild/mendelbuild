@@ -204,7 +204,73 @@ The edge must *overwrite* it from the validated session rather than pass through
 what arrived, or participants self-select and the comparison quietly stops
 meaning anything.
 
-### 3.3 What this costs
+### 3.3 When the key has to be available
+
+Routing needs the Assignment Unit key. So a Variation can only take live traffic
+if **the key is derivable by code that is identical in every Arm** — which in a
+request flow means derivable before any of the divergent code runs.
+
+Ordering is the practical form, but independence is the actual requirement. If
+the key were extracted inside divergent code, two Arms could extract different
+keys, and the assignment would depend on the Arm it is supposed to select.
+
+**Eligibility is therefore a property of the (Variation, Assignment Unit) pair,
+not of the Variation alone.** The Google sign-in Variation already in the test
+project is the clean example. Keyed on `user` it is ineligible: the user id does
+not exist until the authentication code has run, and the authentication code is
+precisely what varies. Keyed on `device` it is fine: the cookie is there before
+any application code executes. Same Variation, opposite answers — so any refusal
+has to name the unit it is refusing for, or it will be wrong half the time.
+
+#### The rule: the edge extracts, or the experiment does not run
+
+Deciding "does divergent code run before extraction" in an arbitrary codebase is
+a reachability question across middleware, dynamic dispatch and async
+boundaries. It is not something to infer from a diff or ask a model to
+adjudicate; at the limit it is undecidable, and well before that limit it is
+unreliable.
+
+So make it structural instead. **Mendel requires the key to be extractable at
+the edge** — its own assignment cookie, a JWT claim, a session the gateway can
+validate — before any application code runs at all. Then "before divergent code"
+holds by construction, for every Variation, with nothing to analyse, nothing to
+declare beyond which cookie or claim carries it (§13 §5 already requires that),
+and no per-language tooling.
+
+A key that only application code can compute makes the experiment ineligible,
+and Mendel says so. That is the conservative default, and it is the same shape
+as every other decline here.
+
+#### A decline is a diagnosis, not a verdict
+
+Before refusing, Mendel should consider whether **the client could be changed to
+put the key where the edge can see it** — and say so when it could.
+
+This matters more than it first appears:
+
+- **Mendel writes the client too.** Making a web or mobile client send a stable
+  identifier on its requests is a small additive change of exactly the kind
+  Mendel generates. The remedy for "this cannot be experimented on" is often
+  itself a Hop, and Mendel is in a position to propose it rather than leave the
+  user to work it out.
+- **For a native client it is the only mechanism.** There is no cookie for the
+  edge to set, so a client-sent header is not an expansion of the options — it
+  is the entire option. Without it mobile traffic cannot participate at all.
+
+Two hazards to carry into that:
+
+- **A client-supplied value may be trusted for bucketing, never for identity.**
+  An opaque install or device token is fine: assignment is not an authorisation
+  decision. A client-asserted *user* id is not fine, and D29 stands — where a
+  validated session exists, the edge overwrites what arrived.
+- **Mobile rollout biases the population.** A header added today reaches users
+  over weeks, and older versions never send it. Experimenting only on clients
+  that send the key means experimenting on the subset that upgrades promptly,
+  which is not a random subset. Either wait for adoption to be broad enough to
+  be uninteresting, or record the restriction as a stated limit on what the
+  result generalises to. Web clients mostly escape this; a cached SPA does not.
+
+### 3.4 What this costs
 
 - **One extra round trip on a visitor's first request.** Acceptable; it happens
   once per Assignment Unit per experiment.
@@ -217,7 +283,7 @@ meaning anything.
   refuses cookies, the assigner marks the redirect (`?_ma=1`) and sends a second
   cookie-less arrival straight to mainline.
 
-### 3.4 Where the weights live
+### 3.5 Where the weights live
 
 In a `ConfigMap` the assigner reads, written by Mendel — **not** fetched from
 Mendel's API at request time. The user's production traffic must not depend on
@@ -359,6 +425,8 @@ channel, which §13 §15 records as the remaining staging move.
 | D27 | A Variation may change one deployable service | Route east-west from day one | Edge routing is correct for one service; more than one needs propagation the app must do |
 | D28 | Propagate the Assignment Unit key and recompute the Arm at each hop | Propagate the Arm as trace baggage | Identity is already in flight and needs no correlation; a lost key means mainline, a lost context means a wrong Arm |
 | D29 | The edge overwrites the identity header from the validated session | Trust what the client sent | Otherwise participants can select their own Arm |
+| D30 | Require the Assignment Unit key to be edge-extractable | Analyse whether extraction precedes divergent code | Reachability in an arbitrary codebase is not decidable from a diff; the structural rule needs no analysis |
+| D31 | A decline names the client change that would lift it | Refuse and stop | Mendel writes the client, so the remedy is often a Hop it can propose — and for native clients it is the only mechanism |
 
 ## 10. Open questions
 
@@ -374,7 +442,9 @@ some of it and not the rest, which is exactly the §13 §5 dissonance the user
 approved in the abstract. Worth checking that the approval text covers it.
 
 **O13 — How does Mendel identify a "deployable service" in an arbitrary repo?**
-D27 rests on counting them in a diff, which needs a definition. A monolith is
+D27 rests on counting them in a diff, which needs a definition. No longer blocks
+eligibility, since D30 settles that structurally; still needed for D27's
+one-service constraint. A monolith is
 one; a repo of Dockerfiles is several; a monorepo with one deployed entrypoint
 is one again. Likely a `.mendel/` declaration rather than inference.
 
