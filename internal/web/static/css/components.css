@@ -693,6 +693,11 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
 /* ---- The channel grid --------------------------------------------------
    A whole cell is the click target, because a radio the size of a full stop in
    the middle of a wide column is a target you have to aim at. */
+/* Every column but the platform name is centred -- headers included. They were
+   right-aligned by borrowing the numeric column class, which put each label
+   over the gap between its own column and the next. */
+.matrix th:not(:first-child),
+.matrix td:not(:first-child) { text-align: center; }
 .matrix td { padding: 0; }
 .matrix td:first-child { padding: var(--sp-3) var(--sp-4); }
 .matrix-cell {

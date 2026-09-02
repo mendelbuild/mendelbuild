@@ -550,7 +550,7 @@ document.querySelectorAll('[data-tl-today]').forEach(function (el) {
                 <thead>
                     <tr>
                         <th>Platform</th>
-                        {{range .ArtifactKinds}}<th class="table-num">{{.}}</th>{{end}}
+                        {{range .ArtifactKinds}}<th>{{.}}</th>{{end}}
                     </tr>
                 </thead>
                 <tbody>
@@ -558,7 +558,7 @@ document.querySelectorAll('[data-tl-today]').forEach(function (el) {
                     <tr>
                         <td>{{.Platform}}</td>
                         {{range .Cells}}
-                        <td class="table-num">
+                        <td>
                             {{if .Supported}}
                             {{/* The radio is the "supported" mark as well as the
                                  control: a tick beside it would say the same
