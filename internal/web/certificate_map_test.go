@@ -63,3 +63,47 @@ func TestAuthorizationNamesFollowTheZone(t *testing.T) {
 		t.Errorf("%q does not carry the project's naming scheme", demo)
 	}
 }
+
+// Certificate Manager permits one authorization per domain and refuses a second
+// under a different name -- with a message naming the *domain*, so a caller
+// matching on "already exists" reads it as success and then describes an
+// authorization that was never created. That is what left this project with its
+// base zone authorized, its demo zone not, and no certificate at all.
+//
+// Reuse is also what spares the user a trip to their DNS provider: a fresh
+// authorization mints a fresh value, so replacing one would invalidate a record
+// that was already working.
+func TestExistingAuthorizationIsReused(t *testing.T) {
+	// Exactly what `gcloud ... dns-authorizations list --format=value(...)` prints.
+	const listing = "mendel-d25227dc\tmendel-demos.pong.mendel.build.\t" +
+		"_acme-challenge.mendel-demos.pong.mendel.build.\t9e54fd15.8.authorize.certificatemanager.goog.\n" +
+		"mendel-d25227dc-39708d0f\tpong.mendel.build.\t" +
+		"_acme-challenge.pong.mendel.build.\t0f0050eb.8.authorize.certificatemanager.goog."
+
+	name, record, _, found := matchAuthorization(listing, "mendel-demos.pong.mendel.build")
+	if !found {
+		t.Fatal("the demo zone is authorized already and must be reused, not duplicated")
+	}
+	if name != "mendel-d25227dc" {
+		t.Errorf("reused the wrong authorization: %q", name)
+	}
+	if record != "_acme-challenge.mendel-demos.pong.mendel.build." {
+		t.Errorf("record does not match the authorization: %q", record)
+	}
+
+	// The base domain is a suffix of the demo zone. A suffix match would hand
+	// back the demo zone's authorization and record -- which the user has already
+	// created, so the certificate would sit unvalidated with nothing looking wrong.
+	base, _, _, found := matchAuthorization(listing, "pong.mendel.build")
+	if !found || base != "mendel-d25227dc-39708d0f" {
+		t.Errorf("base domain matched %q, found=%v; suffix matching is not a match", base, found)
+	}
+
+	// A zone nobody has authorized must be created, not silently reused.
+	if _, _, _, found := matchAuthorization(listing, "staging.pong.mendel.build"); found {
+		t.Error("an unauthorized zone must not borrow another zone's authorization")
+	}
+	if _, _, _, found := matchAuthorization("", "pong.mendel.build"); found {
+		t.Error("empty output cannot match anything")
+	}
+}

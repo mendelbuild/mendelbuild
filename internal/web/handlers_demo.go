@@ -1771,41 +1771,42 @@ func (s *Server) ensureCertificate(ctx context.Context, projectID uuid.UUID, pd 
 	// One authorization per zone. Certificate Manager authorizes a single domain
 	// name each, the sole exception being that a wildcard is authorized on its
 	// parent -- which is why these are the zones rather than the wildcards.
+	authNames := make([]string, 0, len(zones))
 	for _, zone := range zones {
-		// Named after the zone, not its position. An index is reused when the
-		// user edits their demo subdomain, and `create` on an existing name fails
-		// with "already exists" -- which this treats as success and then reads
-		// back an authorization for the domain that used to be there, storing a
-		// record the user cannot make resolve.
-		name := authorizationName(base, zone)
-
-		create := exec.CommandContext(ctx, "gcloud", "certificate-manager", "dns-authorizations",
-			"create", name, "--domain", zone, "--project", session.projectID)
-		create.Env = session.env
-		if out, err := create.CombinedOutput(); err != nil && !strings.Contains(string(out), "already exists") {
-			return fmt.Errorf("could not authorize %s: %s: %w", zone, strings.TrimSpace(string(out)), err)
-		}
-
-		describe := exec.CommandContext(ctx, "gcloud", "certificate-manager", "dns-authorizations",
-			"describe", name, "--project", session.projectID,
-			"--format", "value(dnsResourceRecord.name,dnsResourceRecord.data)")
-		describe.Env = session.env
-		out, err := describe.Output()
+		name, record, value, found, err := findAuthorization(ctx, session, zone)
 		if err != nil {
-			return fmt.Errorf("authorized %s but could not read its record back: %w", zone, err)
-		}
-		fields := strings.Fields(strings.TrimSpace(string(out)))
-		if len(fields) != 2 {
-			return fmt.Errorf("record for %s came back as %q, which is not a name and a value",
-				zone, strings.TrimSpace(string(out)))
+			return fmt.Errorf("could not check what already authorizes %s: %w", zone, err)
 		}
 
-		// Stored as each is minted rather than at the end, so a failure partway
+		if !found {
+			// Named after the zone, not its position in a list. An index is
+			// reused when the user edits their demo subdomain, and a create on an
+			// existing name fails with "already exists" -- which would be read as
+			// success, then describe an authorization for whatever used to hold
+			// that slot.
+			name = authorizationName(base, zone)
+
+			create := exec.CommandContext(ctx, "gcloud", "certificate-manager", "dns-authorizations",
+				"create", name, "--domain", zone, "--project", session.projectID)
+			create.Env = session.env
+			if out, err := create.CombinedOutput(); err != nil {
+				return fmt.Errorf("could not authorize %s: %s: %w", zone, strings.TrimSpace(string(out)), err)
+			}
+
+			record, value, err = describeAuthorization(ctx, session, name)
+			if err != nil {
+				return fmt.Errorf("authorized %s but could not read its record back: %w", zone, err)
+			}
+		}
+
+		authNames = append(authNames, name)
+
+		// Stored as each is settled rather than at the end, so a failure partway
 		// leaves the user with the records that do exist instead of none.
 		if err := s.db.SetProjectCertificateChallenge(ctx, projectID, domain.ACMEChallenge{
 			Domain:      zone,
-			RecordName:  strings.TrimSuffix(fields[0], "."),
-			RecordValue: fields[1],
+			RecordName:  strings.TrimSuffix(record, "."),
+			RecordValue: value,
 		}); err != nil {
 			return err
 		}
@@ -1818,11 +1819,6 @@ func (s *Server) ensureCertificate(ctx context.Context, projectID uuid.UUID, pd 
 	// have to change when the certificate does.
 	domains := pd.CertificateDomains()
 	certName := fmt.Sprintf("%s-%s", base, digestOf(domains))
-
-	authNames := make([]string, 0, len(zones))
-	for _, zone := range zones {
-		authNames = append(authNames, authorizationName(base, zone))
-	}
 
 	cert := exec.CommandContext(ctx, "gcloud", "certificate-manager", "certificates", "create", certName,
 		"--domains", strings.Join(domains, ","),
@@ -1862,6 +1858,69 @@ func (s *Server) ensureCertificate(ctx context.Context, projectID uuid.UUID, pd 
 	}
 
 	return s.db.SetProjectCertificate(ctx, projectID, certName, base)
+}
+
+// findAuthorization returns the authorization already covering a zone.
+//
+// Certificate Manager allows one authorization per domain, and refuses a second
+// under a different name -- with a message about the domain, not the name, so a
+// caller matching on "already exists" reads it as success and then describes an
+// authorization that was never created. That is what left this project with the
+// base zone authorized, the demo zone not, and no certificate at all.
+//
+// Reusing is also the kinder answer. A fresh authorization mints a fresh record
+// value, so replacing one the user already created means sending them back to
+// their DNS provider to change a record that was working.
+func findAuthorization(ctx context.Context, session *gkeSession, zone string) (name, record, value string, found bool, err error) {
+	list := exec.CommandContext(ctx, "gcloud", "certificate-manager", "dns-authorizations", "list",
+		"--project", session.projectID,
+		"--format", "value(name,domain,dnsResourceRecord.name,dnsResourceRecord.data)")
+	list.Env = session.env
+	out, err := list.Output()
+	if err != nil {
+		return "", "", "", false, err
+	}
+
+	name, record, value, found = matchAuthorization(string(out), zone)
+	return name, record, value, found, nil
+}
+
+// matchAuthorization picks the row for a zone out of what gcloud printed.
+//
+// An exact match on the domain, never a suffix one: mendel-demos.example.com
+// ends with example.com, and reusing the demo zone's authorization for the base
+// domain would produce a certificate that cannot be validated and a record the
+// user has already created, so nothing would look wrong.
+func matchAuthorization(output, zone string) (name, record, value string, found bool) {
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 4 {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSuffix(fields[1], "."), zone) {
+			return fields[0], fields[2], fields[3], true
+		}
+	}
+	return "", "", "", false
+}
+
+// describeAuthorization reads back the record the authority minted, which is the
+// only place its value can come from.
+func describeAuthorization(ctx context.Context, session *gkeSession, name string) (record, value string, err error) {
+	describe := exec.CommandContext(ctx, "gcloud", "certificate-manager", "dns-authorizations",
+		"describe", name, "--project", session.projectID,
+		"--format", "value(dnsResourceRecord.name,dnsResourceRecord.data)")
+	describe.Env = session.env
+	out, err := describe.Output()
+	if err != nil {
+		return "", "", err
+	}
+	fields := strings.Fields(strings.TrimSpace(string(out)))
+	if len(fields) != 2 {
+		return "", "", fmt.Errorf("record came back as %q, which is not a name and a value",
+			strings.TrimSpace(string(out)))
+	}
+	return fields[0], fields[1], nil
 }
 
 // authorizationName is stable for a zone and different for every other zone.
