@@ -1,5 +1,7 @@
 package domain
 
+import "strings"
+
 // Plain-English renderings of the statuses that are not lifecycles.
 //
 // Hops, Variations, and Decisions get a full Ribbon because they move through
@@ -114,6 +116,13 @@ func DecisionStatusView(ir InputRequest) StatusView {
 //
 // Approved and rejected are both resolutions, and they are not the same news;
 // the queue used to colour a rejection with the success palette.
+//
+// Every value the code writes is listed. The default is for resolutions that
+// are already sentences -- the measurement ask records "3 of 5 key results
+// measured" -- and returning those unchanged is right. What it must never do is
+// hand back an unmapped enum: "credential_provided" reached a page once, which
+// is how a screen meant to say the user had supplied what was asked instead
+// showed them a column value.
 func DecisionResolution(resolution string) StatusView {
 	switch resolution {
 	case "":
@@ -122,9 +131,29 @@ func DecisionResolution(resolution string) StatusView {
 		return StatusView{"Approved", ToneSuccess}
 	case "rejected":
 		return StatusView{"Rejected", ToneFailure}
+	case "requested_more":
+		return StatusView{"More options requested", ToneNeutral}
+	case "credential_provided":
+		return StatusView{"You supplied what was needed", ToneSuccess}
+	case "conflicts_resolved":
+		return StatusView{"Conflicts resolved", ToneSuccess}
 	default:
 		return StatusView{resolution, ToneNeutral}
 	}
+}
+
+// ResolutionIsEnum reports whether a resolution string looks like an unmapped
+// column value rather than a sentence, which is the shape of the fault worth
+// catching: lower case, underscores, no spaces.
+//
+// Used by a test rather than by the app. At runtime there is nothing useful to
+// do with the answer; at test time it is the difference between prose and a
+// leak.
+func ResolutionIsEnum(resolution string) bool {
+	if resolution == "" || strings.Contains(resolution, " ") {
+		return false
+	}
+	return strings.Contains(resolution, "_") || strings.ToLower(resolution) == resolution
 }
 
 // MessageAuthor names who wrote a message on a Decision.

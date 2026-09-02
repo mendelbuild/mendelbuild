@@ -778,3 +778,29 @@ func TestTimelineAbsentWhenThereIsNothingToDraw(t *testing.T) {
 		t.Error("no dated key results means no timeline")
 	}
 }
+
+// The settled state on a Decision page. It once printed the resolution column
+// verbatim -- "credential_provided" -- on the very screen whose job is to tell
+// someone they supplied what was asked for.
+func TestSettledDecisionReadsAsProse(t *testing.T) {
+	projectID := uuid.New()
+	for resolution, want := range map[string]string{
+		"credential_provided": "You supplied what was needed",
+		"conflicts_resolved":  "Conflicts resolved",
+		"requested_more":      "More options requested",
+	} {
+		body := renderForTest(t, "input_request_credential.html", projectID, &InputRequestDetailView{
+			InputRequest: &domain.InputRequest{
+				ID: uuid.New(), ProjectID: projectID, Title: "Google client secret",
+				Kind: domain.InputRequestKindCredentialRequest, Status: domain.InputRequestStatusResolved,
+			},
+			Resolution: resolution,
+		})
+		if !strings.Contains(body, want) {
+			t.Errorf("%q should read as %q", resolution, want)
+		}
+		if strings.Contains(body, resolution) {
+			t.Errorf("the raw resolution %q reached the page", resolution)
+		}
+	}
+}

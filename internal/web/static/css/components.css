@@ -527,20 +527,12 @@ a.callout:hover {
     background: var(--surface-hover);
     border-color: var(--line-strong);
 }
-a.callout /* A stack manages the gaps between its own children, so a callout inside one
-   must not add a second. */
-.stack > .callout,
-.stack-tight > .callout,
-.stack-loose > .callout { margin-bottom: 0; }
-
-.callout-title { text-decoration: underline; text-underline-offset: 2px; }
-a.callout:hover /* A stack manages the gaps between its own children, so a callout inside one
-   must not add a second. */
-.stack > .callout,
-.stack-tight > .callout,
-.stack-loose > .callout { margin-bottom: 0; }
-
-.callout-title { color: var(--tone-progress); }
+/* Only a callout that IS a link gets link affordances on its title. These
+   selectors were once spliced apart by an edit that inserted a rule between
+   them, which left every callout title in the app underlined and blue --
+   including "Settled", which links nowhere. */
+a.callout .callout-title { text-decoration: underline; text-underline-offset: 2px; }
+a.callout:hover .callout-title { color: var(--tone-progress); }
 
 /* A stack manages the gaps between its own children, so a callout inside one
    must not add a second. */

@@ -102,3 +102,53 @@ func TestBadgeViewsAgreeWithRibbons(t *testing.T) {
 		t.Errorf("variation badge tone %q disagrees with its ribbon %q", got.Tone, want.Tone)
 	}
 }
+
+// Every resolution the code writes must reach a reader as prose. One did not:
+// "credential_provided" was printed verbatim on the page that exists to tell
+// someone they had supplied what was asked for.
+func TestEveryResolutionReadsAsProse(t *testing.T) {
+	// The complete set of literals assigned to InputRequest.Resolution.
+	// Adding one to the handlers without adding it here is the omission this
+	// test is for.
+	written := []string{
+		"approved", "rejected", "requested_more",
+		"credential_provided", "conflicts_resolved",
+	}
+	for _, r := range written {
+		got := DecisionResolution(r)
+		if got.Label == r {
+			t.Errorf("%q is shown to the reader unchanged; it needs a plain-English reading", r)
+		}
+		if ResolutionIsEnum(got.Label) {
+			t.Errorf("%q maps to %q, which is still a column value", r, got.Label)
+		}
+		if got.Tone == "" {
+			t.Errorf("%q has no tone", r)
+		}
+	}
+
+	// A resolution that is already a sentence passes through untouched: the
+	// measurement ask records how many key results were answered.
+	sentence := "3 of 5 key results measured"
+	if got := DecisionResolution(sentence); got.Label != sentence {
+		t.Errorf("a sentence should survive unchanged, got %q", got.Label)
+	}
+
+	// And an approval is not the same news as a rejection.
+	if DecisionResolution("approved").Tone == DecisionResolution("rejected").Tone {
+		t.Error("approved and rejected share a tone")
+	}
+}
+
+func TestResolutionIsEnum(t *testing.T) {
+	for _, s := range []string{"credential_provided", "approved", "requested_more"} {
+		if !ResolutionIsEnum(s) {
+			t.Errorf("%q is a column value", s)
+		}
+	}
+	for _, s := range []string{"", "You supplied what was needed", "3 of 5 key results measured"} {
+		if ResolutionIsEnum(s) {
+			t.Errorf("%q is prose, not a column value", s)
+		}
+	}
+}

@@ -346,12 +346,13 @@ document.querySelectorAll('[data-tl-today]').forEach(function (el) {
     Takes an *InputRequestDetailView.
 */}}
 {{define "decision-resolved"}}
-<div class="callout callout-success">
-    <p class="callout-title">Settled</p>
-    <p class="callout-body">
-        {{if .Resolution}}{{.Resolution}}{{else}}This decision has been resolved and Mendel has moved on.{{end}}
-    </p>
+{{/* The outcome, and only that. The ribbon above already says nothing further
+     will happen, and repeating it here made the page say one thing twice. */}}
+{{with decisionResolution .Resolution}}
+<div class="callout callout-{{.Tone}}">
+    <p class="callout-title">{{.Label}}</p>
 </div>
+{{end}}
 {{end}}
 
 {{/*
