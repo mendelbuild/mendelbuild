@@ -86,6 +86,15 @@ func (r *VariationRequirement) ResolvedInstructions(deployURL string) string {
 // Naming the limitation is the honest answer where Mendel cannot supply a
 // hostname: the deployment still works, and only this requirement cannot be met
 // on this channel.
+//
+// The obvious escape does not work, and is worth recording so it is not tried
+// twice. Every GCP external address has a reverse-DNS name that also resolves
+// forward -- 34.56.24.112 is 112.24.56.34.bc.googleusercontent.com, and it does
+// serve the deployment over http. It cannot be used here for two independent
+// reasons: Google's redirect-URI rules say host domains cannot be
+// googleusercontent.com, and no certificate is obtainable for a domain nobody
+// here owns, so https is unreachable on that name. A hostname with a
+// certificate needs a domain the user controls.
 func DeployURLLimitation(deployURL string) string {
 	if deployURL == "" {
 		return ""
