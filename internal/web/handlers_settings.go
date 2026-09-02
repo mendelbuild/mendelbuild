@@ -668,9 +668,33 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 		credentialAskID = ask.ID.String()
 	}
 
+	// The setup script belongs to the channel, not to whatever is currently
+	// missing. Showing it only while a credential is outstanding made it
+	// unreachable exactly when it was needed for another reason -- a new API to
+	// enable, a role to grant -- and the only way back to it was to delete a
+	// credential in order to break something.
+	var setupScript string
+	var setupScriptLines []SetupScriptLine
+	var setupPrerequisites []string
+	var setupInputLabel, setupInputCredential, setupPlaceholder string
+	if channel != nil && channel.HostingPlatform != nil {
+		p := channel.HostingPlatform
+		setupScript = p.SetupScript
+		setupScriptLines = markUpSetupScript(p.SetupScript)
+		setupPrerequisites = p.SetupPrerequisites
+		setupInputLabel, setupInputCredential = p.SetupInputLabel, p.SetupInputCredential
+		setupPlaceholder = setupPlaceholder0(p.SetupScript)
+	}
+
 	data := map[string]interface{}{
 		"Title":                "Deployment: " + project.Name,
 		"CredentialAskID":      credentialAskID,
+		"SetupScript":          setupScript,
+		"SetupScriptLines":     setupScriptLines,
+		"SetupPrerequisites":   setupPrerequisites,
+		"SetupInputLabel":      setupInputLabel,
+		"SetupInputCredential": setupInputCredential,
+		"SetupPlaceholder":     setupPlaceholder,
 		"SettingsTab":          "deployment",
 		"SupportMatrix":        s.buildSupportMatrix(ctx, projectID, channel),
 		"CloudCredentials":     cloudCredentials,
@@ -1487,4 +1511,9 @@ func pivotSupportMatrix(platforms []domain.HostingPlatform, combos []domain.Supp
 		matrix.Rows = append(matrix.Rows, row)
 	}
 	return matrix
+}
+
+// setupPlaceholder0 is the token in a setup script the user has to replace.
+func setupPlaceholder0(script string) string {
+	return setupPlaceholder.FindString(script)
 }

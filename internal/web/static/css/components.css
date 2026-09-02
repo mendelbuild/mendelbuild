@@ -1856,3 +1856,16 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
 /* A step nothing has reached yet is dimmed rather than hidden: seeing what is
    coming is useful, being invited to start it is not. */
 .ladder-step[data-state="blocked"] { opacity: 0.5; }
+
+/* Channel setup, kept to hand rather than surfaced only when something breaks.
+   Collapsed because it is reference, not a task. */
+.setup-details { margin: var(--sp-3) 0; }
+.setup-details > summary {
+    cursor: pointer;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--ink-2);
+    padding: var(--sp-2) 0;
+}
+.setup-details > summary:hover { color: var(--ink-1); }
+.setup-body { padding-top: var(--sp-2); }

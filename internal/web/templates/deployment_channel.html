@@ -214,6 +214,57 @@
             <hr class="divider">
             {{end}}
 
+            {{if .SetupScriptLines}}
+            <details class="setup-details">
+                <summary>Channel setup &mdash; the commands that produce these values</summary>
+                <div class="setup-body">
+                    <p class="card-note">
+                        Safe to run again at any time. Re-run it when Mendel asks for something
+                        new, such as a permission or an API that was not needed before.
+                    </p>
+
+                    {{if .SetupPrerequisites}}
+                    <div class="prereqs">
+                        <h3 class="prereqs-title">Before you start</h3>
+                        <ol class="prereqs-list">
+                            {{range .SetupPrerequisites}}<li>{{.}}</li>{{end}}
+                        </ol>
+                    </div>
+                    {{end}}
+
+                    {{if .SetupInputLabel}}
+                    <div class="script-input" data-placeholder="{{.SetupPlaceholder}}"
+                         data-credential="{{.SetupInputCredential}}">
+                        <label for="setup-input">{{.SetupInputLabel}}</label>
+                        <input type="text" id="setup-input" class="input-mono" autocomplete="off"
+                               spellcheck="false" placeholder="Type it here and the script below fills in">
+                    </div>
+                    {{end}}
+
+                    <div class="script-block">
+                        <div class="script-head">
+                            <span class="script-label">Run this in a terminal</span>
+                            <button type="button" class="btn-copy" data-copy="setup-script"
+                                    aria-label="Copy script to clipboard"{{if .SetupInputLabel}} disabled{{end}}>
+                                <svg class="copy-icon" width="15" height="15" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                                    <rect x="5.25" y="5.25" width="8.25" height="8.25" rx="1.5"
+                                          fill="none" stroke="currentColor" stroke-width="1.4"/>
+                                    <path d="M10.75 5.25V3.75A1.5 1.5 0 0 0 9.25 2.25h-5.5A1.5 1.5 0 0 0 2.25 3.75v5.5a1.5 1.5 0 0 0 1.5 1.5h1.5"
+                                          fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                                </svg>
+                                <span class="btn-copy-label">Copy</span>
+                            </button>
+                        </div>
+                        <pre class="script-body"><code>{{- range .SetupScriptLines -}}
+<span class="script-line{{if .NeedsEdit}} script-line-edit{{end}}{{if .Comment}} script-line-comment{{end}}">{{.Text}}</span>
+{{- end -}}</code></pre>
+                    </div>
+                    <pre id="setup-script" hidden>{{.SetupScript}}</pre>
+                </div>
+            </details>
+            <hr class="divider">
+            {{end}}
+
             {{if .CloudCredentials}}
             <table class="table">
                 <thead><tr><th>Name</th><th>Value</th><th></th></tr></thead>
@@ -322,4 +373,7 @@
     </div>
 </div>
 {{end}}
+
+<script src="/static/js/copy-button.js"></script>
+<script src="/static/js/setup-script.js"></script>
 {{end}}

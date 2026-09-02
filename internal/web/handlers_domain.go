@@ -129,6 +129,18 @@ func (s *Server) renderDomainPage(
 	ctx := r.Context()
 
 	stored, _ := s.db.GetProjectDomain(ctx, projectID)
+
+	// Retry the parts Mendel owns when they are still outstanding.
+	//
+	// These fail for reasons outside Mendel that get fixed outside Mendel -- an
+	// API not yet enabled, a role not yet granted -- and until now the retry only
+	// happened on saving the domain or a credential. So the fix would be applied,
+	// nothing would notice, and the page went on showing the same gap. Detached
+	// from the request: it opens a session against the cluster, which is far too
+	// slow to hold a page render on.
+	if stored != nil && stored.BaseDomain != "" && (stored.StaticIP == "" || stored.ACMERecordName == "") {
+		go s.ensureDomainInfrastructure(context.Background(), projectID)
+	}
 	shown := stored
 	if draft != nil {
 		// Keep the address, which the user did not type and must not lose by

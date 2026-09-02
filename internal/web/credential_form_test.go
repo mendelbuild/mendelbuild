@@ -185,3 +185,34 @@ func TestDeploymentPageLeadsToTheSetupInstructions(t *testing.T) {
 		t.Error("offered setup instructions with no outstanding ask")
 	}
 }
+
+// TestSetupScriptIsAlwaysReachable covers the deadlock this fixes.
+//
+// The script was shown only while a credential was outstanding, so once
+// everything was supplied there was no way back to it -- and re-running it is
+// exactly what is needed when Mendel starts asking for something new, like an
+// API that was not required before. The only route back was to delete a
+// credential in order to break something.
+func TestSetupScriptIsAlwaysReachable(t *testing.T) {
+	projectID := uuid.New()
+
+	// Nothing missing: no ask, every credential in place.
+	body := renderPageForTest(t, "deployment_channel.html", map[string]interface{}{
+		"ProjectID": projectID.String(),
+		"Project":   &domain.Project{ID: projectID, Name: "pong"},
+		"Channel":   validatedChannel(),
+		"RequiredCredentials": []RequiredCredentialView{
+			{Name: "GCP_PROJECT_ID", IsConfigured: true},
+		},
+		"SetupScript":      "export GCP_PROJECT=<YOUR_PROJECT_ID_HERE>\ngcloud services enable certificatemanager.googleapis.com",
+		"SetupScriptLines": markUpSetupScript("export GCP_PROJECT=<YOUR_PROJECT_ID_HERE>\ngcloud services enable certificatemanager.googleapis.com"),
+		"SetupPlaceholder": "<YOUR_PROJECT_ID_HERE>",
+	})
+
+	if !strings.Contains(body, "certificatemanager.googleapis.com") {
+		t.Error("the setup script is unreachable once nothing is missing, which is when re-running it is needed")
+	}
+	if !strings.Contains(body, `data-copy="setup-script"`) {
+		t.Error("no copy control for the script")
+	}
+}
