@@ -100,7 +100,7 @@ built from your Dockerfile, and deletes the service on teardown.`,
 # whole script against a project that does not exist.
 export GCP_PROJECT=<YOUR_PROJECT_ID_HERE>
 
-# Where services go. Not Mendel's decision -- latency, data residency and cost
+# Where services go. Not a Mendel decision -- latency, data residency and cost
 # all vary by region -- so take what gcloud is already configured with, and ask
 # from the live list if there is nothing configured.
 GCP_REGION=${GCP_REGION:-$(gcloud config get-value compute/region 2>/dev/null | grep -v '^(unset)$')}
@@ -119,14 +119,14 @@ gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregi
 gcloud iam service-accounts create mendel-deployer --project "$GCP_PROJECT" --display-name "Mendel Deployer" || true
 
 # Deploying services and making them public, building the image, pushing it, the
-# Cloud Build staging bucket, and permission to act as the service's runtime
+# Cloud Build staging bucket, and permission to act as the runtime service
 # identity. Adding a binding that is already there is a no-op.
 for ROLE in run.admin cloudbuild.builds.editor artifactregistry.admin storage.admin iam.serviceAccountUser; do
   gcloud projects add-iam-policy-binding "$GCP_PROJECT" --member "serviceAccount:mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com" --role "roles/$ROLE" --condition None --quiet > /dev/null
 done
 
-# gcloud run deploy --source builds as the project's Compute Engine service
-# account, so Mendel's account has to be allowed to act as it.
+# gcloud run deploy --source builds as the project Compute Engine service
+# account, so the Mendel account has to be allowed to act as it.
 PROJECT_NUMBER=$(gcloud projects describe "$GCP_PROJECT" --format "value(projectNumber)")
 gcloud iam service-accounts add-iam-policy-binding "$PROJECT_NUMBER-compute@developer.gserviceaccount.com" --project "$GCP_PROJECT" --member "serviceAccount:mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com" --role roles/iam.serviceAccountUser --quiet > /dev/null
 
@@ -136,7 +136,8 @@ gcloud iam service-accounts add-iam-policy-binding "$PROJECT_NUMBER-compute@deve
 # be refused, and the failure reads as a missing role rather than a stale token.
 gcloud artifacts repositories create cloud-run-source-deploy --repository-format docker --location "$GCP_REGION" --project "$GCP_PROJECT" --quiet 2> /dev/null || true
 
-gcloud iam service-accounts keys create mendel-key.json --iam-account "mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com"
+KEY_FILE="${TMPDIR:-/tmp}/mendel-key.$$.json"
+gcloud iam service-accounts keys create "$KEY_FILE" --iam-account "mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com"
 
 # Everything Mendel asks for, printed under the name Mendel asks for it under.
 echo
@@ -151,8 +152,9 @@ echo
 echo "GCP_SERVICE_ACCOUNT_KEY"
 echo "  everything between the two lines below, braces included"
 echo "-----------------------------------------------------------"
-cat mendel-key.json
-echo "-----------------------------------------------------------"`,
+cat "$KEY_FILE"
+echo "-----------------------------------------------------------"
+rm -f "$KEY_FILE"`,
 		},
 		{
 			Slug:          "railway",
@@ -237,8 +239,8 @@ gcloud services enable container.googleapis.com cloudbuild.googleapis.com artifa
 gcloud iam service-accounts create mendel-deployer --project "$GCP_PROJECT" --display-name "Mendel Deployer" || true
 
 # Cluster access, image build and push, the Cloud Build staging bucket, permission
-# to act as the build's own service account, reserving the static address the
-# demos' DNS record points at, and requesting the certificate for their names.
+# to act as its own build service account, reserving the static address the
+# demo DNS records point at, and requesting the certificate for their names.
 # container.developer includes neither of those last two, and without them Mendel
 # cannot tell you which records to create.
 for ROLE in container.developer cloudbuild.builds.editor artifactregistry.writer storage.admin iam.serviceAccountUser compute.publicIpAdmin certificatemanager.editor; do
@@ -246,7 +248,8 @@ for ROLE in container.developer cloudbuild.builds.editor artifactregistry.writer
 done
 
 # The key itself.
-gcloud iam service-accounts keys create mendel-key.json --iam-account "mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com"
+KEY_FILE="${TMPDIR:-/tmp}/mendel-key.$$.json"
+gcloud iam service-accounts keys create "$KEY_FILE" --iam-account "mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com"
 
 # A cluster to deploy into. A project that already has one is left alone; only a
 # project with none gets this, so re-running never makes a second cluster.
@@ -255,7 +258,7 @@ gcloud iam service-accounts keys create mendel-key.json --iam-account "mendel-de
 # someone who came here to connect a deployment target, and it bills for what
 # the demos actually request.
 MENDEL_CLUSTER=${MENDEL_CLUSTER:-mendel-cluster}
-# Where to put it is not Mendel's to decide: latency, data residency and cost all
+# Where to put it is not for Mendel to decide: latency, data residency and cost all
 # vary by region, and any default written into Mendel would be wrong for someone.
 # So take the region gcloud is already configured with, and otherwise ask, having
 # first read the live list out of GCP rather than reciting one.
@@ -330,8 +333,9 @@ echo
 echo "GCP_SERVICE_ACCOUNT_KEY"
 echo "  everything between the two lines below, braces included"
 echo "-----------------------------------------------------------"
-cat mendel-key.json
-echo "-----------------------------------------------------------"`,
+cat "$KEY_FILE"
+echo "-----------------------------------------------------------"
+rm -f "$KEY_FILE"`,
 		},
 	}
 }

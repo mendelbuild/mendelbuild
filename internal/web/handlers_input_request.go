@@ -386,7 +386,7 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 			if channel, cerr := s.db.GetActiveProjectDeploymentChannel(ctx, projUUID); cerr == nil &&
 				channel != nil && channel.HostingPlatform != nil {
 				view.SetupScript = setupScriptText(channel.HostingPlatform.SetupScript)
-				view.SetupScriptLines = markUpSetupScript(channel.HostingPlatform.SetupScript)
+				view.SetupScriptLines = markUpSetupScript(view.SetupScript)
 				view.SetupPrerequisites = channel.HostingPlatform.SetupPrerequisites
 				view.SetupInputLabel = channel.HostingPlatform.SetupInputLabel
 				view.SetupInputCredential = channel.HostingPlatform.SetupInputCredential
@@ -2588,11 +2588,26 @@ var setupPlaceholder = regexp.MustCompile(`<YOUR_[A-Z_]+_HERE>`)
 // line with no terminator. Fixing it here rather than in each literal means a
 // script added later cannot get it wrong.
 func setupScriptText(script string) string {
-	if script == "" || strings.HasSuffix(script, "\n") {
+	if script == "" {
 		return script
 	}
-	return script + "\n"
+	if !strings.HasSuffix(script, "\n") {
+		script += "\n"
+	}
+	return interactiveCommentsPrelude + script
 }
+
+// zsh does not treat # as a comment at an interactive prompt. INTERACTIVE_COMMENTS
+// is unconditionally on only in *non-interactive* shells, so every syntax check
+// passes and the script still fails when someone pastes it: each comment runs as
+// a command named #, and one containing an apostrophe opens a quote that never
+// closes, leaving the whole block at a continuation prompt having run nothing.
+//
+// Turning the option on costs one line and fixes the class, which matters more
+// than fixing today's comments -- a comment added later cannot reintroduce it.
+// bash has no setopt, hence the redirect; nothing here is worth failing over.
+const interactiveCommentsPrelude = "setopt interactive_comments 2>/dev/null || true\n" +
+	"# ^ so the comments below are comments, in zsh as well as bash.\n\n"
 
 // markUpSetupScript splits a setup script into lines and marks the one carrying
 // a placeholder.

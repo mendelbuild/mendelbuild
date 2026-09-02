@@ -28,8 +28,33 @@ func TestSetupScriptTextEndsWithNewline(t *testing.T) {
 	if got := setupScriptText(""); got != "" {
 		t.Errorf("empty script gained a newline: %q", got)
 	}
-	if got := setupScriptText("echo hi\n"); got != "echo hi\n" {
+	if got := setupScriptText("echo hi\n"); !strings.HasSuffix(got, "echo hi\n") {
 		t.Errorf("a terminated script was terminated twice: %q", got)
+	}
+	if got := setupScriptText("echo hi"); !strings.HasSuffix(got, "echo hi\n") {
+		t.Errorf("an unterminated script was not terminated: %q", got)
+	}
+}
+
+// Defence in depth behind the setopt line, which is the actual fix.
+//
+// With comments enabled an apostrophe in one is harmless, so this is not what
+// makes the scripts work. It governs how they fail if the setopt ever does not
+// take: a comment zsh runs as a command is noise, and a comment that opens a
+// quote hangs the terminal. Only one of those is recoverable by someone who does
+// not already know what went wrong.
+func TestSetupScriptCommentsCannotOpenAQuote(t *testing.T) {
+	for _, p := range hosting.DefaultPlatforms() {
+		for i, line := range strings.Split(p.SetupScript, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if !strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			if n := strings.IndexAny(trimmed, "'\"`"); n >= 0 {
+				t.Errorf("%s:%d comment contains %q, which opens a quote in a shell that "+
+					"does not treat # as a comment:\n\t%s", p.Slug, i+1, trimmed[n:n+1], trimmed)
+			}
+		}
 	}
 }
 

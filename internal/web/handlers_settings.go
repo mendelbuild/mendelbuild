@@ -680,7 +680,7 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 	if channel != nil && channel.HostingPlatform != nil {
 		p := channel.HostingPlatform
 		setupScript = setupScriptText(p.SetupScript)
-		setupScriptLines = markUpSetupScript(p.SetupScript)
+		setupScriptLines = markUpSetupScript(setupScript)
 		setupPrerequisites = p.SetupPrerequisites
 		setupInputLabel, setupInputCredential = p.SetupInputLabel, p.SetupInputCredential
 		setupPlaceholder = setupPlaceholder0(p.SetupScript)
