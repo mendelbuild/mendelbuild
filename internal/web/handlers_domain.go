@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -161,14 +162,18 @@ func (s *Server) renderDomainPage(
 	needsDomain := channel != nil && channel.HostingPlatform != nil &&
 		channel.HostingPlatform.HostnameSource == domain.HostnameFromUser
 
-	// What is actually true, rather than what anyone has asserted. Cheap enough
-	// to do on render: two DNS lookups, and the certificate only when a channel
-	// with credentials exists.
+	// What is actually true, rather than what anyone has asserted -- but from
+	// what was last seen, not observed here. Observing means running gcloud, and
+	// a page that waits on a process start plus an API call takes seconds to
+	// arrive. The refresh it triggers lands in the cache for the poll below.
 	var steps []domain.DomainStep
 	var headline string
 	var waitingOnYou bool
+	var observedAt time.Time
 	if shown.WantsNamedDemos() || shown.BaseDomain != "" {
-		steps = shown.DomainReadiness(s.observeDomain(ctx, projectID, shown))
+		var obs domain.DomainObservation
+		obs, observedAt = s.observationFor(projectID, shown)
+		steps = shown.DomainReadiness(obs)
 		headline, waitingOnYou = domain.DomainHeadline(steps)
 	}
 
@@ -177,6 +182,8 @@ func (s *Server) renderDomainPage(
 		"Steps":        steps,
 		"Headline":     headline,
 		"WaitingOnYou": waitingOnYou,
+		"Checking":     observedAt.IsZero(),
+		"CheckedLabel": checkedLabel(observedAt),
 		"AskNamedDemos": needsDomain && shown.ShouldAskAboutNamedDemos(),
 		"WantsNamed":   shown.WantsNamedDemos(),
 		"SettingsTab":  "domain",
@@ -230,9 +237,9 @@ func (s *Server) ensureDomainInfrastructure(ctx context.Context, projectID uuid.
 	if err != nil {
 		return // Credentials not in yet; this runs again when they are.
 	}
-	session, err := newGKESession(ctx, env)
+	session, err := newGCloudSession(ctx, env)
 	if err != nil {
-		log.Printf("domain: could not reach the cluster to prepare %s: %v", pd.BaseDomain, err)
+		log.Printf("domain: could not reach GCP to prepare %s: %v", pd.BaseDomain, err)
 		return
 	}
 	defer session.cleanup()
@@ -249,6 +256,11 @@ func (s *Server) ensureDomainInfrastructure(ctx context.Context, projectID uuid.
 	if err := s.ensureCertificate(ctx, projectID, pd, session); err != nil {
 		log.Printf("domain: could not request a certificate: %v", err)
 	}
+
+	// Mendel has just changed what the observation describes. Leaving the old one
+	// in place would show the state from before the request for up to the TTL,
+	// which reads as the request having failed.
+	s.invalidateObservation(projectID)
 }
 
 // domainRequestTitle identifies the domain ask, so it is neither duplicated nor
@@ -270,12 +282,23 @@ func (s *Server) syncDomainRequest(ctx context.Context, projectID uuid.UUID) {
 	if err != nil {
 		return
 	}
+	s.syncDomainRequestWith(ctx, projectID, pd, s.observeDomain(ctx, projectID, pd))
+}
+
+// syncDomainRequestWith is the same with the looking already done, so a
+// background refresh can update the queue without observing a second time.
+func (s *Server) syncDomainRequestWith(ctx context.Context, projectID uuid.UUID,
+	pd *domain.ProjectDomain, obs domain.DomainObservation) {
+
+	if pd == nil {
+		return
+	}
 	if !pd.WantsNamedDemos() {
 		s.closeDomainRequest(ctx, projectID)
 		return
 	}
 
-	steps := pd.DomainReadiness(s.observeDomain(ctx, projectID, pd))
+	steps := pd.DomainReadiness(obs)
 	headline, waitingOnYou := domain.DomainHeadline(steps)
 	if !waitingOnYou {
 		s.closeDomainRequest(ctx, projectID)
@@ -343,5 +366,68 @@ func (s *Server) closeDomainRequest(ctx context.Context, projectID uuid.UUID) {
 	existing.ResolvedAt = &resolvedAt
 	if err := s.db.UpdateInputRequest(ctx, existing); err != nil {
 		log.Printf("domain: could not close the domain request: %v", err)
+	}
+}
+
+
+// checkedLabel says how long ago Mendel looked, so a ladder disagreeing with what
+// the user just did in their DNS provider is obviously stale rather than wrong.
+//
+// Relative, because that is the only question being asked. An absolute time would
+// raise a zone question the reader did not have and this page cannot answer.
+func checkedLabel(at time.Time) string {
+	if at.IsZero() {
+		return ""
+	}
+	switch d := time.Since(at); {
+	case d < 10*time.Second:
+		return "just now"
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	}
+}
+
+// handleDomainReadiness renders the ladder on its own.
+//
+// The page renders from what was last seen and triggers a refresh; this is how
+// the result of that refresh reaches a user who is still looking at the page.
+// Without it the first visit shows "Checking" until something else prompts a
+// reload, which is the same wait as before with a worse explanation.
+func (s *Server) handleDomainReadiness(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	pd, err := s.db.GetProjectDomain(ctx, projectID)
+	if err != nil || pd == nil {
+		http.Error(w, "no domain for this project", http.StatusNotFound)
+		return
+	}
+
+	obs, observedAt := s.observationFor(projectID, pd)
+	steps := pd.DomainReadiness(obs)
+	headline, waitingOnYou := domain.DomainHeadline(steps)
+
+	data := map[string]interface{}{
+		"Steps":        steps,
+		"Headline":     headline,
+		"WaitingOnYou": waitingOnYou,
+		"Checking":     observedAt.IsZero(),
+		"CheckedLabel": checkedLabel(observedAt),
+	}
+
+	// Tells the poll when to stop: there is nothing further to wait for once an
+	// observation exists.
+	w.Header().Set("X-Mendel-Checking", strconv.FormatBool(observedAt.IsZero()))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := parsePageTemplate("project_domain.html").ExecuteTemplate(w, "domain-ladder", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

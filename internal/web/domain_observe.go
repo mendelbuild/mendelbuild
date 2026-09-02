@@ -43,6 +43,7 @@ func (s *Server) observeDomain(ctx context.Context, projectID uuid.UUID, pd *dom
 	}
 
 	obs.CertificateState = s.certificateState(ctx, projectID, pd)
+	obs.Known = true
 	return obs
 }
 
@@ -65,7 +66,7 @@ func (s *Server) certificateState(ctx context.Context, projectID uuid.UUID, pd *
 	if err != nil {
 		return ""
 	}
-	session, err := newGKESession(ctx, env)
+	session, err := newGCloudSession(ctx, env)
 	if err != nil {
 		return ""
 	}

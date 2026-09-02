@@ -35,6 +35,11 @@ type Server struct {
 	stopWorker          chan struct{}
 	processingHops      map[uuid.UUID]bool // tracks hops currently being processed
 	processingHopsMutex sync.Mutex
+
+	// What Mendel last saw of each project's DNS and certificate, so the Domain
+	// page can render without waiting on gcloud. See domain_observe_cache.go.
+	domainObs      map[uuid.UUID]domainObservation
+	domainObsMutex sync.Mutex
 }
 
 type contextKey string
@@ -57,6 +62,7 @@ func NewServer(database *db.DB, addr, version, buildTime string) *Server {
 		orchestrator:   codegen.NewOrchestrator(database, codegen.DefaultConcurrency),
 		stopWorker:     make(chan struct{}),
 		processingHops: make(map[uuid.UUID]bool),
+		domainObs:      make(map[uuid.UUID]domainObservation),
 	}
 
 	// Initialize auth if configured
@@ -666,6 +672,7 @@ func (s *Server) setupRoutes() {
 
 		// Deployment channel routes
 		r.Get("/domain", s.handleProjectDomain)
+		r.Get("/domain/readiness", s.handleDomainReadiness)
 		r.Post("/domain", s.handleSaveProjectDomain)
 		r.Post("/domain/named-demos", s.handleSetNamedDemos)
 		r.Get("/deployment", s.handleDeploymentChannel)

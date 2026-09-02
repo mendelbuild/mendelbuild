@@ -1857,6 +1857,12 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
    coming is useful, being invited to start it is not. */
 .ladder-step[data-state="blocked"] { opacity: 0.5; }
 
+/* Mendel has not looked yet. Deliberately not the waiting or your-move colours:
+   an unknown step must not read as a step with an answer, or the page sends
+   someone to their DNS provider over a lookup that has not happened. */
+.ladder-step[data-state="checking"] { opacity: 0.6; }
+.ladder-step[data-state="checking"] .ladder-mark { color: var(--ink-3); }
+
 /* Channel setup, kept to hand rather than surfaced only when something breaks.
    Collapsed because it is reference, not a task. */
 .setup-details { margin: var(--sp-3) 0; }

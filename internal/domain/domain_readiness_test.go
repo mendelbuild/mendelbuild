@@ -18,7 +18,7 @@ func ladder(d *ProjectDomain, obs DomainObservation) map[string]DomainStep {
 // worse guidance than one.
 func TestLadderShowsOneNextThing(t *testing.T) {
 	empty := &ProjectDomain{}
-	steps := empty.DomainReadiness(DomainObservation{})
+	steps := empty.DomainReadiness(DomainObservation{Known: true})
 
 	yourMove := 0
 	for _, s := range steps {
@@ -44,7 +44,7 @@ func TestLadderShowsOneNextThing(t *testing.T) {
 func TestWrongRecordIsNotProgress(t *testing.T) {
 	d := &ProjectDomain{BaseDomain: "example.com", DemoSubdomain: "mendel-demos", StaticIP: "34.1.2.3"}
 
-	wrong := ladder(d, DomainObservation{WildcardTarget: "203.0.113.9"})["Create the wildcard A record"]
+	wrong := ladder(d, DomainObservation{Known: true, WildcardTarget: "203.0.113.9"})["Create the wildcard A record"]
 	if wrong.State == StepDone {
 		t.Fatal("a record pointing at the wrong address counted as done")
 	}
@@ -52,7 +52,7 @@ func TestWrongRecordIsNotProgress(t *testing.T) {
 		t.Errorf("the detail should show both addresses so the mistake is visible: %s", wrong.Detail)
 	}
 
-	right := ladder(d, DomainObservation{WildcardTarget: "34.1.2.3"})["Create the wildcard A record"]
+	right := ladder(d, DomainObservation{Known: true, WildcardTarget: "34.1.2.3"})["Create the wildcard A record"]
 	if right.State != StepDone {
 		t.Error("a record pointing at the reserved address is done")
 	}
@@ -66,7 +66,7 @@ func TestChallengeIgnoresTheTrailingDot(t *testing.T) {
 		ACMERecordName:  "_acme-challenge.mendel-demos.example.com",
 		ACMERecordValue: "abc.4.authorize.certificatemanager.goog.",
 	}
-	obs := DomainObservation{
+	obs := DomainObservation{Known: true,
 		WildcardTarget:  "34.1.2.3",
 		ChallengeTarget: "abc.4.authorize.certificatemanager.goog", // no trailing dot
 	}
@@ -83,13 +83,13 @@ func TestHeadlineNamesWhoIsHoldingItUp(t *testing.T) {
 	}
 
 	// Waiting on the user to create a record.
-	_, mine := DomainHeadline(d.DomainReadiness(DomainObservation{}))
+	_, mine := DomainHeadline(d.DomainReadiness(DomainObservation{Known: true}))
 	if !mine {
 		t.Error("an outstanding DNS record is the user's move")
 	}
 
 	// Waiting on the authority, which is nobody's move.
-	obs := DomainObservation{WildcardTarget: "34.1.2.3", ChallengeTarget: "abc.goog",
+	obs := DomainObservation{Known: true, WildcardTarget: "34.1.2.3", ChallengeTarget: "abc.goog",
 		CertificateState: "PROVISIONING"}
 	headline, mine := DomainHeadline(d.DomainReadiness(obs))
 	if mine {
@@ -104,5 +104,40 @@ func TestHeadlineNamesWhoIsHoldingItUp(t *testing.T) {
 	headline, mine = DomainHeadline(d.DomainReadiness(obs))
 	if mine || !strings.Contains(headline, "https") {
 		t.Errorf("finished ladder should say so: %q", headline)
+	}
+}
+
+// Not knowing is not the same as knowing the answer is no.
+//
+// The Domain page renders before Mendel has looked, because looking means
+// running gcloud and the page should not wait for it. Rendering the zero
+// observation as fact would tell someone to go and create records they created
+// an hour ago -- and, worse, would file that in their queue as their move.
+func TestUnobservedIsCheckingRatherThanOutstanding(t *testing.T) {
+	d := &ProjectDomain{
+		BaseDomain: "example.com", DemoSubdomain: "mendel-demos",
+		StaticIP: "34.1.2.3", ACMERecordName: "_acme-challenge.example.com",
+		ACMERecordValue: "abc.goog",
+	}
+
+	for name, step := range ladder(d, DomainObservation{}) {
+		switch name {
+		case "Give Mendel a domain you control", "Mendel reserves an address":
+			if step.State == StepChecking {
+				t.Errorf("%q needs no lookup and should not be checking", name)
+			}
+		default:
+			if step.State != StepChecking {
+				t.Errorf("%q claims %q without having looked", name, step.State)
+			}
+		}
+	}
+
+	headline, mine := DomainHeadline(d.DomainReadiness(DomainObservation{}))
+	if mine {
+		t.Error("an unobserved ladder must not be reported as the user's move")
+	}
+	if headline == "" {
+		t.Error("an unobserved ladder should still say what is going on")
 	}
 }

@@ -820,9 +820,18 @@ type gkeSession struct {
 	cleanup   func()
 }
 
-// newGKESession authenticates the service account and fetches cluster
-// credentials. The caller must call cleanup when finished.
-func newGKESession(ctx context.Context, env map[string]string) (*gkeSession, error) {
+// newGCloudSession authenticates to the project and nothing more. The caller
+// must call cleanup when finished.
+//
+// Most of what Mendel asks GCP is not about the cluster at all -- reserving an
+// address, requesting a certificate, reading its state -- and fetching cluster
+// credentials for those costs a GKE API round trip and a kubeconfig write to
+// produce a file nothing then opens. That was roughly half the wait on every
+// render of the Domain page.
+//
+// Use this whenever the work is `gcloud`. Use newGKESession only when something
+// will actually run `kubectl`.
+func newGCloudSession(ctx context.Context, env map[string]string) (*gkeSession, error) {
 	var missing []string
 	for _, name := range hosting.RequiredCredentialsForCombo(domain.DeployArtifactKubernetes, "gke") {
 		if strings.TrimSpace(env[name]) == "" {
@@ -860,24 +869,34 @@ func newGKESession(ctx context.Context, env map[string]string) (*gkeSession, err
 		return nil, fmt.Errorf("failed to authenticate service account: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 
+	return &gkeSession{env: cmdEnv, projectID: projectID, namespace: hosting.Namespace, cleanup: cleanup}, nil
+}
+
+// newGKESession adds cluster credentials, so kubectl has something to talk to.
+func newGKESession(ctx context.Context, env map[string]string) (*gkeSession, error) {
+	session, err := newGCloudSession(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+
 	// --location accepts either a zone or a region, so a regional cluster works
 	// through the same GKE_ZONE credential a zonal one uses.
 	getCreds := exec.CommandContext(ctx, "gcloud", "container", "clusters", "get-credentials",
 		env["GKE_CLUSTER_NAME"], "--location", env["GKE_ZONE"])
-	getCreds.Env = cmdEnv
+	getCreds.Env = session.env
 	if output, err := getCreds.CombinedOutput(); err != nil {
 		// Say which clusters the project does have. GKE_CLUSTER_NAME and
 		// GKE_ZONE are transcribed by hand, and the two are easy to swap, so
 		// the answer is nearly always in a list Mendel can already see -- and
 		// "no cluster named us-central1" sends the reader looking for a fault
 		// in the credentials rather than at the value in the box.
-		hint := gkeClusterHint(ctx, cmdEnv, projectID, env["GKE_CLUSTER_NAME"])
-		cleanup()
+		hint := gkeClusterHint(ctx, session.env, session.projectID, env["GKE_CLUSTER_NAME"])
+		session.cleanup()
 		return nil, fmt.Errorf("failed to get cluster credentials: %s%s: %w",
 			strings.TrimSpace(string(output)), hint, err)
 	}
 
-	return &gkeSession{env: cmdEnv, projectID: projectID, namespace: hosting.Namespace, cleanup: cleanup}, nil
+	return session, nil
 }
 
 // gkeClusterHint names the clusters the project actually holds, for an error

@@ -41,28 +41,11 @@
 {{end}}
 
 {{if .Steps}}
-<div class="card">
-    <div class="card-head">
-        <h2 class="card-title">Getting to https</h2>
-        <span class="badge badge-{{if .WaitingOnYou}}waiting{{else}}progress{{end}}">
-            {{if .WaitingOnYou}}Your move{{else}}{{.Headline}}{{end}}
-        </span>
-    </div>
-    <ol class="ladder">
-        {{range .Steps}}
-        <li class="ladder-step" data-state="{{.State}}">
-            <span class="ladder-mark" aria-hidden="true">{{if eq (printf "%v" .State) "done"}}&check;{{else}}&bull;{{end}}</span>
-            <span class="ladder-body">
-                <span class="ladder-name">{{.Name}}</span>
-                <span class="ladder-detail">{{.Detail}}</span>
-            </span>
-        </li>
-        {{end}}
-    </ol>
-    <p class="card-note subtle">
-        Mendel checks these itself &mdash; a record counts once it resolves, not once
-        it is reported. Nothing here is waiting on you being asked.
-    </p>
+{{/* Rendered on its own as well, for the poll that fills in the first
+     observation without the user reloading. See domain-ladder.js. */}}
+<div id="domain-ladder" data-checking="{{.Checking}}"
+     data-poll="/p/{{.ProjectID}}/domain/readiness">
+    {{template "domain-ladder" .}}
 </div>
 {{end}}
 
@@ -188,4 +171,33 @@
 </div>
 
 <script src="/static/js/domain-suffix.js"></script>
+<script src="/static/js/domain-ladder.js"></script>
 {{end}}
+
+{{define "domain-ladder"}}
+<div class="card">
+    <div class="card-head">
+        <h2 class="card-title">Getting to https</h2>
+        <span class="badge badge-{{if .Checking}}progress{{else if .WaitingOnYou}}waiting{{else}}progress{{end}}">
+            {{if .Checking}}Checking&hellip;{{else if .WaitingOnYou}}Your move{{else}}{{.Headline}}{{end}}
+        </span>
+    </div>
+    <ol class="ladder">
+        {{range .Steps}}
+        <li class="ladder-step" data-state="{{.State}}">
+            <span class="ladder-mark" aria-hidden="true">{{if eq (printf "%v" .State) "done"}}&check;{{else}}&bull;{{end}}</span>
+            <span class="ladder-body">
+                <span class="ladder-name">{{.Name}}</span>
+                <span class="ladder-detail">{{.Detail}}</span>
+            </span>
+        </li>
+        {{end}}
+    </ol>
+    <p class="card-note subtle">
+        Mendel checks these itself &mdash; a record counts once it resolves, not once
+        it is reported. Nothing here is waiting on you being asked.{{if .CheckedLabel}}
+        Last checked {{.CheckedLabel}}.{{end}}
+    </p>
+</div>
+{{end}}
+

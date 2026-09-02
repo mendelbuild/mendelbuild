@@ -27,6 +27,12 @@ type DomainObservation struct {
 	// CertificateState is the authority's own word for it: PROVISIONING, ACTIVE,
 	// FAILED, or empty when no certificate has been requested.
 	CertificateState string
+
+	// Known says an observation actually happened. The zero value of this struct
+	// is indistinguishable from "looked, and found nothing" -- which would tell a
+	// user to create records they created an hour ago. Not knowing yet is its own
+	// answer and gets its own state.
+	Known bool
 }
 
 // DomainStepState is how far one step has got.
@@ -37,6 +43,7 @@ const (
 	StepWaiting  DomainStepState = "waiting"  // Something else is working; nothing to do.
 	StepYourMove DomainStepState = "yourmove" // Blocked on the user.
 	StepBlocked  DomainStepState = "blocked"  // Cannot start until an earlier step finishes.
+	StepChecking DomainStepState = "checking" // Mendel has not looked yet.
 )
 
 // DomainStep is one rung of the ladder.
@@ -85,8 +92,8 @@ func (d *ProjectDomain) DomainReadiness(obs DomainObservation) []DomainStep {
 	}
 	steps = append(steps, DomainStep{
 		Name:   "Create the wildcard A record",
-		State:  gate(haveIP, wildcardRight, StepYourMove),
-		Detail: wildcardDetail,
+		State:  observed(obs, gate(haveIP, wildcardRight, StepYourMove)),
+		Detail: checkingOr(obs, wildcardDetail),
 	})
 
 	// 4. The ownership record for the certificate.
@@ -105,8 +112,8 @@ func (d *ProjectDomain) DomainReadiness(obs DomainObservation) []DomainStep {
 	}
 	steps = append(steps, DomainStep{
 		Name:   "Create the certificate record",
-		State:  gate(challengeAsked, challengeRight, StepYourMove),
-		Detail: challengeDetail,
+		State:  observed(obs, gate(challengeAsked, challengeRight, StepYourMove)),
+		Detail: checkingOr(obs, challengeDetail),
 	})
 
 	// 5. The authority's part, which nobody can hurry.
@@ -120,8 +127,8 @@ func (d *ProjectDomain) DomainReadiness(obs DomainObservation) []DomainStep {
 	}
 	steps = append(steps, DomainStep{
 		Name:   "Certificate issued",
-		State:  gate(challengeRight, certDone, StepWaiting),
-		Detail: certDetail,
+		State:  observed(obs, gate(challengeRight, certDone, StepWaiting)),
+		Detail: checkingOr(obs, certDetail),
 	})
 
 	return steps
@@ -131,6 +138,10 @@ func (d *ProjectDomain) DomainReadiness(obs DomainObservation) []DomainStep {
 func DomainHeadline(steps []DomainStep) (headline string, waitingOnYou bool) {
 	for _, s := range steps {
 		switch s.State {
+		case StepChecking:
+			// Not "your move" -- nobody should be sent to their DNS provider on
+			// the strength of an answer Mendel has not got yet.
+			return "Checking where this stands", false
 		case StepYourMove:
 			return s.Name, true
 		case StepWaiting:
@@ -141,6 +152,23 @@ func DomainHeadline(steps []DomainStep) (headline string, waitingOnYou bool) {
 		return "Demos are reachable by name over https", false
 	}
 	return "", false
+}
+
+// observed keeps a step from claiming an answer Mendel has not gone and got.
+// Only the steps whose truth comes from a lookup pass through here; a domain the
+// user typed in is known without asking anyone.
+func observed(obs DomainObservation, state DomainStepState) DomainStepState {
+	if !obs.Known {
+		return StepChecking
+	}
+	return state
+}
+
+func checkingOr(obs DomainObservation, detail string) string {
+	if !obs.Known {
+		return "Checking."
+	}
+	return detail
 }
 
 func stateIf(done bool, otherwise DomainStepState) DomainStepState {
