@@ -21,10 +21,18 @@ import (
 // be equally absent whether the answer is fresh or thirty seconds old.
 
 // domainObservationTTL is how long an observation is served before a render
-// triggers a new one. Short enough that a user who has just created a record
-// sees it recognised without hunting for a refresh button, long enough that
-// clicking around the settings tabs does not start a gcloud process per click.
-const domainObservationTTL = 30 * time.Second
+// triggers a new one.
+//
+// Short, because the thing being waited on is a record the user has just typed
+// into another tab, and the gap between creating it and Mendel acknowledging it
+// is the whole experience of this page. Nothing here polls, so this is not a
+// cadence: it only decides whether a visit reuses the last answer or asks again,
+// and a page nobody is looking at costs nothing.
+//
+// The cost of asking is one gcloud process for the certificate state; the two
+// DNS lookups are about 50ms between them. Refreshing happens behind the render
+// either way, so a short interval never makes the page slower to arrive.
+const domainObservationTTL = 10 * time.Second
 
 type domainObservation struct {
 	obs        domain.DomainObservation
