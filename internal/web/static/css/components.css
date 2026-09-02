@@ -1426,13 +1426,19 @@ a.callout:hover /* A stack manages the gaps between its own children, so a callo
 /* One line per block, so the markup carries no newline of its own -- a block
    element plus a literal newline renders every script double-spaced. */
 .script-line {
+    /* One value, because two rules depend on it and they must agree: the
+       highlighted line replaces this padding to bleed its background to the
+       block edges, and has to add the indent back. Written twice, they drifted,
+       and the first character of the highlighted line rendered off the edge. */
+    --script-indent: 2.5ch;
+
     display: block;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     /* A wrapped command continues indented, the way a terminal or a devtools
        console shows it, so the continuation is not mistaken for a new command. */
-    padding-left: 2.5ch;
-    text-indent: -2.5ch;
+    padding-left: var(--script-indent);
+    text-indent: calc(-1 * var(--script-indent));
 }
 
 /* A blank line in the script keeps its height; without this an empty block
@@ -1449,8 +1455,12 @@ a.callout:hover /* A stack manages the gaps between its own children, so a callo
     color: var(--tone-warning-ink);
     font-weight: 600;
     border-left: 3px solid var(--tone-warning);
+    /* Bleeds into the block's own padding so the highlight reaches the edges.
+       The padding carries the hanging indent as well as that offset: the
+       negative text-indent from .script-line still applies, so replacing the
+       padding with the offset alone drags the first character off the edge. */
     margin-left: calc(-1 * var(--sp-4));
-    padding-left: calc(var(--sp-4) - 3px);
+    padding-left: calc(var(--sp-4) - 3px + var(--script-indent));
     margin-right: calc(-1 * var(--sp-4));
     padding-right: var(--sp-4);
 }
