@@ -1,0 +1,141 @@
+{{define "page-content"}}
+
+<div class="page-head">
+    <span class="page-kind">Settings</span>
+    <h1 class="page-title">Domain</h1>
+    <p class="page-lede">
+        The names this project's deployments answer to. Mendel invents a name per demo
+        under a domain you control, and never touches your DNS &mdash; you create one
+        record and it covers every name Mendel will ever pick.
+    </p>
+</div>
+
+{{template "settings-tabs" .}}
+
+{{if .Success}}
+<div class="callout callout-success">
+    <p class="callout-body">Saved.</p>
+</div>
+{{end}}
+
+{{if .Error}}
+<div class="callout callout-failure">
+    <p class="callout-body">{{.Error}}</p>
+</div>
+{{end}}
+
+<div class="split">
+    <div class="stack">
+
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">Your domain</h2></div>
+            <form method="POST" action="/p/{{.ProjectID}}/domain">
+                <div class="field">
+                    <label for="base_domain">Domain you control</label>
+                    <span class="hint">Mendel puts names under this. It never creates or reads DNS records.</span>
+                    <input type="text" id="base_domain" name="base_domain" class="input-mono"
+                           value="{{.Domain.BaseDomain}}" placeholder="example.com" autocomplete="off" spellcheck="false">
+                </div>
+
+                <div class="field">
+                    <label for="demo_subdomain">Demos live under</label>
+                    <span class="hint">
+                        One label. A wildcard record covers exactly one, so demos are
+                        named <code>&lt;demo&gt;.&lt;this&gt;.{{if .Domain.BaseDomain}}{{.Domain.BaseDomain}}{{else}}example.com{{end}}</code>.
+                    </span>
+                    <input type="text" id="demo_subdomain" name="demo_subdomain" class="input-mono"
+                           value="{{.Domain.DemoSubdomain}}" placeholder="mendel-demos" autocomplete="off" spellcheck="false">
+                </div>
+
+                <div class="field">
+                    <label for="prod_subdomain">Production answers at</label>
+                    <span class="hint">One label, or leave empty if production has no name yet.</span>
+                    <input type="text" id="prod_subdomain" name="prod_subdomain" class="input-mono"
+                           value="{{.Domain.ProdSubdomain}}" placeholder="app" autocomplete="off" spellcheck="false">
+                </div>
+
+                <div class="actions">
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">Records to create</h2></div>
+
+            {{if .Records}}
+            <p class="card-note">
+                Create these in whatever manages DNS for
+                <code>{{.Domain.BaseDomain}}</code>. Both are made once; Mendel needs
+                nothing further from your DNS after that.
+            </p>
+            <table class="table">
+                <thead><tr><th>Type</th><th>Name</th><th>Value</th></tr></thead>
+                <tbody>
+                    {{range .Records}}
+                    <tr>
+                        <td class="mono">{{.Type}}</td>
+                        <td class="mono">{{.Name}}</td>
+                        <td class="mono">{{.Value}}</td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td colspan="2" class="subtle">{{.Why}}</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+            <p class="card-note">
+                Some providers want the name relative to the zone rather than in full &mdash;
+                <code>*.{{.Domain.DemoSubdomain}}</code> instead of
+                <code>{{.DemoWildcard}}</code>. Both mean the same record.
+            </p>
+            {{else}}
+            <p class="empty">{{.Blocker}}</p>
+            {{end}}
+        </div>
+
+    </div>
+
+    <div class="stack">
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">What this gives you</h2></div>
+            {{if .Domain.BaseDomain}}
+            <dl class="kv">
+                <dt>A demo</dt>
+                <dd class="mono">{{.ExampleHost}}</dd>
+                <dt>Every demo</dt>
+                <dd class="mono">{{.DemoWildcard}}</dd>
+                {{if .ProdHost}}
+                <dt>Production</dt>
+                <dd class="mono">{{.ProdHost}}</dd>
+                {{end}}
+                {{if .Domain.StaticIP}}
+                <dt>Address</dt>
+                <dd class="mono">{{.Domain.StaticIP}}</dd>
+                {{end}}
+            </dl>
+            {{else}}
+            <p class="empty">Give Mendel a domain and the names it will use appear here.</p>
+            {{end}}
+        </div>
+
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">Why a domain at all</h2></div>
+            <p class="card-note">
+                Some platforms hand a deployment a name of their own &mdash; Fly.io answers
+                with <code>&lt;app&gt;.fly.dev</code>. A Kubernetes cluster hands out an
+                address and nothing else, and an address is not something a sign-in
+                provider will accept: a redirect URI has to name a host, and has to be
+                https.
+            </p>
+            {{if not .NeedsDomain}}
+            <p class="card-note subtle">
+                This project's current channel issues its own names, so nothing here is
+                required. It stays useful if the channel changes.
+            </p>
+            {{end}}
+        </div>
+    </div>
+</div>
+{{end}}

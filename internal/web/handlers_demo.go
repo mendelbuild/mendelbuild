@@ -396,7 +396,7 @@ func (s *Server) runChannelDemoDeployment(
 	case "cloud-run":
 		url, deployErr = s.deployToCloudRun(ctx, appName, workDir, env, appSecrets, logMilestone, logInfo)
 	case "gke":
-		url, deployErr = s.deployToGKE(ctx, appName, workDir, env, appSecrets, logMilestone, logInfo)
+		url, deployErr = s.deployToGKE(ctx, projectID, appName, workDir, env, appSecrets, logMilestone, logInfo)
 	default:
 		failDemo("Unsupported platform: " + channel.HostingPlatform.Slug)
 		return
@@ -660,7 +660,7 @@ func (s *Server) deployToCloudRun(
 // to cover them all -- and it is cheaper besides, since a LoadBalancer bills per
 // hour and there was previously one per demo. Without a hostname the old shape
 // stands, so a project that has given Mendel no domain keeps working.
-func k8sManifestFor(deploymentName, imageName, envFrom, hostname string) string {
+func k8sManifestFor(deploymentName, imageName, envFrom, hostname, staticIPName string) string {
 	serviceType := "LoadBalancer"
 	if hostname != "" {
 		serviceType = "ClusterIP"
@@ -720,13 +720,20 @@ spec:
 	// removes its own rule and teardown needs no edit of a shared object --
 	// which would otherwise be a read-modify-write race between demos starting
 	// and stopping at once.
+	staticIP := ""
+	if staticIPName != "" {
+		// Without this the load balancer takes whatever address is free, which is
+		// not the one the user's DNS record points at.
+		staticIP = fmt.Sprintf("\n    kubernetes.io/ingress.global-static-ip-name: %q", staticIPName)
+	}
+
 	manifest += fmt.Sprintf(`---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: %s
   annotations:
-    kubernetes.io/ingress.class: "gce"
+    kubernetes.io/ingress.class: "gce"%s
 spec:
   rules:
   - host: %s
@@ -739,7 +746,7 @@ spec:
             name: %s
             port:
               number: 80
-`, deploymentName, hostname, deploymentName)
+`, deploymentName, staticIP, hostname, deploymentName)
 	return manifest
 }
 
@@ -898,6 +905,7 @@ func (g *gkeSession) buildImage(ctx context.Context, deploymentName, workDir str
 // deployToGKE deploys a working directory to Google Kubernetes Engine under the given deployment name.
 func (s *Server) deployToGKE(
 	ctx context.Context,
+	projectID uuid.UUID,
 	deploymentName string,
 	workDir string,
 	env map[string]string,
@@ -957,9 +965,19 @@ func (s *Server) deployToGKE(
 		envFrom = fmt.Sprintf("\n        envFrom:\n        - secretRef:\n            name: %s", secretName)
 	}
 
-	// A hostname only exists if the user gave Mendel a domain to build one from.
-	hostname := domain.DeploymentHostname(deploymentName, env[domain.BaseDomainCredential])
-	manifest := k8sManifestFor(deploymentName, imageName, envFrom, hostname)
+	// A hostname only exists if the project has a domain to build one from, and
+	// an address for its records to point at. Reserving the address here rather
+	// than at channel setup means it exists by the time anything needs it, and
+	// costs nothing on a project that never asks for a domain.
+	hostname, ipName := "", ""
+	if pd, err := s.db.GetProjectDomain(ctx, projectID); err == nil && pd != nil && pd.BaseDomain != "" {
+		if _, err := s.ensureStaticIP(ctx, projectID, session); err != nil {
+			logInfo("Could not reserve an address, so this demo keeps a bare one: " + err.Error())
+		} else {
+			hostname, ipName = pd.DemoHost(deploymentName), staticIPName(projectID)
+		}
+	}
+	manifest := k8sManifestFor(deploymentName, imageName, envFrom, hostname, ipName)
 
 	manifestPath := filepath.Join(workDir, "k8s-deploy.yaml")
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0644); err != nil {
@@ -1532,4 +1550,56 @@ func (s *Server) addOptionalCredentials(
 		}
 		env[name] = string(decrypted)
 	}
+}
+
+// staticIPName is what Mendel calls the address it reserves for a project. One
+// per project, named after it, so a user looking at their GCP console can tell
+// what it is for and Mendel can find it again without recording a lookup key.
+func staticIPName(projectID uuid.UUID) string {
+	return "mendel-" + projectID.String()[:8]
+}
+
+// ensureStaticIP reserves the address a project's DNS records point at, and
+// records it so the Domain page can state the record.
+//
+// Reserved rather than left to the load balancer, for two reasons. An ephemeral
+// address is not known until something has been deployed, which is backwards: the
+// record has to exist before the first deployment is reachable. And it changes
+// when the load balancer is recreated, which would silently break every record
+// pointing at it.
+//
+// Global, because that is what a GKE Ingress binds to; a regional address is
+// accepted by gcloud and then never used by the Ingress.
+func (s *Server) ensureStaticIP(ctx context.Context, projectID uuid.UUID, session *gkeSession) (string, error) {
+	if existing, err := s.db.GetProjectDomain(ctx, projectID); err == nil && existing != nil && existing.StaticIP != "" {
+		return existing.StaticIP, nil
+	}
+
+	name := staticIPName(projectID)
+
+	// Creating one that exists is not an error: this runs on every deploy, and
+	// the address outlives any of them.
+	create := exec.CommandContext(ctx, "gcloud", "compute", "addresses", "create", name,
+		"--global", "--project", session.projectID)
+	create.Env = session.env
+	if out, err := create.CombinedOutput(); err != nil && !strings.Contains(string(out), "already exists") {
+		return "", fmt.Errorf("could not reserve an address: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+
+	describe := exec.CommandContext(ctx, "gcloud", "compute", "addresses", "describe", name,
+		"--global", "--project", session.projectID, "--format", "value(address)")
+	describe.Env = session.env
+	out, err := describe.Output()
+	if err != nil {
+		return "", fmt.Errorf("reserved an address but could not read it back: %w", err)
+	}
+	ip := strings.TrimSpace(string(out))
+	if ip == "" {
+		return "", fmt.Errorf("reserved address %s has no address", name)
+	}
+
+	if err := s.db.SetProjectStaticIP(ctx, projectID, ip, name); err != nil {
+		return "", fmt.Errorf("could not record the reserved address: %w", err)
+	}
+	return ip, nil
 }

@@ -11,7 +11,7 @@ import (
 // Mendel no domain. It still deploys and is still reachable; nothing about this
 // change may require a domain to keep working.
 func TestManifestWithoutHostnameKeepsLoadBalancer(t *testing.T) {
-	m := k8sManifestFor("pong-abc123", "gcr.io/x/pong:1", "", "")
+	m := k8sManifestFor("pong-abc123", "gcr.io/x/pong:1", "", "", "")
 
 	if !strings.Contains(m, "type: LoadBalancer") {
 		t.Error("without a hostname the Service should still be a LoadBalancer")
@@ -31,7 +31,7 @@ func TestManifestWithoutHostnameKeepsLoadBalancer(t *testing.T) {
 // address and one wildcard record.
 func TestManifestWithHostnameRoutesByHost(t *testing.T) {
 	host := "pong-abc123.demos.example.com"
-	m := k8sManifestFor("pong-abc123", "gcr.io/x/pong:1", "", host)
+	m := k8sManifestFor("pong-abc123", "gcr.io/x/pong:1", "", host, "")
 
 	if !strings.Contains(m, "type: ClusterIP") {
 		t.Error("a routed deployment needs no LoadBalancer of its own")
@@ -94,12 +94,33 @@ func TestDeploymentHostnameIsOneLabel(t *testing.T) {
 // traffic; the documented replacement draws no events at all and never gets an
 // address.
 func TestIngressUsesTheClassAnnotation(t *testing.T) {
-	m := k8sManifestFor("pong-abc123", "img", "", "pong-abc123.demos.example.com")
+	m := k8sManifestFor("pong-abc123", "img", "", "pong-abc123.demos.example.com", "")
 
 	if !strings.Contains(m, `kubernetes.io/ingress.class: "gce"`) {
 		t.Error("the Ingress class annotation is missing; without it GKE never provisions the Ingress")
 	}
 	if strings.Contains(m, "ingressClassName") {
 		t.Error("spec.ingressClassName names a class GKE does not create, and silently prevents provisioning")
+	}
+}
+
+// TestIngressPinsToTheReservedAddress covers the link between the DNS record a
+// user typed and the load balancer that answers it.
+//
+// The record points at one address. Without this annotation the load balancer
+// takes whichever address is free, so the name resolves somewhere nothing is
+// listening -- and the deployment itself is fine, which makes it look like a DNS
+// mistake the user made.
+func TestIngressPinsToTheReservedAddress(t *testing.T) {
+	pinned := k8sManifestFor("pong-abc123", "img", "", "pong-abc123.demos.example.com", "mendel-1a2b3c4d")
+	if !strings.Contains(pinned, `kubernetes.io/ingress.global-static-ip-name: "mendel-1a2b3c4d"`) {
+		t.Error("Ingress is not pinned to the reserved address")
+	}
+
+	// A project with a hostname but no reserved address must not gain a broken
+	// annotation naming an address that does not exist.
+	unpinned := k8sManifestFor("pong-abc123", "img", "", "pong-abc123.demos.example.com", "")
+	if strings.Contains(unpinned, "global-static-ip-name") {
+		t.Error("named an address that was never reserved")
 	}
 }

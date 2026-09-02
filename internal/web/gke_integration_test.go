@@ -1,6 +1,7 @@
 package web
 
 import (
+	"github.com/google/uuid"
 	"context"
 	"net/http"
 	"os"
@@ -70,7 +71,7 @@ func TestGKEDeployRoundTrip(t *testing.T) {
 		}
 	})
 
-	url, err := srv.deployToGKE(ctx, deploymentName, workDir, env, appSecrets, logf, logf)
+	url, err := srv.deployToGKE(ctx, uuid.New(), deploymentName, workDir, env, appSecrets, logf, logf)
 	if err != nil {
 		t.Fatalf("deployToGKE: %v", err)
 	}

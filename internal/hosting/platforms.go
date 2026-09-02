@@ -235,9 +235,11 @@ gcloud services enable container.googleapis.com cloudbuild.googleapis.com artifa
 # A service account for Mendel. Harmless if it already exists.
 gcloud iam service-accounts create mendel-deployer --project "$GCP_PROJECT" --display-name "Mendel Deployer" || true
 
-# Cluster access, image build and push, the Cloud Build staging bucket, and
-# permission to act as the build's own service account.
-for ROLE in container.developer cloudbuild.builds.editor artifactregistry.writer storage.admin iam.serviceAccountUser; do
+# Cluster access, image build and push, the Cloud Build staging bucket, permission
+# to act as the build's own service account, and reserving the static address the
+# demos' DNS record points at -- container.developer does not include that last
+# one, so without it Mendel cannot tell you which record to create.
+for ROLE in container.developer cloudbuild.builds.editor artifactregistry.writer storage.admin iam.serviceAccountUser compute.publicIpAdmin; do
   gcloud projects add-iam-policy-binding "$GCP_PROJECT" --member "serviceAccount:mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com" --role "roles/$ROLE" --condition None --quiet > /dev/null
 done
 
@@ -397,11 +399,6 @@ func DefaultCombos() []ComboSpec {
 			PlatformSlug:        "gke",
 			Notes:               "Kubernetes deployment to Google Kubernetes Engine",
 			RequiredCredentials: []string{"GCP_PROJECT_ID", "GCP_SERVICE_ACCOUNT_KEY", "GKE_CLUSTER_NAME", "GKE_ZONE"},
-			// Not required: a deployment reached at its address runs perfectly
-			// well, and most variations never need to be reachable *as*
-			// anything. Only the ones registering a redirect URI or a webhook
-			// do, and blocking every deploy for their sake would be wrong.
-			OptionalCredentials: []string{domain.BaseDomainCredential},
 			Guidance: map[string]any{
 				"requires":    []string{"k8s manifests or Helm chart", "GKE cluster"},
 				"healthCheck": "Use readiness/liveness probes in deployment spec",

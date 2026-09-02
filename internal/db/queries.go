@@ -3023,3 +3023,52 @@ func parseInputDate(v *string) *time.Time {
 	}
 	return nil
 }
+
+// --- Project domains ---
+
+// GetProjectDomain returns a project's domain settings, or nil when it has none.
+func (db *DB) GetProjectDomain(ctx context.Context, projectID uuid.UUID) (*domain.ProjectDomain, error) {
+	var d domain.ProjectDomain
+	err := db.Pool.QueryRow(ctx, `
+		SELECT project_id, base_domain, demo_subdomain, prod_subdomain,
+		       static_ip, static_ip_name, created_at, updated_at
+		FROM project_domains WHERE project_id = $1
+	`, projectID).Scan(&d.ProjectID, &d.BaseDomain, &d.DemoSubdomain, &d.ProdSubdomain,
+		&d.StaticIP, &d.StaticIPName, &d.CreatedAt, &d.UpdatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &d, nil
+}
+
+// UpsertProjectDomain saves the parts of the domain the user chooses, leaving
+// the reserved address alone: that is Mendel's to set, and editing the domain
+// must not discard it.
+func (db *DB) UpsertProjectDomain(ctx context.Context, d *domain.ProjectDomain) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO project_domains (project_id, base_domain, demo_subdomain, prod_subdomain)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (project_id) DO UPDATE SET
+			base_domain = EXCLUDED.base_domain,
+			demo_subdomain = EXCLUDED.demo_subdomain,
+			prod_subdomain = EXCLUDED.prod_subdomain,
+			updated_at = NOW()
+	`, d.ProjectID, d.BaseDomain, d.DemoSubdomain, d.ProdSubdomain)
+	return err
+}
+
+// SetProjectStaticIP records the address Mendel reserved for a project.
+func (db *DB) SetProjectStaticIP(ctx context.Context, projectID uuid.UUID, ip, name string) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO project_domains (project_id, base_domain, static_ip, static_ip_name)
+		VALUES ($1, '', $2, $3)
+		ON CONFLICT (project_id) DO UPDATE SET
+			static_ip = EXCLUDED.static_ip,
+			static_ip_name = EXCLUDED.static_ip_name,
+			updated_at = NOW()
+	`, projectID, ip, name)
+	return err
+}
