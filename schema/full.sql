@@ -335,6 +335,12 @@ CREATE TABLE hops (
     requires_demo BOOLEAN NOT NULL DEFAULT false,
     requires_production BOOLEAN NOT NULL DEFAULT false,
 
+    -- Whether this Hop's Variations take live traffic beside the current code.
+    -- Code generation only declares an experiment when asked: a Variation that
+    -- declared one unasked would put real traffic on a comparison nobody
+    -- designed.
+    live_experiment BOOLEAN NOT NULL DEFAULT false,
+
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'active', 'selecting', 'completed', 'rejected', 'abandoned')),
 
@@ -1241,6 +1247,12 @@ CREATE TABLE experiment_arms (
 
     -- Filled once the Arm is deployed; empty before that.
     deployment_name TEXT NOT NULL DEFAULT '',
+
+    -- What this Arm proposes, before anything has judged it. A verdict needs the
+    -- user's datastore to reach, so the migration has to survive the gap between
+    -- code generation writing it and admission ruling on it.
+    declared_migration_up TEXT NOT NULL DEFAULT '',
+    declared_migration_down TEXT NOT NULL DEFAULT '',
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

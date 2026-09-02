@@ -111,6 +111,7 @@ User repositories have a `.mendel/` directory for Mendel configuration. **Only t
   test-config.yml           # Test settings (optional)
   migration.json            # Migration instructions (optional)
   requirements.json         # What the code needs in order to run (optional)
+  experiment.json           # Live-traffic experiment declaration (optional)
 ```
 
 **DO NOT create any other files in `.mendel/`** - no documentation. Docs belong in repo root or `docs/`.
@@ -161,6 +162,41 @@ production yield separate acknowledgements.
 
 Requirements gate both `handleStartDemo` and `runChannelProdDeployment`. The
 file is optional and most variations will not have one.
+
+### `experiment.json` Spec
+
+Parsed in `internal/codegen/experiment_declaration.go`, stored in `experiments`
+and `experiment_arms`. Written only when the Hop has `live_experiment` set,
+because a Variation that declared one unasked would put real traffic on a
+comparison nobody designed.
+
+```json
+{
+  "assignment_unit": "user",
+  "assignment_key": {"source": "cookie", "name": "session_id"},
+  "migration": {
+    "up": "ALTER TABLE orders ADD COLUMN mendel_exp_b_score INT;",
+    "down": "ALTER TABLE orders DROP COLUMN mendel_exp_b_score;"
+  },
+  "dissonance": "Scores shown against past orders disappear."
+}
+```
+
+The two halves are different in kind and deliberately share a file. The
+assignment unit is a property of the *application* — what one participant is,
+and where that identity can be read at the edge — and is the same for every
+Variation. The migration is a property of *this* Variation.
+
+Validation here is **structural only**. Whether a migration is genuinely
+additive is settled by applying it to the user's datastore and diffing, not by
+reading the text, and the lints that read text are dialect-specific — running a
+Postgres lint at declaration time would assume the user's database is Postgres.
+That judgment belongs in `internal/experiment`, where a real datastore is in
+hand. See "Mendel's Tech Choices Say Nothing About the User's" above.
+
+`assignment_unit: request` forbids a migration outright: one person meets both
+Arms, so per-participant writes are incoherent. That is a derivation from the
+unit rather than a separate rule.
 
 ### Deployment Channels
 

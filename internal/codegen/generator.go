@@ -213,7 +213,8 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 	case resuming:
 		prompt = BuildResumePrompt(hopName, variation.Name, variation.Approach, g.config.ArtifactKind)
 	default:
-		prompt = BuildImplementationPrompt(hopName, variation.Name, variation.Approach, g.config.ArtifactKind)
+		prompt = BuildImplementationPrompt(hopName, variation.Name, variation.Approach,
+			g.config.ArtifactKind, g.hopWantsExperiment(ctx, variation.HopID))
 	}
 	execResult, err := exec.Run(ctx, executor.SystemPrompt(), prompt)
 	if err != nil {
@@ -265,6 +266,13 @@ func (g *Generator) Generate(ctx context.Context, variation *domain.Variation, h
 	if err := g.saveRequirements(ctx, workDir, variation.ID, logger); err != nil {
 		// Log but don't fail - most variations need nothing to run.
 		logger(domain.LogLevelInfo, fmt.Sprintf("No declared requirements: %v", err))
+	}
+
+	// 4c. Check for a live-experiment declaration. Most variations have none;
+	// one that does is asking for live traffic and saying what that costs the
+	// schema, which is the upstream half internal/experiment never had.
+	if err := g.saveExperimentDeclaration(ctx, workDir, variation, logger); err != nil {
+		logger(domain.LogLevelInfo, fmt.Sprintf("No live experiment: %v", err))
 	}
 
 	// 5. Commit changes (before tests so branch is visible on GitHub even if tests fail)

@@ -102,6 +102,12 @@ type ExperimentArm struct {
 	AllocationWeight int    `json:"allocation_weight"`
 	DeploymentName   string `json:"deployment_name"`
 
+	// What this Arm proposes, before anything has judged it. Admission needs the
+	// user's datastore to reach a verdict, so the migration has to survive the
+	// gap between code generation writing it and admission ruling on it.
+	DeclaredMigrationUp   string `json:"declared_migration_up,omitempty"`
+	DeclaredMigrationDown string `json:"declared_migration_down,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

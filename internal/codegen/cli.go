@@ -21,7 +21,7 @@ func shortenPath(path string) string {
 
 // BuildImplementationPrompt constructs the prompt for implementing a variation.
 // artifactKind specifies the deployment artifact type: "container", "kubernetes", "static", "source_deploy", or empty.
-func BuildImplementationPrompt(hopName, variationName, approach, artifactKind string) string {
+func BuildImplementationPrompt(hopName, variationName, approach, artifactKind string, wantsExperiment bool) string {
 	var prompt strings.Builder
 
 	prompt.WriteString(fmt.Sprintf("# Task: Implement the '%s' variation for hop '%s'\n\n", variationName, hopName))
@@ -75,7 +75,14 @@ func BuildImplementationPrompt(hopName, variationName, approach, artifactKind st
 	prompt.WriteString("The `.mendel/` directory is for Mendel configuration ONLY. Allowed files:\n")
 	prompt.WriteString("- `test-config.yml` / `docker-compose.test.yml` - Test config\n")
 	prompt.WriteString("- `migration.json` - Migration instructions (if schema changes needed)\n")
-	prompt.WriteString("- `requirements.json` - What the code needs in order to run (if anything)\n\n")
+	prompt.WriteString("- `requirements.json` - What the code needs in order to run (if anything)\n")
+	// Listed only when asked for. Naming a file in the allowed set is an
+	// invitation to create it, and a variation that declares a live experiment
+	// unasked would put real traffic on a comparison nobody designed.
+	if wantsExperiment {
+		prompt.WriteString("- `experiment.json` - Live-traffic experiment declaration (see below)\n")
+	}
+	prompt.WriteString("\n")
 	prompt.WriteString("**DO NOT create any other files in `.mendel/`** - no documentation, no summaries.\n")
 
 	prompt.WriteString("\n## Testing (Optional)\n\n")
@@ -103,6 +110,49 @@ func BuildImplementationPrompt(hopName, variationName, approach, artifactKind st
 	prompt.WriteString("}\n")
 	prompt.WriteString("```\n\n")
 	prompt.WriteString("If no schema changes needed, skip migration steps entirely.\n")
+
+	// The upstream half of live experiments. Only reachable when the caller asks
+	// for it: an ordinary Variation is deployed whole, and declaring an
+	// experiment it was not asked for would put real traffic on a comparison
+	// nobody designed.
+	if wantsExperiment {
+		prompt.WriteString("\n## Live-Traffic Experiment\n\n")
+		prompt.WriteString("This variation will run against real traffic beside the current code, ")
+		prompt.WriteString("so create `.mendel/experiment.json`:\n")
+		prompt.WriteString("```json\n")
+		prompt.WriteString("{\n")
+		prompt.WriteString("  \"assignment_unit\": \"user\",\n")
+		prompt.WriteString("  \"assignment_key\": {\"source\": \"cookie\", \"name\": \"session_id\"},\n")
+		prompt.WriteString("  \"migration\": {\n")
+		prompt.WriteString("    \"up\": \"ALTER TABLE orders ADD COLUMN mendel_exp_<arm>_score INT;\",\n")
+		prompt.WriteString("    \"down\": \"ALTER TABLE orders DROP COLUMN mendel_exp_<arm>_score;\"\n")
+		prompt.WriteString("  },\n")
+		prompt.WriteString("  \"dissonance\": \"What a person who saw this variation notices when it stops.\"\n")
+		prompt.WriteString("}\n")
+		prompt.WriteString("```\n\n")
+
+		prompt.WriteString("Rules, all of which are checked and any of which will reject the variation:\n\n")
+		prompt.WriteString("- **`assignment_unit`** is what one participant is: `user`, `session`, `request` ")
+		prompt.WriteString("or `tenant`. Say what the application actually keys its data by, not what sounds ")
+		prompt.WriteString("best: this same value decides how traffic is split and how results are counted, ")
+		prompt.WriteString("and a wrong one makes the comparison meaningless rather than merely imprecise.\n")
+		prompt.WriteString("- **`assignment_key`** is where that identity can be read at the edge, before ")
+		prompt.WriteString("any of this variation's code runs.\n")
+		prompt.WriteString("- **The migration must be purely additive.** Add columns, tables and indexes; ")
+		prompt.WriteString("never drop, rename or change a type. The existing code keeps running against ")
+		prompt.WriteString("the same schema throughout, so anything it can observe must not move.\n")
+		prompt.WriteString("- **Every object you create must be prefixed `mendel_exp_`.** Other variations ")
+		prompt.WriteString("of this hop are applying their own migrations to the same database at the same ")
+		prompt.WriteString("time; the prefix is what stops two of them colliding.\n")
+		prompt.WriteString("- **The `down` must undo the `up` exactly.** It is what allows the variation to ")
+		prompt.WriteString("be withdrawn, and one that cannot be withdrawn will not be run.\n")
+		prompt.WriteString("- **`assignment_unit: request` forbids a migration.** One person would meet both ")
+		prompt.WriteString("versions, so per-participant writes are incoherent. Omit `migration` entirely.\n")
+		prompt.WriteString("- **`dissonance`** is what a real person notices when this variation is taken ")
+		prompt.WriteString("away mid-use. Write it plainly; a human reads it and types a phrase to accept it.\n\n")
+		prompt.WriteString("If this variation changes nothing about the schema, omit `migration` and keep ")
+		prompt.WriteString("the rest.\n")
+	}
 
 	prompt.WriteString("\n## What the Code Needs to Run\n\n")
 	prompt.WriteString("If your changes mean the app cannot function without something a human must\n")

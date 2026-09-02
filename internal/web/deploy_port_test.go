@@ -61,7 +61,7 @@ func TestK8sManifestRoutesToThePortTheAppIsTold(t *testing.T) {
 // it. A prompt naming a different port is how the app came to listen on 3000
 // while Fly waited on 8080.
 func TestCodegenPromptNamesTheDeployedPort(t *testing.T) {
-	prompt := codegen.BuildImplementationPrompt("email-password-auth", "google-oauth", "Wire up Google sign-in.", "container")
+	prompt := codegen.BuildImplementationPrompt("email-password-auth", "google-oauth", "Wire up Google sign-in.", "container", false)
 
 	if !strings.Contains(prompt, "PORT") {
 		t.Error("the container prompt must tell the app to read PORT")

@@ -569,10 +569,10 @@ func (db *DB) GetInputRequestMessages(ctx context.Context, inputRequestID uuid.U
 func (db *DB) CreateHop(ctx context.Context, h *domain.Hop) error {
 	_, err := db.Pool.Exec(ctx, `
 		INSERT INTO hops (id, strategy_id, name, commentary, params, evaluation_criteria,
-		                  requires_demo, requires_production, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+		                  requires_demo, requires_production, live_experiment, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
 	`, h.ID, h.StrategyID, h.Name, h.Commentary, h.Params, h.EvaluationCriteria,
-		h.RequiresDemo, h.RequiresProduction, h.Status, h.CreatedAt)
+		h.RequiresDemo, h.RequiresProduction, h.LiveExperiment, h.Status, h.CreatedAt)
 	return err
 }
 
@@ -617,7 +617,7 @@ func (db *DB) GetPrimaryFundingSource(ctx context.Context, strategyID uuid.UUID)
 func (db *DB) GetHopsByStrategy(ctx context.Context, strategyID uuid.UUID) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT id, strategy_id, name, commentary, params, evaluation_criteria,
-		       requires_demo, requires_production, status, created_at, updated_at
+		       requires_demo, requires_production, live_experiment, status, created_at, updated_at
 		FROM hops
 		WHERE strategy_id = $1
 		ORDER BY created_at ASC
@@ -631,7 +631,7 @@ func (db *DB) GetHopsByStrategy(ctx context.Context, strategyID uuid.UUID) ([]do
 	for rows.Next() {
 		var h domain.Hop
 		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria,
-			&h.RequiresDemo, &h.RequiresProduction, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+			&h.RequiresDemo, &h.RequiresProduction, &h.LiveExperiment, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 		hops = append(hops, h)
@@ -644,10 +644,10 @@ func (db *DB) GetHop(ctx context.Context, id uuid.UUID) (*domain.Hop, error) {
 	var h domain.Hop
 	err := db.Pool.QueryRow(ctx, `
 		SELECT id, strategy_id, name, commentary, params, evaluation_criteria,
-		       requires_demo, requires_production, status, created_at, updated_at
+		       requires_demo, requires_production, live_experiment, status, created_at, updated_at
 		FROM hops WHERE id = $1
 	`, id).Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria,
-		&h.RequiresDemo, &h.RequiresProduction, &h.Status, &h.CreatedAt, &h.UpdatedAt)
+		&h.RequiresDemo, &h.RequiresProduction, &h.LiveExperiment, &h.Status, &h.CreatedAt, &h.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -782,7 +782,7 @@ func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain
 func (db *DB) GetHopsWithCreatingVariations(ctx context.Context) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT DISTINCT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria,
-		       h.requires_demo, h.requires_production, h.status, h.created_at, h.updated_at
+		       h.requires_demo, h.requires_production, h.live_experiment, h.status, h.created_at, h.updated_at
 		FROM hops h
 		JOIN variations v ON v.hop_id = h.id
 		WHERE v.status = 'creating'
@@ -797,7 +797,7 @@ func (db *DB) GetHopsWithCreatingVariations(ctx context.Context) ([]domain.Hop, 
 	for rows.Next() {
 		var h domain.Hop
 		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria,
-			&h.RequiresDemo, &h.RequiresProduction, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+			&h.RequiresDemo, &h.RequiresProduction, &h.LiveExperiment, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 		hops = append(hops, h)
@@ -1037,7 +1037,7 @@ func (db *DB) GetInputRequestBySubjectAndKind(ctx context.Context, subjectType s
 func (db *DB) GetHopsNeedingSelectionInputRequest(ctx context.Context) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT DISTINCT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria,
-		       h.requires_demo, h.requires_production, h.status, h.created_at, h.updated_at
+		       h.requires_demo, h.requires_production, h.live_experiment, h.status, h.created_at, h.updated_at
 		FROM hops h
 		JOIN variations v ON v.hop_id = h.id
 		WHERE h.status IN ('active', 'selecting')
@@ -1067,7 +1067,7 @@ func (db *DB) GetHopsNeedingSelectionInputRequest(ctx context.Context) ([]domain
 	for rows.Next() {
 		var h domain.Hop
 		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria,
-			&h.RequiresDemo, &h.RequiresProduction, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+			&h.RequiresDemo, &h.RequiresProduction, &h.LiveExperiment, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 		hops = append(hops, h)
@@ -1080,7 +1080,7 @@ func (db *DB) GetHopsNeedingSelectionInputRequest(ctx context.Context) ([]domain
 func (db *DB) GetHopsReadyForSelection(ctx context.Context) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria,
-		       h.requires_demo, h.requires_production, h.status, h.created_at, h.updated_at
+		       h.requires_demo, h.requires_production, h.live_experiment, h.status, h.created_at, h.updated_at
 		FROM hops h
 		WHERE h.status = 'active'
 		  AND EXISTS (
@@ -1100,7 +1100,7 @@ func (db *DB) GetHopsReadyForSelection(ctx context.Context) ([]domain.Hop, error
 	for rows.Next() {
 		var h domain.Hop
 		if err := rows.Scan(&h.ID, &h.StrategyID, &h.Name, &h.Commentary, &h.Params, &h.EvaluationCriteria,
-			&h.RequiresDemo, &h.RequiresProduction, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
+			&h.RequiresDemo, &h.RequiresProduction, &h.LiveExperiment, &h.Status, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 		hops = append(hops, h)

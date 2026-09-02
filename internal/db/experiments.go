@@ -127,18 +127,53 @@ func (db *DB) CreateExperimentArm(ctx context.Context, a *domain.ExperimentArm) 
 		a.ID = uuid.New()
 	}
 	return db.Pool.QueryRow(ctx, `
-		INSERT INTO experiment_arms (id, experiment_id, variation_id, slug, allocation_weight, deployment_name)
-		VALUES ($1,$2,$3,$4,$5,$6)
+		INSERT INTO experiment_arms (id, experiment_id, variation_id, slug, allocation_weight,
+		                             deployment_name, declared_migration_up, declared_migration_down)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		RETURNING created_at, updated_at
 	`, a.ID, a.ExperimentID, a.VariationID, a.Slug, a.AllocationWeight, a.DeploymentName,
+		a.DeclaredMigrationUp, a.DeclaredMigrationDown,
 	).Scan(&a.CreatedAt, &a.UpdatedAt)
+}
+
+// UpsertExperimentArm creates an Arm or updates the Variation's existing one.
+//
+// A Variation is generated more than once -- a revision re-runs the whole thing
+// -- and the second run must replace what it declared rather than fail on a
+// unique constraint or leave the first run's migration in place.
+func (db *DB) UpsertExperimentArm(ctx context.Context, a *domain.ExperimentArm) error {
+	if a.ID == uuid.Nil {
+		a.ID = uuid.New()
+	}
+	return db.Pool.QueryRow(ctx, `
+		INSERT INTO experiment_arms (id, experiment_id, variation_id, slug, allocation_weight,
+		                             deployment_name, declared_migration_up, declared_migration_down)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		ON CONFLICT (experiment_id, slug) DO UPDATE SET
+			declared_migration_up = EXCLUDED.declared_migration_up,
+			declared_migration_down = EXCLUDED.declared_migration_down,
+			updated_at = NOW()
+		RETURNING id, created_at, updated_at
+	`, a.ID, a.ExperimentID, a.VariationID, a.Slug, a.AllocationWeight, a.DeploymentName,
+		a.DeclaredMigrationUp, a.DeclaredMigrationDown,
+	).Scan(&a.ID, &a.CreatedAt, &a.UpdatedAt)
+}
+
+// SetExperimentDissonance records what withdrawal will feel like, and the phrase
+// the Mendel user will have to type to acknowledge it.
+func (db *DB) SetExperimentDissonance(ctx context.Context, id uuid.UUID, description, phrase string) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE experiments SET dissonance_description = $2, dissonance_phrase = $3, updated_at = NOW()
+		WHERE id = $1
+	`, id, description, phrase)
+	return err
 }
 
 // GetExperimentArms returns an experiment's Arms, mainline first.
 func (db *DB) GetExperimentArms(ctx context.Context, experimentID uuid.UUID) ([]domain.ExperimentArm, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT id, experiment_id, variation_id, slug, allocation_weight, deployment_name,
-		       created_at, updated_at
+		       declared_migration_up, declared_migration_down, created_at, updated_at
 		FROM experiment_arms WHERE experiment_id = $1
 		ORDER BY variation_id IS NOT NULL, slug
 	`, experimentID)
@@ -151,7 +186,8 @@ func (db *DB) GetExperimentArms(ctx context.Context, experimentID uuid.UUID) ([]
 	for rows.Next() {
 		var a domain.ExperimentArm
 		if err := rows.Scan(&a.ID, &a.ExperimentID, &a.VariationID, &a.Slug,
-			&a.AllocationWeight, &a.DeploymentName, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			&a.AllocationWeight, &a.DeploymentName, &a.DeclaredMigrationUp,
+			&a.DeclaredMigrationDown, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
