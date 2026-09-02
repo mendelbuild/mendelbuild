@@ -1134,11 +1134,11 @@ CREATE TABLE project_domains (
     static_ip TEXT NOT NULL DEFAULT '',
     static_ip_name TEXT NOT NULL DEFAULT '',
 
-    -- The domain-ownership record for the wildcard certificate. Minted by
-    -- Certificate Manager, so its value cannot be worked out in advance.
-    acme_record_name TEXT NOT NULL DEFAULT '',
-    acme_record_value TEXT NOT NULL DEFAULT '',
+    -- The certificate, and the map the gateway actually references. The gateway
+    -- annotation names a map, not a certificate; the map is stable while the
+    -- certificate is replaced whenever its (immutable) domain list changes.
     certificate_name TEXT NOT NULL DEFAULT '',
+    certificate_map_name TEXT NOT NULL DEFAULT '',
 
     -- NULL until the question is put; distinguishes "not asked" from "declined".
     named_demos_wanted BOOLEAN,
@@ -1146,3 +1146,23 @@ CREATE TABLE project_domains (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- One ownership challenge per zone the certificate covers. Production and the
+-- demo wildcard sit in different zones, a wildcard covers exactly one label, and
+-- Certificate Manager authorizes one domain name per authorization -- so two
+-- zones means two records for the user to create.
+CREATE TABLE project_domain_challenges (
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+
+    -- The domain the authorization is for: the base domain, or the demo zone.
+    domain TEXT NOT NULL,
+
+    -- The record the user creates, minted by Certificate Manager.
+    record_name TEXT NOT NULL,
+    record_value TEXT NOT NULL,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (project_id, domain)
+);
+

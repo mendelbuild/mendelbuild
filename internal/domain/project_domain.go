@@ -35,13 +35,19 @@ type ProjectDomain struct {
 	StaticIP     string `json:"static_ip"`
 	StaticIPName string `json:"static_ip_name"`
 
-	// ACMERecordName and ACMERecordValue are the ownership challenge for the
-	// wildcard certificate. Minted by the certificate authority, so unlike the
-	// address records these cannot be worked out from the domain: Mendel has to
-	// ask for them and then repeat them back.
-	ACMERecordName  string `json:"acme_record_name"`
-	ACMERecordValue string `json:"acme_record_value"`
-	CertificateName string `json:"certificate_name"`
+	// Challenges are the ownership records for the certificate, one per zone it
+	// covers. Minted by the certificate authority, so unlike the address records
+	// these cannot be worked out from the domain: Mendel has to ask for them and
+	// then repeat them back.
+	Challenges []ACMEChallenge `json:"challenges,omitempty"`
+
+	// CertificateName is what was issued; CertificateMapName is what the gateway
+	// references. They are different things, and conflating them is why the
+	// gateway once annotated a map that did not exist and served no HTTPS at all.
+	// The map is stable across certificate replacements, which matters because a
+	// certificate's domain list cannot be changed after it is created.
+	CertificateName    string `json:"certificate_name"`
+	CertificateMapName string `json:"certificate_map_name"`
 
 	// NamedDemosWanted is nil until the question has been put. Nil is not the
 	// same as false: one means nobody has been asked, the other that they said
@@ -50,6 +56,16 @@ type ProjectDomain struct {
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ACMEChallenge is one domain-ownership record.
+type ACMEChallenge struct {
+	// Domain is what the authorization is for, not what the record is called.
+	// The record sits at _acme-challenge.<domain>, but only the authority knows
+	// the value, so both are stored rather than derived.
+	Domain      string `json:"domain"`
+	RecordName  string `json:"record_name"`
+	RecordValue string `json:"record_value"`
 }
 
 // WantsNamedDemos reports whether this project asked for demos reachable by name.
@@ -101,6 +117,29 @@ func (d *ProjectDomain) demoZone() string {
 		sub = DefaultDemoSubdomain
 	}
 	return sub + "." + d.BaseDomain
+}
+
+// CertificateZones are the domains needing their own DNS authorization.
+//
+// Two of them, because production and the demos sit in different zones and a
+// wildcard covers exactly one label: *.example.com answers for app.example.com
+// but not for pong-abc.mendel-demos.example.com. Certificate Manager authorizes
+// one domain name per authorization, so each zone costs the user one record.
+func (d *ProjectDomain) CertificateZones() []string {
+	if d == nil || d.BaseDomain == "" {
+		return nil
+	}
+	return []string{d.BaseDomain, d.demoZone()}
+}
+
+// CertificateDomains are the names the certificate is issued for.
+func (d *ProjectDomain) CertificateDomains() []string {
+	zones := d.CertificateZones()
+	out := make([]string, 0, len(zones))
+	for _, zone := range zones {
+		out = append(out, "*."+zone)
+	}
+	return out
 }
 
 // DNSRecordKind distinguishes the records a user has to create.
@@ -156,13 +195,16 @@ func (d *ProjectDomain) DNSRecords() []DNSRecord {
 		})
 	}
 
-	if d.ACMERecordName != "" && d.ACMERecordValue != "" {
+	for _, c := range d.Challenges {
+		if c.RecordName == "" || c.RecordValue == "" {
+			continue
+		}
 		records = append(records, DNSRecord{
 			Kind:  DNSRecordCertificate,
 			Type:  "CNAME",
-			Name:  d.ACMERecordName,
-			Value: d.ACMERecordValue,
-			Why: "Proves the domain is yours so a certificate can be issued for it. " +
+			Name:  c.RecordName,
+			Value: c.RecordValue,
+			Why: "Proves " + c.Domain + " is yours so a certificate can be issued for it. " +
 				"Without this the names resolve but only over http, and a sign-in " +
 				"provider will not accept an http redirect URI.",
 		})
@@ -174,9 +216,10 @@ func (d *ProjectDomain) DNSRecords() []DNSRecord {
 // valid for a hostname.
 //
 // A wildcard covers exactly one label, so *.mendel-demos.example.com answers for
-// pong-abc.mendel-demos.example.com and for nothing else -- not for
-// app.example.com, which is a different zone. Presenting that certificate for the
-// production host gives ERR_CERT_COMMON_NAME_INVALID.
+// pong-abc.mendel-demos.example.com and for nothing else. The certificate carries
+// a wildcard per zone for exactly that reason; a host under neither is not
+// covered, and presenting the certificate for it gives
+// ERR_CERT_COMMON_NAME_INVALID.
 //
 // Worth being explicit about because the failure is invisible from inside
 // Mendel: the certificate exists, it is ACTIVE, the gateway has it attached, the
@@ -185,15 +228,19 @@ func (d *ProjectDomain) CertificateCovers(host string) bool {
 	if d == nil || host == "" || d.CertificateName == "" {
 		return false
 	}
-	zone := d.demoZone()
-	label, ok := strings.CutSuffix(host, "."+zone)
-	return ok && label != "" && !strings.Contains(label, ".")
+	for _, zone := range d.CertificateZones() {
+		label, ok := strings.CutSuffix(host, "."+zone)
+		if ok && label != "" && !strings.Contains(label, ".") {
+			return true
+		}
+	}
+	return false
 }
 
 // CertificateOutstanding reports whether the names will resolve but not serve
 // https yet, which is the state that breaks sign-in while looking like it works.
 func (d *ProjectDomain) CertificateOutstanding() bool {
-	return d != nil && d.BaseDomain != "" && d.StaticIP != "" && d.ACMERecordName == ""
+	return d != nil && d.BaseDomain != "" && d.StaticIP != "" && len(d.Challenges) == 0
 }
 
 // DomainBlocker explains what stands between the settings as they are and

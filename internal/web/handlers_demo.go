@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -1066,9 +1068,13 @@ func (s *Server) deployToGKE(
 				logInfo("Could not request a certificate: " + err.Error())
 			}
 			if hostname != "" {
+				// The map, not the certificate. They are different resources with
+				// different names, and a gateway pointed at a certmap that does
+				// not exist serves no HTTPS and logs no event saying so -- which
+				// is exactly how this went unnoticed.
 				certMap := ""
 				if fresh, err := s.db.GetProjectDomain(ctx, projectID); err == nil && fresh != nil {
-					certMap = fresh.CertificateName
+					certMap = fresh.CertificateMapName
 				}
 				if err := s.ensureGateway(ctx, session, ipName, certMap); err != nil {
 					logInfo("Could not raise the gateway, so this deployment keeps a bare address: " + err.Error())
@@ -1081,7 +1087,7 @@ func (s *Server) deployToGKE(
 					// https on the strength of the row existing hands out a URL
 					// the browser rejects.
 					if fresh, err := s.db.GetProjectDomain(ctx, projectID); err == nil {
-						servesHTTPS = fresh.CertificateCovers(hostname)
+						servesHTTPS = certMap != "" && fresh.CertificateCovers(hostname)
 					}
 				}
 			}
@@ -1758,44 +1764,114 @@ func (s *Server) ensureCertificate(ctx context.Context, projectID uuid.UUID, pd 
 	if pd == nil || pd.BaseDomain == "" {
 		return nil
 	}
-	if pd.ACMERecordName != "" {
-		return nil // Already minted; the record does not change.
+
+	base := staticIPName(projectID) // One naming scheme for everything a project owns.
+	zones := pd.CertificateZones()
+
+	// One authorization per zone. Certificate Manager authorizes a single domain
+	// name each, the sole exception being that a wildcard is authorized on its
+	// parent -- which is why these are the zones rather than the wildcards.
+	for _, zone := range zones {
+		// Named after the zone, not its position. An index is reused when the
+		// user edits their demo subdomain, and `create` on an existing name fails
+		// with "already exists" -- which this treats as success and then reads
+		// back an authorization for the domain that used to be there, storing a
+		// record the user cannot make resolve.
+		name := authorizationName(base, zone)
+
+		create := exec.CommandContext(ctx, "gcloud", "certificate-manager", "dns-authorizations",
+			"create", name, "--domain", zone, "--project", session.projectID)
+		create.Env = session.env
+		if out, err := create.CombinedOutput(); err != nil && !strings.Contains(string(out), "already exists") {
+			return fmt.Errorf("could not authorize %s: %s: %w", zone, strings.TrimSpace(string(out)), err)
+		}
+
+		describe := exec.CommandContext(ctx, "gcloud", "certificate-manager", "dns-authorizations",
+			"describe", name, "--project", session.projectID,
+			"--format", "value(dnsResourceRecord.name,dnsResourceRecord.data)")
+		describe.Env = session.env
+		out, err := describe.Output()
+		if err != nil {
+			return fmt.Errorf("authorized %s but could not read its record back: %w", zone, err)
+		}
+		fields := strings.Fields(strings.TrimSpace(string(out)))
+		if len(fields) != 2 {
+			return fmt.Errorf("record for %s came back as %q, which is not a name and a value",
+				zone, strings.TrimSpace(string(out)))
+		}
+
+		// Stored as each is minted rather than at the end, so a failure partway
+		// leaves the user with the records that do exist instead of none.
+		if err := s.db.SetProjectCertificateChallenge(ctx, projectID, domain.ACMEChallenge{
+			Domain:      zone,
+			RecordName:  strings.TrimSuffix(fields[0], "."),
+			RecordValue: fields[1],
+		}); err != nil {
+			return err
+		}
 	}
 
-	name := staticIPName(projectID) // One naming scheme for everything a project owns.
-	zone := strings.TrimPrefix(pd.DemoWildcard(), "*.")
+	// The certificate's domain list is immutable, so its name carries a digest of
+	// that list: changing the demo subdomain mints a new certificate beside the
+	// old one rather than failing against a name that already exists with the
+	// wrong contents. The map name stays put, so the gateway annotation does not
+	// have to change when the certificate does.
+	domains := pd.CertificateDomains()
+	certName := fmt.Sprintf("%s-%s", base, digestOf(domains))
 
-	create := exec.CommandContext(ctx, "gcloud", "certificate-manager", "dns-authorizations", "create",
-		name, "--domain", zone, "--project", session.projectID)
-	create.Env = session.env
-	if out, err := create.CombinedOutput(); err != nil && !strings.Contains(string(out), "already exists") {
-		return fmt.Errorf("could not request a certificate: %s: %w", strings.TrimSpace(string(out)), err)
+	authNames := make([]string, 0, len(zones))
+	for _, zone := range zones {
+		authNames = append(authNames, authorizationName(base, zone))
 	}
 
-	describe := exec.CommandContext(ctx, "gcloud", "certificate-manager", "dns-authorizations", "describe",
-		name, "--project", session.projectID,
-		"--format", "value(dnsResourceRecord.name,dnsResourceRecord.data)")
-	describe.Env = session.env
-	out, err := describe.Output()
-	if err != nil {
-		return fmt.Errorf("requested a certificate but could not read its record back: %w", err)
-	}
-	fields := strings.Fields(strings.TrimSpace(string(out)))
-	if len(fields) != 2 {
-		return fmt.Errorf("certificate record came back as %q, which is not a name and a value",
-			strings.TrimSpace(string(out)))
-	}
-
-	// The certificate itself. It stays pending until the record exists, which is
-	// the user's part; creating it now means nothing further is needed from them
-	// once they have added it.
-	cert := exec.CommandContext(ctx, "gcloud", "certificate-manager", "certificates", "create", name,
-		"--domains", pd.DemoWildcard(), "--dns-authorizations", name, "--project", session.projectID)
+	cert := exec.CommandContext(ctx, "gcloud", "certificate-manager", "certificates", "create", certName,
+		"--domains", strings.Join(domains, ","),
+		"--dns-authorizations", strings.Join(authNames, ","),
+		"--project", session.projectID)
 	cert.Env = session.env
 	if out, err := cert.CombinedOutput(); err != nil && !strings.Contains(string(out), "already exists") {
 		return fmt.Errorf("could not create the certificate: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
-	return s.db.SetProjectCertificateChallenge(ctx, projectID,
-		strings.TrimSuffix(fields[0], "."), fields[1], name)
+	// The gateway references a *map*, not a certificate. Annotating it with a
+	// certificate name pointed at a map that did not exist, and a gateway given a
+	// certmap it cannot resolve serves no HTTPS and logs no event about it.
+	mkMap := exec.CommandContext(ctx, "gcloud", "certificate-manager", "maps", "create", base,
+		"--project", session.projectID)
+	mkMap.Env = session.env
+	if out, err := mkMap.CombinedOutput(); err != nil && !strings.Contains(string(out), "already exists") {
+		return fmt.Errorf("could not create the certificate map: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+
+	// A primary entry is the map's fallback, and one certificate covers every
+	// name Mendel uses, so a single entry serves all of them. Deleted first
+	// because an entry's certificate list cannot be changed in place, and this
+	// runs again whenever the certificate is replaced.
+	entry := base + "-primary"
+	del := exec.CommandContext(ctx, "gcloud", "certificate-manager", "maps", "entries", "delete", entry,
+		"--map", base, "--project", session.projectID, "--quiet")
+	del.Env = session.env
+	_ = del.Run() // Absent is the expected case on a first run.
+
+	mkEntry := exec.CommandContext(ctx, "gcloud", "certificate-manager", "maps", "entries", "create", entry,
+		"--map", base, "--certificates", certName, "--set-primary", "--project", session.projectID)
+	mkEntry.Env = session.env
+	if out, err := mkEntry.CombinedOutput(); err != nil && !strings.Contains(string(out), "already exists") {
+		return fmt.Errorf("could not attach the certificate to its map: %s: %w",
+			strings.TrimSpace(string(out)), err)
+	}
+
+	return s.db.SetProjectCertificate(ctx, projectID, certName, base)
+}
+
+// authorizationName is stable for a zone and different for every other zone.
+func authorizationName(base, zone string) string {
+	return fmt.Sprintf("%s-%s", base, digestOf([]string{zone}))
+}
+
+// digestOf names a resource after its contents, so a resource that cannot be
+// changed in place is replaced rather than skipped when the contents change.
+func digestOf(parts []string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, ",")))
+	return hex.EncodeToString(sum[:])[:8]
 }

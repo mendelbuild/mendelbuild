@@ -3031,19 +3031,36 @@ func (db *DB) GetProjectDomain(ctx context.Context, projectID uuid.UUID) (*domai
 	var d domain.ProjectDomain
 	err := db.Pool.QueryRow(ctx, `
 		SELECT project_id, base_domain, demo_subdomain, prod_subdomain,
-		       static_ip, static_ip_name, acme_record_name, acme_record_value,
-		       certificate_name, named_demos_wanted, created_at, updated_at
+		       static_ip, static_ip_name, certificate_name, certificate_map_name,
+		       named_demos_wanted, created_at, updated_at
 		FROM project_domains WHERE project_id = $1
 	`, projectID).Scan(&d.ProjectID, &d.BaseDomain, &d.DemoSubdomain, &d.ProdSubdomain,
-		&d.StaticIP, &d.StaticIPName, &d.ACMERecordName, &d.ACMERecordValue,
-		&d.CertificateName, &d.NamedDemosWanted, &d.CreatedAt, &d.UpdatedAt)
+		&d.StaticIP, &d.StaticIPName, &d.CertificateName, &d.CertificateMapName,
+		&d.NamedDemosWanted, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
 		}
 		return nil, err
 	}
-	return &d, nil
+
+	rows, err := db.Pool.Query(ctx, `
+		SELECT domain, record_name, record_value
+		FROM project_domain_challenges WHERE project_id = $1
+		ORDER BY domain
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c domain.ACMEChallenge
+		if err := rows.Scan(&c.Domain, &c.RecordName, &c.RecordValue); err != nil {
+			return nil, err
+		}
+		d.Challenges = append(d.Challenges, c)
+	}
+	return &d, rows.Err()
 }
 
 // UpsertProjectDomain saves the parts of the domain the user chooses, leaving
@@ -3075,18 +3092,31 @@ func (db *DB) SetProjectStaticIP(ctx context.Context, projectID uuid.UUID, ip, n
 	return err
 }
 
-// SetProjectCertificateChallenge records the ownership record a certificate
+// SetProjectCertificateChallenge records one ownership record a certificate
 // authority minted, so the Domain page can list it with the others.
-func (db *DB) SetProjectCertificateChallenge(ctx context.Context, projectID uuid.UUID, name, value, certName string) error {
+func (db *DB) SetProjectCertificateChallenge(ctx context.Context, projectID uuid.UUID, c domain.ACMEChallenge) error {
 	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO project_domains (project_id, base_domain, acme_record_name, acme_record_value, certificate_name)
-		VALUES ($1, '', $2, $3, $4)
+		INSERT INTO project_domain_challenges (project_id, domain, record_name, record_value)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (project_id, domain) DO UPDATE SET
+			record_name = EXCLUDED.record_name,
+			record_value = EXCLUDED.record_value
+	`, projectID, c.Domain, c.RecordName, c.RecordValue)
+	return err
+}
+
+// SetProjectCertificate records what was issued and the map the gateway points
+// at. Separate from the challenges: the records exist as soon as the
+// authorizations do, while the certificate is created after them.
+func (db *DB) SetProjectCertificate(ctx context.Context, projectID uuid.UUID, certName, mapName string) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO project_domains (project_id, base_domain, certificate_name, certificate_map_name)
+		VALUES ($1, '', $2, $3)
 		ON CONFLICT (project_id) DO UPDATE SET
-			acme_record_name = EXCLUDED.acme_record_name,
-			acme_record_value = EXCLUDED.acme_record_value,
 			certificate_name = EXCLUDED.certificate_name,
+			certificate_map_name = EXCLUDED.certificate_map_name,
 			updated_at = NOW()
-	`, projectID, name, value, certName)
+	`, projectID, certName, mapName)
 	return err
 }
 

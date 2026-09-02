@@ -117,8 +117,11 @@ func TestCertificateRecordIsListedWithTheOthers(t *testing.T) {
 		}
 	}
 
-	d.ACMERecordName = "_acme-challenge.mendel-demos.example.com"
-	d.ACMERecordValue = "bbeef8e0-9922-46f4-8537-2107e1d4d9b0.4.authorize.certificatemanager.goog."
+	d.Challenges = []ACMEChallenge{{
+		Domain:      "mendel-demos.example.com",
+		RecordName:  "_acme-challenge.mendel-demos.example.com",
+		RecordValue: "bbeef8e0-9922-46f4-8537-2107e1d4d9b0.4.authorize.certificatemanager.goog.",
+	}}
 
 	if d.CertificateOutstanding() {
 		t.Error("the challenge is known, so nothing is outstanding")
@@ -131,7 +134,7 @@ func TestCertificateRecordIsListedWithTheOthers(t *testing.T) {
 	if cert.Type != "CNAME" {
 		t.Errorf("certificate record is a %s; providers need to be told CNAME", cert.Type)
 	}
-	if cert.Name != d.ACMERecordName || cert.Value != d.ACMERecordValue {
+	if cert.Name != d.Challenges[0].RecordName || cert.Value != d.Challenges[0].RecordValue {
 		t.Errorf("record does not repeat what the authority minted: %+v", cert)
 	}
 }
@@ -163,31 +166,77 @@ func TestLimitationFollowsTheSchemeActuallyServed(t *testing.T) {
 	}
 }
 
-// The certificate Mendel requests is a wildcard over the demo zone, and a
-// wildcard covers exactly one label. The production host lives somewhere else
-// entirely, so presenting that certificate for it fails in the browser -- while
-// looking perfectly healthy from inside Mendel, where the certificate exists, is
-// ACTIVE, is attached to the gateway, and the name resolves.
-func TestCertificateDoesNotCoverTheProductionHost(t *testing.T) {
+// What the certificate covers, and what it must not be claimed to cover.
+//
+// A wildcard covers exactly one label, so no single one reaches both the
+// production host and a demo two labels down. The certificate therefore carries
+// one wildcard per zone -- and a host under neither is not covered, however much
+// it looks like it belongs to the same domain.
+//
+// Worth pinning because the failure is invisible from inside Mendel: the
+// certificate exists, goes ACTIVE, is attached to its map, and the name resolves.
+// Only the browser disagrees, with ERR_CERT_COMMON_NAME_INVALID.
+func TestCertificateCoversBothZonesAndNothingElse(t *testing.T) {
 	d := &ProjectDomain{
 		BaseDomain: "example.com", DemoSubdomain: "mendel-demos",
-		ProdSubdomain: "app", CertificateName: "mendel-abc",
+		ProdSubdomain: "app", CertificateName: "mendel-abc", CertificateMapName: "mendel-abc",
 	}
 
-	if !d.CertificateCovers(d.DemoHost("pong-abc123")) {
-		t.Error("a demo host is one label under the wildcard and must be covered")
+	for _, host := range []string{d.DemoHost("pong-abc123"), d.ProdHost()} {
+		if !d.CertificateCovers(host) {
+			t.Errorf("%q should be covered by %v", host, d.CertificateDomains())
+		}
 	}
-	if d.CertificateCovers(d.ProdHost()) {
-		t.Errorf("%q is not under %q, so the certificate cannot be valid for it",
-			d.ProdHost(), d.DemoWildcard())
-	}
-	// A wildcard covers one label, not two.
+
+	// Two labels under a zone is past what a wildcard reaches.
 	if d.CertificateCovers("a.b.mendel-demos.example.com") {
 		t.Error("a wildcard covers exactly one label")
 	}
+	// The apex is not covered by a wildcard over it.
+	if d.CertificateCovers("example.com") {
+		t.Error("*.example.com does not cover example.com")
+	}
+	// Somebody else's domain entirely.
+	if d.CertificateCovers("app.elsewhere.com") {
+		t.Error("a host outside the base domain must never be covered")
+	}
 	// Nothing is covered before a certificate has been requested.
-	none := &ProjectDomain{BaseDomain: "example.com", DemoSubdomain: "mendel-demos"}
-	if none.CertificateCovers(none.DemoHost("pong")) {
+	none := &ProjectDomain{BaseDomain: "example.com", DemoSubdomain: "mendel-demos", ProdSubdomain: "app"}
+	if none.CertificateCovers(none.ProdHost()) {
 		t.Error("no certificate means nothing is covered")
+	}
+}
+
+// Two zones means two records, and the user creates them by hand in separate
+// rows of a provider's form. One of them resolving says nothing about the other.
+func TestBothChallengeRecordsAreListed(t *testing.T) {
+	d := &ProjectDomain{
+		BaseDomain: "example.com", DemoSubdomain: "mendel-demos", ProdSubdomain: "app",
+		StaticIP: "34.1.2.3",
+	}
+	if want := []string{"example.com", "mendel-demos.example.com"}; len(d.CertificateZones()) != 2 ||
+		d.CertificateZones()[0] != want[0] || d.CertificateZones()[1] != want[1] {
+		t.Fatalf("zones needing authorization: got %v, want %v", d.CertificateZones(), want)
+	}
+
+	for _, zone := range d.CertificateZones() {
+		d.Challenges = append(d.Challenges, ACMEChallenge{
+			Domain:      zone,
+			RecordName:  "_acme-challenge." + zone,
+			RecordValue: "target-for-" + zone + ".authorize.certificatemanager.goog.",
+		})
+	}
+
+	var certRecords int
+	for _, r := range d.DNSRecords() {
+		if r.Kind == DNSRecordCertificate {
+			certRecords++
+			if r.Type != "CNAME" {
+				t.Errorf("%s is a %s; providers need to be told CNAME", r.Name, r.Type)
+			}
+		}
+	}
+	if certRecords != 2 {
+		t.Errorf("both challenge records must be listed, got %d", certRecords)
 	}
 }

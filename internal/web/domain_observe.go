@@ -36,9 +36,18 @@ func (s *Server) observeDomain(ctx context.Context, projectID uuid.UUID, pd *dom
 		obs.WildcardTarget = addrs[0]
 	}
 
-	if pd.ACMERecordName != "" {
-		if target, err := resolver.LookupCNAME(lookup, pd.ACMERecordName); err == nil {
-			obs.ChallengeTarget = target
+	// Each zone the certificate covers has its own record, and they are created
+	// by hand in separate rows of a provider's form -- so one resolving says
+	// nothing about the next. Reported per record for that reason.
+	for _, c := range pd.Challenges {
+		if c.RecordName == "" {
+			continue
+		}
+		if target, err := resolver.LookupCNAME(lookup, c.RecordName); err == nil {
+			if obs.ChallengeTargets == nil {
+				obs.ChallengeTargets = make(map[string]string, len(pd.Challenges))
+			}
+			obs.ChallengeTargets[c.RecordName] = target
 		}
 	}
 

@@ -97,8 +97,10 @@
             {{if .Records}}
             <p class="card-note">
                 Create these in whatever manages DNS for
-                <code>{{.Domain.BaseDomain}}</code>. Both are made once; Mendel needs
-                nothing further from your DNS after that.
+                <code>{{.Domain.BaseDomain}}</code>. Each is made once; Mendel needs
+                nothing further from your DNS after that. The <code>A</code> records
+                point names at the address; the <code>CNAME</code> records prove the
+                domain is yours, one per zone the certificate covers.
             </p>
             <table class="table">
                 <thead><tr><th>Type</th><th>Name</th><th>Value</th></tr></thead>

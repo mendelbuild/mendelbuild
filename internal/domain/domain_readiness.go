@@ -1,6 +1,9 @@
 package domain
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Getting a deployment reachable by name is a chain of steps, and only some of
 // them are Mendel's. The user creates two DNS records by hand, in a tool Mendel
@@ -21,8 +24,10 @@ type DomainObservation struct {
 	// does not resolve at all.
 	WildcardTarget string
 
-	// ChallengeTarget is what the certificate's ownership record resolves to.
-	ChallengeTarget string
+	// ChallengeTargets is what each ownership record resolves to, keyed by record
+	// name. Absent means it does not resolve; a wrong value means it resolves
+	// somewhere else, and those are different problems with different fixes.
+	ChallengeTargets map[string]string
 
 	// CertificateState is the authority's own word for it: PROVISIONING, ACTIVE,
 	// FAILED, or empty when no certificate has been requested.
@@ -96,22 +101,39 @@ func (d *ProjectDomain) DomainReadiness(obs DomainObservation) []DomainStep {
 		Detail: checkingOr(obs, wildcardDetail),
 	})
 
-	// 4. The ownership record for the certificate.
-	challengeAsked := d.ACMERecordName != ""
-	challengeRight := challengeAsked && obs.ChallengeTarget != "" &&
-		hostsEqual(obs.ChallengeTarget, d.ACMERecordValue)
-	challengeDetail := "Create the CNAME listed below."
-	switch {
-	case challengeRight:
-		challengeDetail = d.ACMERecordName + " resolves correctly"
-	case !challengeAsked:
-		challengeDetail = "Mendel requests the certificate first; the record appears once it has."
-	case obs.ChallengeTarget != "":
-		challengeDetail = fmt.Sprintf("%s resolves to %s rather than the value below.",
-			d.ACMERecordName, obs.ChallengeTarget)
+	// 4. The ownership records for the certificate, one per zone it covers.
+	//
+	// Reported together rather than as a step each: they are created in the same
+	// sitting, in the same tool, and a ladder that grows a rung per zone tells
+	// the reader the shape of the task changed when it did not.
+	challengeAsked := len(d.Challenges) > 0
+	var outstanding, wrong []string
+	for _, c := range d.Challenges {
+		target, found := obs.ChallengeTargets[c.RecordName]
+		switch {
+		case !found:
+			outstanding = append(outstanding, c.RecordName)
+		case !hostsEqual(target, c.RecordValue):
+			wrong = append(wrong, fmt.Sprintf("%s resolves to %s", c.RecordName, target))
+		}
 	}
+	challengeRight := challengeAsked && len(outstanding) == 0 && len(wrong) == 0
+
+	challengeDetail := ""
+	switch {
+	case !challengeAsked:
+		challengeDetail = "Mendel requests the certificate first; the records appear once it has."
+	case challengeRight:
+		challengeDetail = fmt.Sprintf("All %d records resolve correctly.", len(d.Challenges))
+	case len(wrong) > 0:
+		challengeDetail = strings.Join(wrong, "; ") + " rather than the value below."
+	default:
+		challengeDetail = fmt.Sprintf("%d of %d created. Still to create: %s.",
+			len(d.Challenges)-len(outstanding), len(d.Challenges), strings.Join(outstanding, ", "))
+	}
+
 	steps = append(steps, DomainStep{
-		Name:   "Create the certificate record",
+		Name:   challengeStepName(len(d.Challenges)),
 		State:  observed(obs, gate(challengeAsked, challengeRight, StepYourMove)),
 		Detail: checkingOr(obs, challengeDetail),
 	})
@@ -169,6 +191,15 @@ func checkingOr(obs DomainObservation, detail string) string {
 		return "Checking."
 	}
 	return detail
+}
+
+// challengeStepName counts, because a user who created one record and is looking
+// at a step that still says "your move" needs to know a second one exists.
+func challengeStepName(n int) string {
+	if n == 1 {
+		return "Create the certificate record"
+	}
+	return fmt.Sprintf("Create the %d certificate records", n)
 }
 
 func stateIf(done bool, otherwise DomainStepState) DomainStepState {

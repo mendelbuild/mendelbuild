@@ -63,12 +63,17 @@ func TestWrongRecordIsNotProgress(t *testing.T) {
 func TestChallengeIgnoresTheTrailingDot(t *testing.T) {
 	d := &ProjectDomain{
 		BaseDomain: "example.com", DemoSubdomain: "mendel-demos", StaticIP: "34.1.2.3",
-		ACMERecordName:  "_acme-challenge.mendel-demos.example.com",
-		ACMERecordValue: "abc.4.authorize.certificatemanager.goog.",
+		Challenges: []ACMEChallenge{{
+			Domain:      "mendel-demos.example.com",
+			RecordName:  "_acme-challenge.mendel-demos.example.com",
+			RecordValue: "abc.4.authorize.certificatemanager.goog.",
+		}},
 	}
 	obs := DomainObservation{Known: true,
-		WildcardTarget:  "34.1.2.3",
-		ChallengeTarget: "abc.4.authorize.certificatemanager.goog", // no trailing dot
+		WildcardTarget: "34.1.2.3",
+		ChallengeTargets: map[string]string{
+			"_acme-challenge.mendel-demos.example.com": "abc.4.authorize.certificatemanager.goog", // no trailing dot
+		},
 	}
 	if ladder(d, obs)["Create the certificate record"].State != StepDone {
 		t.Error("a trailing dot is a resolver artefact, not a different name")
@@ -79,7 +84,10 @@ func TestChallengeIgnoresTheTrailingDot(t *testing.T) {
 func TestHeadlineNamesWhoIsHoldingItUp(t *testing.T) {
 	d := &ProjectDomain{
 		BaseDomain: "example.com", DemoSubdomain: "mendel-demos", StaticIP: "34.1.2.3",
-		ACMERecordName: "_acme-challenge.mendel-demos.example.com", ACMERecordValue: "abc.goog.",
+		Challenges: []ACMEChallenge{{
+			Domain: "mendel-demos.example.com",
+			RecordName: "_acme-challenge.mendel-demos.example.com", RecordValue: "abc.goog.",
+		}},
 	}
 
 	// Waiting on the user to create a record.
@@ -89,7 +97,8 @@ func TestHeadlineNamesWhoIsHoldingItUp(t *testing.T) {
 	}
 
 	// Waiting on the authority, which is nobody's move.
-	obs := DomainObservation{Known: true, WildcardTarget: "34.1.2.3", ChallengeTarget: "abc.goog",
+	obs := DomainObservation{Known: true, WildcardTarget: "34.1.2.3",
+		ChallengeTargets: map[string]string{"_acme-challenge.mendel-demos.example.com": "abc.goog"},
 		CertificateState: "PROVISIONING"}
 	headline, mine := DomainHeadline(d.DomainReadiness(obs))
 	if mine {
@@ -116,8 +125,10 @@ func TestHeadlineNamesWhoIsHoldingItUp(t *testing.T) {
 func TestUnobservedIsCheckingRatherThanOutstanding(t *testing.T) {
 	d := &ProjectDomain{
 		BaseDomain: "example.com", DemoSubdomain: "mendel-demos",
-		StaticIP: "34.1.2.3", ACMERecordName: "_acme-challenge.example.com",
-		ACMERecordValue: "abc.goog",
+		StaticIP: "34.1.2.3",
+		Challenges: []ACMEChallenge{{
+			Domain: "example.com", RecordName: "_acme-challenge.example.com", RecordValue: "abc.goog",
+		}},
 	}
 
 	for name, step := range ladder(d, DomainObservation{}) {

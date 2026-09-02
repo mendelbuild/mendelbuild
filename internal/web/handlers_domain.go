@@ -139,7 +139,7 @@ func (s *Server) renderDomainPage(
 	// nothing would notice, and the page went on showing the same gap. Detached
 	// from the request: it opens a session against the cluster, which is far too
 	// slow to hold a page render on.
-	if stored != nil && stored.BaseDomain != "" && (stored.StaticIP == "" || stored.ACMERecordName == "") {
+	if stored != nil && stored.BaseDomain != "" && (stored.StaticIP == "" || len(stored.Challenges) == 0) {
 		go s.ensureDomainInfrastructure(context.Background(), projectID)
 	}
 	shown := stored
@@ -223,8 +223,11 @@ func (s *Server) ensureDomainInfrastructure(ctx context.Context, projectID uuid.
 	if err != nil || pd == nil || pd.BaseDomain == "" {
 		return
 	}
-	if pd.StaticIP != "" && pd.ACMERecordName != "" {
-		return // Both already done; neither changes.
+	// The certificate work is re-entered even when challenges exist: the zones it
+	// covers change when the user edits their subdomains, and every step of it is
+	// idempotent.
+	if pd.StaticIP != "" && len(pd.Challenges) == len(pd.CertificateZones()) && pd.CertificateMapName != "" {
+		return
 	}
 
 	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
