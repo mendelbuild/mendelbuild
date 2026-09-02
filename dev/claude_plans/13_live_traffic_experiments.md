@@ -195,10 +195,18 @@ Six things, all required before admission:
 
 5. **User-visible dissonance when the Arm stops serving**, where it exists — a
    plain description of what a person who experienced the Variation will feel
-   when it is withdrawn. The Mendel user must **type a short summary character-
-   for-character** to approve, so approval cannot be a reflexive click. This
-   reuses the `requirement_acknowledgements` shape exactly: keyed by the precise
-   string confirmed, recording who and when.
+   when it is withdrawn. Mendel shows that description and the Mendel user must
+   **type a short phrase character-for-character** to approve. This reuses the
+   `requirement_acknowledgements` shape exactly: keyed by the precise string
+   confirmed, recording who and when.
+
+   **The typed phrase is friction, not a comprehension test.** Its whole job is
+   to stop a reflexive click, so `I understand` is sufficient and is the
+   default. Where the risk summarises cleanly in one line, use that line
+   instead — it costs an LLM call Mendel is already making and makes the record
+   more legible afterwards — but nothing depends on it, and a phrase nobody can
+   type accurately is worse than a short one they must type deliberately. The
+   description above the box is where the substance lives.
 
    Deliberately *not* "on rollback". An Arm stops serving for three reasons —
    rollback, the kill switch, and an allocation change that withdraws it — and

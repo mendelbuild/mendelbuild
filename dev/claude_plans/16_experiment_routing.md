@@ -147,31 +147,34 @@ byte-identical in both Arms, and there is nothing to isolate. When a Variation
 changes A *and* B, and A calls B, it is broken — new A talking to old B is
 neither Arm, and whatever the experiment measures is a mixture nobody designed.
 
-The earlier rule here was "a Variation may change exactly one deployable unit",
-enforced by counting touched directories in the diff. Counting is the wrong
-test, and it is wrong in both directions. Two units entered independently from
-the edge — a web frontend and an API the browser calls directly — are both
-routed by the same visitor cookie, so changing both is perfectly safe and the
-count forbids it. Meanwhile one unit that calls itself through a queue is
-counted as one and is not obviously safe at all.
+**So a Variation may change exactly one deployable unit**, where a deployable
+unit is what O13 defines and, for live traffic specifically, must also be a
+single pod that can be deployed in isolation *and* sits behind the Gateway,
+where an `HTTPRoute` can route to it. Something not behind the Gateway cannot be
+routed per-Arm at all.
 
-**The constraint is a call edge between two changed units**, not how many
-changed. Two conditions, and both must hold:
+There is a case this rejects that is genuinely safe, and it is written down here
+rather than argued each time it comes up. Two units entered *independently from
+the edge* — a frontend and an API the browser calls directly — are each routed
+by the same visitor, with no call edge between them, so no east-west routing is
+needed and the mixing above cannot happen. Admitting it would need two things
+that do not exist yet:
 
-1. **Every changed unit can extract the Assignment Unit key and recompute the
-   Arm** (D28, applied per unit). A unit blind to the key cannot know which Arm
-   it is serving, so it serves mainline.
-2. **No changed unit is reached from another changed unit by an internal call**,
-   unless east-west routing exists to carry that call to the right Arm.
+- **Cookie scope across hosts.** The assigner sets `mendel_arm` on the host it
+  was reached at. A second unit on another subdomain never receives it unless
+  the cookie is deliberately scoped to the parent domain, which is a decision
+  with its own blast radius and has not been taken.
+- **A 302 is wrong for a non-navigational request.** Assignment works by
+  redirecting a cookie-less request to the same URL. That is fine for a page
+  load and wrong for an XHR or a POST with a body, which is exactly how a
+  browser-called API is first reached.
 
-Condition 1 is what makes an Arm *knowable*; condition 2 is what makes it
-*reachable*. Extraction alone is not enough, because the edge cannot see an
-internal call at all — that is §3.2's subject, and until a mesh or internal
-Gateway is in place, condition 2 is satisfied only by the changed units being
-entered independently from the edge.
+Both are tractable and neither is free, so the first cut stays at one unit. This
+is expected to bite: it is a real narrowing for anyone whose application is more
+than one pod, and it will need revisiting rather than defending.
 
-For a monolith this is no narrowing whatever: one deployable unit, no internal
-call edges between changed units, condition 2 vacuous.
+For a monolith this is no narrowing whatever: it is one deployable unit, so
+there is nothing to mix.
 
 ### 3.2 What lifting that restriction actually takes
 
@@ -443,7 +446,7 @@ channel, which §13 §15 records as the remaining staging move.
 | D24 | Weights in a ConfigMap the assigner reads | Assigner queries Mendel per request | Production traffic must not depend on Mendel being up |
 | D25 | Weights not in `backendRefs` | Weighted backendRefs | They pick per request, splitting one visitor across Arms |
 | D26 | Kill switch removes the match rules | Set allocation to 100% mainline | Allocation only affects new visitors; the already-assigned keep their cookie |
-| D27 | A Variation may change any number of deployable units, provided each can extract the Assignment Unit key and no changed unit calls another without east-west routing | Restrict a Variation to one | Counting is wrong in both directions: two edge-entered units are safe, one self-calling unit is not. The real constraint is the call edge (O13, §3.1) |
+| D27 | A Variation may change exactly one deployable unit, which must be a single isolated pod behind the Gateway | Admit several that can each extract the key | Extraction makes an Arm knowable, not reachable: the edge cannot see an internal call, so Arm b's A still reaches mainline B. Edge-entered units avoid that but need cookie scoping and non-302 assignment, neither of which exists (§3.1) |
 | D28 | Propagate the Assignment Unit key and recompute the Arm at each hop | Propagate the Arm as trace baggage | Identity is already in flight and needs no correlation; a lost key means mainline, a lost context means a wrong Arm |
 | D29 | The edge overwrites the identity header from the validated session | Trust what the client sent | Otherwise participants can select their own Arm |
 | D30 | Require the Assignment Unit key to be edge-extractable | Analyse whether extraction precedes divergent code | Reachability in an arbitrary codebase is not decidable from a diff; the structural rule needs no analysis |
@@ -462,15 +465,15 @@ through to mainline, which is correct. If the Arm wrote per-Assignment-Unit
 state they then see some of it and not the rest.
 
 This needs no new mechanism, but it does change the wording of one that exists.
-§13 §5 item 5 has the Mendel user type a summary of the dissonance
-character-for-character, and that summary is written **about rollback**. D26
+§13 §5 item 5 has the Mendel user type a short phrase
+character-for-character over a description written **about rollback**. D26
 reaches the same state sooner: the kill switch works by removing the match
 rules, so everyone already assigned falls through immediately — no rollback, no
 migration reversed, and it happens on the emergency path where nobody is going
 to re-read a form.
 
-So the acknowledgement is phrased about **the Arm ceasing to serve**, not about
-rollback, and it is taken once at admission. Rollback, kill switch and an
+So the description is written about **the Arm ceasing to serve**, not about
+rollback, and the acknowledgement is taken once at admission. Rollback, kill switch and an
 allocation change that withdraws an Arm all produce it, and the one a user is
 most likely to reach in a hurry is the one they would otherwise not have been
 shown.
@@ -489,22 +492,19 @@ a deployable unit and is very small; an everything-binary monolith is one
 deployable unit and is very large. A repo of Dockerfiles has several; a monorepo
 with one deployed entrypoint has one.
 
-Counting them was the wrong test, and wrong in both directions — see §3.1. A
-Variation may change **any number** of deployable units, provided each can
-extract the Assignment Unit key (D28 applied per unit) and no changed unit is
-reached from another changed unit by an internal call.
+For live traffic the unit must additionally be a single pod deployable in
+isolation that sits behind the Gateway, since a pod no `HTTPRoute` can reach
+cannot be routed per-Arm at all.
 
-The second half is the one worth being explicit about, because extraction alone
-reads like enough and is not. Extraction makes an Arm *knowable*; it does not
-make it *reachable*. The edge cannot see an internal call, so Arm b's A calling
-B still lands on mainline B however well B can read the key. Until east-west
-routing exists (§3.2), multi-unit Variations are admissible exactly when the
-changed units are entered independently from the edge — which is a real and
-common shape, a frontend and a browser-called API being the obvious one.
+The count stays at one, and §3.1 records why extraction is not the lifting
+condition it looks like: it makes an Arm *knowable*, not *reachable*. The edge
+cannot see an internal call, so Arm b's A still lands on mainline B however well
+B reads the key. The genuinely safe case — units entered independently from the
+edge — is deferred on cookie scoping and on assignment-by-302 being wrong for
+XHR, not on anything about counting.
 
-This removes the need to infer a boundary from directory layout: what Mendel
-must establish is extraction per unit and the absence of a call edge between
-changed units.
+What this definition does settle is that the boundary is not inferred from
+directory layout. It is a property of the deployment, which Mendel performs.
 
 **A note on the word.** "Service" is one of
 the most overloaded words in the vocabulary — it means a process, a bounded
