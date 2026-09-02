@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -405,13 +406,20 @@ func (s *Server) runChannelDemoDeployment(
 		return
 	}
 
-	if deployErr != nil {
+	// Still provisioning is not a failure. A demo whose load balancer has not
+	// finished coming up is deployed correctly and will answer shortly, and
+	// tearing it down as failed would destroy work that is fine.
+	if deployErr != nil && !errors.Is(deployErr, errStillProvisioning) {
 		failDemo(fmt.Sprintf("Deployment failed: %v", deployErr))
 		return
 	}
 
-	// Update demo instance with URL
-	logMilestone("Demo deployed: " + url)
+	if errors.Is(deployErr, errStillProvisioning) {
+		logMilestone("Demo deployed at " + url + ", which is not serving yet while its " +
+			"load balancer comes up.")
+	} else {
+		logMilestone("Demo deployed: " + url)
+	}
 
 	teardownCmd := teardownCommandFor(channel.HostingPlatform.Slug, appName, env)
 
@@ -675,6 +683,14 @@ metadata:
   name: %s
 spec:
   replicas: 1
+  # Keep the running pod until the new one can serve. With the default strategy
+  # and a single replica, the old pod can go before the new one is answering, so
+  # every redeploy has a hole in it -- short, but a hole.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: %s
@@ -691,6 +707,20 @@ spec:
         env:
         - name: PORT
           value: "%d"%s
+        # A TCP check rather than an HTTP path: Mendel does not know what the
+        # user's app serves, or on what route, and guessing /health would fail
+        # every app that does not have one. Accepting a connection is the most
+        # that can be assumed of an arbitrary program.
+        #
+        # This also gates the load balancer. GKE holds a container-native NEG
+        # pod unready until it is programmed, so with maxUnavailable: 0 the old
+        # pod survives until the new one is genuinely receiving traffic.
+        readinessProbe:
+          tcpSocket:
+            port: %d
+          initialDelaySeconds: 2
+          periodSeconds: 3
+          failureThreshold: 20
 ---
 apiVersion: v1
 kind: Service
@@ -704,8 +734,8 @@ spec:
   - port: 80
     targetPort: %d
 `, deploymentName, deploymentName, deploymentName, imageName,
-		hosting.ContainerPort, hosting.ContainerPort, envFrom, deploymentName, serviceType, deploymentName,
-		hosting.ContainerPort)
+		hosting.ContainerPort, hosting.ContainerPort, envFrom, hosting.ContainerPort,
+		deploymentName, serviceType, deploymentName, hosting.ContainerPort)
 
 	if hostname == "" {
 		return manifest
@@ -1141,8 +1171,18 @@ func (s *Server) deployToGKE(
 			logInfo("No certificate covering " + hostname + " yet, so this is http. " +
 				"The Domain tab lists what is outstanding.")
 		}
-		logInfo("Reachable at " + hostname + " once the gateway has programmed itself")
-		return scheme + "://" + hostname, nil
+		url := scheme + "://" + hostname
+
+		// Do not report a deployment as done while nothing answers at it.
+		//
+		// The first deployment onto a name provisions a global load balancer, and
+		// Google takes several minutes to bring one up -- during which the URL
+		// refuses connections. Reporting success then hands the user a link that
+		// looks broken, and no way to tell "still coming up" from "broken".
+		if !s.waitUntilServing(ctx, url, logMilestone, logInfo) {
+			return url, errStillProvisioning
+		}
+		return url, nil
 	}
 
 	// Wait for external IP
@@ -1945,4 +1985,55 @@ func authorizationName(base, zone string) string {
 func digestOf(parts []string) string {
 	sum := sha256.Sum256([]byte(strings.Join(parts, ",")))
 	return hex.EncodeToString(sum[:])[:8]
+}
+
+
+// errStillProvisioning says the deployment is correct but not yet reachable.
+//
+// Not a failure: nothing needs fixing and nothing should be retried. It exists so
+// a caller can record the deployment honestly rather than choosing between
+// calling it done, which is untrue, and calling it failed, which is worse.
+var errStillProvisioning = errors.New("deployed, but the load balancer is not serving yet")
+
+// waitUntilServing blocks until the URL answers, reporting false on timeout.
+//
+// Any HTTP response counts. A 404 means the load balancer is routing, which is
+// the question being asked; whether the app serves that particular path is the
+// app's business and not something Mendel should have an opinion about.
+func (s *Server) waitUntilServing(ctx context.Context, url string,
+	logMilestone, logInfo func(string)) bool {
+
+	logMilestone("Waiting for the load balancer to start serving " + url)
+	logInfo("A first deployment onto a name has to provision one, which Google takes " +
+		"5-20 minutes to finish. The name refuses connections until it does, and there " +
+		"is nothing to fix in the meantime.")
+
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		// Report on the deployment's own URL rather than wherever it redirects.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+
+	deadline := time.Now().Add(20 * time.Minute)
+	for attempt := 1; time.Now().Before(deadline); attempt++ {
+		if ctx.Err() != nil {
+			return false
+		}
+		if resp, err := client.Get(url); err == nil {
+			resp.Body.Close()
+			logMilestone(fmt.Sprintf("Serving: %s answered %d", url, resp.StatusCode))
+			return true
+		}
+		// Every couple of minutes, not every attempt: a log line per failed probe
+		// buries the milestones in noise about a thing that is going fine.
+		if attempt%8 == 0 {
+			logInfo(fmt.Sprintf("Still provisioning after %d minutes.", attempt/4))
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(15 * time.Second):
+		}
+	}
+	return false
 }

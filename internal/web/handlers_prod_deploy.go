@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -181,11 +182,27 @@ func (s *Server) runChannelProdDeployment(
 	default:
 		return fail(fmt.Errorf("unsupported platform: %s", channel.HostingPlatform.Slug))
 	}
-	if err != nil {
+	// Correct but not yet reachable is neither success nor failure. Recording it
+	// as running would hand over a link that refuses to connect; recording it as
+	// failed would say something is wrong when nothing is.
+	provisioning := errors.Is(err, errStillProvisioning)
+	if err != nil && !provisioning {
 		return fail(fmt.Errorf("deploy failed: %w", err))
 	}
 
 	teardown := teardownCommandFor(channel.HostingPlatform.Slug, appName, env)
+
+	if provisioning {
+		if err := s.db.MarkHostingDeploymentProvisioning(ctx, deployment.ID, url, teardown); err != nil {
+			return fail(fmt.Errorf("record deployment: %w", err))
+		}
+		logMilestone("Deployed, but " + url + " is not serving yet. The load balancer is " +
+			"still coming up; nothing else is needed and it will start answering on its own.")
+		deployment.URL = &url
+		deployment.Status = domain.HostingDeploymentStatusDeploying
+		return deployment, nil
+	}
+
 	if err := s.db.CompleteHostingDeployment(ctx, deployment.ID, url, teardown); err != nil {
 		return fail(fmt.Errorf("record deployment: %w", err))
 	}

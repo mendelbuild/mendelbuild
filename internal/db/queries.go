@@ -2322,6 +2322,21 @@ func (db *DB) CompleteHostingDeployment(ctx context.Context, id uuid.UUID, url, 
 	return err
 }
 
+// MarkHostingDeploymentProvisioning records a deployment that is correct but not
+// yet reachable, so the queue and the settings page can say so.
+//
+// Deliberately leaves finished_at null and the status at 'deploying': the work is
+// not over, and calling it running would put a link in front of the user that
+// refuses to connect while telling them everything is fine.
+func (db *DB) MarkHostingDeploymentProvisioning(ctx context.Context, id uuid.UUID, url, teardownInstructions string) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE hosting_deployments
+		SET status = 'deploying', url = $2, teardown_instructions = $3, updated_at = now()
+		WHERE id = $1
+	`, id, url, teardownInstructions)
+	return err
+}
+
 // FailHostingDeployment marks a deployment failed with an error message.
 func (db *DB) FailHostingDeployment(ctx context.Context, id uuid.UUID, errMsg string) error {
 	_, err := db.Pool.Exec(ctx, `
