@@ -35,7 +35,7 @@ func TestFlyTomlRoutesToThePortTheAppIsTold(t *testing.T) {
 }
 
 func TestK8sManifestRoutesToThePortTheAppIsTold(t *testing.T) {
-	manifest := k8sManifestFor("pong-game", "gcr.io/x/pong-game:latest", "")
+	manifest := k8sManifestFor("pong-game", "gcr.io/x/pong-game:latest", "", "")
 
 	for _, want := range []string{
 		fmt.Sprintf("containerPort: %d", hosting.ContainerPort),
@@ -49,7 +49,7 @@ func TestK8sManifestRoutesToThePortTheAppIsTold(t *testing.T) {
 
 	// The Secret carrying the app's required values is wired in where the
 	// container spec expects it, not appended after the document separator.
-	withSecret := k8sManifestFor("pong-game", "img", "\n        envFrom:\n        - secretRef:\n            name: pong-game-env")
+	withSecret := k8sManifestFor("pong-game", "img", "\n        envFrom:\n        - secretRef:\n            name: pong-game-env", "")
 	envFromAt := strings.Index(withSecret, "envFrom:")
 	separatorAt := strings.Index(withSecret, "---")
 	if envFromAt < 0 || envFromAt > separatorAt {

@@ -860,9 +860,44 @@ type HostingPlatform struct {
 	// SetupInputCredential names the credential that same value provides, when
 	// it happens to be one Mendel also stores.
 	SetupInputCredential string `json:"setup_input_credential"`
+
+	// HostnameSource says where a deployment's public name comes from. It is
+	// the difference between a demo that can complete an OAuth round trip and
+	// one that cannot, and it is a property of the platform rather than of any
+	// one deployment.
+	HostnameSource HostnameSource `json:"hostname_source"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
+
+// HostnameSource says whether a platform gives a deployment a public hostname
+// of its own.
+//
+// Fly.io answers with <app>.fly.dev and Cloud Run with a generated *.run.app
+// name; a Kubernetes cluster answers with a load balancer's address and nothing
+// else. Anything a deployment must be reachable *as* -- an OAuth redirect URI,
+// a webhook target, a link someone is expected to trust -- needs a name and a
+// certificate, so this is the third thing that decides whether a channel can
+// run a given variation, alongside the artifact it builds and the platform it
+// runs on.
+type HostnameSource string
+
+const (
+	// HostnameFromPlatform: the platform issues the name, and Mendel learns it
+	// by deploying.
+	HostnameFromPlatform HostnameSource = "platform"
+
+	// HostnameFromUser: the platform issues only an address, so a name has to
+	// come from a domain the user controls. Without one the deployment still
+	// runs and is still reachable; it simply has no identity to register
+	// anywhere.
+	HostnameFromUser HostnameSource = "user"
+)
+
+// BaseDomainCredential is the name under which a user supplies the domain their
+// deployments get their names from. One record covers every deployment, so this
+// is configuration the user provides once rather than anything Mendel mints.
+const BaseDomainCredential = "DEPLOY_BASE_DOMAIN"
 
 // DeployArtifactKind describes what a project produces for deployment.
 type DeployArtifactKind string

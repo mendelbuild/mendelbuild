@@ -37,6 +37,7 @@ func DefaultPlatforms() []domain.HostingPlatform {
 			Slug:          "fly-io",
 			Name:          "Fly.io",
 			DeployerImage: "alpine:latest",
+			HostnameSource: domain.HostnameFromPlatform,
 			Instructions: `Deploy to your own Fly.io organization.
 
 Mendel creates an app per demo and destroys it on teardown, so it needs a token
@@ -76,6 +77,7 @@ echo "-----------------------------------------------------------"`,
 			Slug:          "cloud-run",
 			Name:          "Google Cloud Run",
 			DeployerImage: "google/cloud-sdk:slim",
+			HostnameSource: domain.HostnameFromPlatform,
 			Instructions: `Deploy to your own Google Cloud Run project.
 
 Mendel cannot mint a service account key on your behalf, so run the setup script
@@ -156,6 +158,7 @@ echo "-----------------------------------------------------------"`,
 			Slug:          "railway",
 			Name:          "Railway",
 			DeployerImage: "node:20-slim",
+			HostnameSource: domain.HostnameFromPlatform,
 			Instructions: `Railway deployment:
 - Use Railway CLI (install with: npm install -g @railway/cli)
 - Required env var: RAILWAY_TOKEN
@@ -166,6 +169,7 @@ echo "-----------------------------------------------------------"`,
 			Slug:          "vercel",
 			Name:          "Vercel",
 			DeployerImage: "node:20-slim",
+			HostnameSource: domain.HostnameFromPlatform,
 			Instructions: `Vercel deployment:
 - Use 'vercel' CLI (install with: npm install -g vercel)
 - Required env vars: VERCEL_TOKEN, optionally VERCEL_ORG_ID
@@ -176,6 +180,7 @@ echo "-----------------------------------------------------------"`,
 			Slug:          "render",
 			Name:          "Render",
 			DeployerImage: "alpine:latest",
+			HostnameSource: domain.HostnameFromPlatform,
 			Instructions: `Render deployment:
 - Install curl if needed: apk add --no-cache curl jq
 - Use Render API with curl (render.com/docs/api)
@@ -187,6 +192,7 @@ echo "-----------------------------------------------------------"`,
 			Slug:          "gke",
 			Name:          "Google Kubernetes Engine",
 			DeployerImage: "google/cloud-sdk:slim",
+			HostnameSource: domain.HostnameFromUser,
 			Instructions: `Deploy to your own Google Kubernetes Engine cluster.
 
 Mendel cannot mint a service account key on your behalf, so run the setup script
@@ -202,7 +208,15 @@ It ends by printing every value below under the name it goes in here, so there
 is nothing to work out from its output.
 
 Mendel deploys into a namespace of its own, ` + Namespace + `, creating it if
-absent, and removes the Deployment, Service and Secret it created on teardown.`,
+absent, and removes what it created on teardown.
+
+A cluster hands out addresses, not names, so a deployment here has no identity to
+register anywhere: an OAuth redirect URI or a webhook target needs a host name
+and https, and neither can be had for an IP. Supplying ` + domain.BaseDomainCredential + `
+— a domain you control, with a wildcard record pointing at the cluster — gives
+each demo a name of its own. It is optional: without it deployments still run and
+are still reachable, and only the variations that must be registered by name are
+affected.`,
 			SetupPrerequisites: []string{
 				"Install the gcloud CLI — https://cloud.google.com/sdk/docs/install",
 				"Sign in — gcloud auth login",
@@ -344,6 +358,12 @@ type ComboSpec struct {
 	PlatformSlug        string
 	Notes               string
 	RequiredCredentials []string // Credential names that must exist for this combo
+
+	// OptionalCredentials unlock a capability without gating a deploy. A base
+	// domain is the case this exists for: without one a Kubernetes deployment
+	// still runs and is still reachable, and only the variations that must be
+	// registered somewhere by name are affected.
+	OptionalCredentials []string
 	Guidance            map[string]any
 }
 
@@ -377,6 +397,11 @@ func DefaultCombos() []ComboSpec {
 			PlatformSlug:        "gke",
 			Notes:               "Kubernetes deployment to Google Kubernetes Engine",
 			RequiredCredentials: []string{"GCP_PROJECT_ID", "GCP_SERVICE_ACCOUNT_KEY", "GKE_CLUSTER_NAME", "GKE_ZONE"},
+			// Not required: a deployment reached at its address runs perfectly
+			// well, and most variations never need to be reachable *as*
+			// anything. Only the ones registering a redirect URI or a webhook
+			// do, and blocking every deploy for their sake would be wrong.
+			OptionalCredentials: []string{domain.BaseDomainCredential},
 			Guidance: map[string]any{
 				"requires":    []string{"k8s manifests or Helm chart", "GKE cluster"},
 				"healthCheck": "Use readiness/liveness probes in deployment spec",
@@ -469,4 +494,15 @@ func SeedCombosIfEmpty(ctx context.Context, db ComboDB) (int, error) {
 		seeded++
 	}
 	return seeded, nil
+}
+
+// OptionalCredentialsForCombo returns credentials that add a capability rather
+// than gate a deployment.
+func OptionalCredentialsForCombo(artifactKind domain.DeployArtifactKind, platformSlug string) []string {
+	for _, spec := range DefaultCombos() {
+		if spec.ArtifactKind == artifactKind && spec.PlatformSlug == platformSlug {
+			return spec.OptionalCredentials
+		}
+	}
+	return nil
 }

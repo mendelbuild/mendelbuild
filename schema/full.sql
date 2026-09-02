@@ -622,6 +622,11 @@ CREATE TABLE hosting_platforms (
     setup_prerequisites JSONB NOT NULL DEFAULT '[]'::jsonb, -- Ordered list rendered as a real list, not indented prose
     setup_input_label TEXT NOT NULL DEFAULT '',   -- Prompt for the one value the script needs before it will run
     setup_input_credential TEXT NOT NULL DEFAULT '', -- The credential that value also supplies, if any
+    -- 'platform' when the platform hands out a hostname (*.fly.dev), 'user'
+    -- when the deployment is only reachable at an address until the user
+    -- brings a domain of their own.
+    hostname_source TEXT NOT NULL DEFAULT 'platform'
+        CHECK (hostname_source IN ('platform', 'user')),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );

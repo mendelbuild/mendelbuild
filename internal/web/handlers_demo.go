@@ -66,7 +66,9 @@ func teardownCommandFor(platformSlug, appName string, env map[string]string) str
 		// The Secret holding the app's required values is named after the
 		// deployment and has to go with it; left behind, the user's cluster
 		// accumulates the secrets of every variation ever demoed.
-		return fmt.Sprintf("kubectl delete --namespace %s --ignore-not-found deployment,service,secret %s %s-env",
+		// The Ingress carries this demo's host rule; left behind, the hostname
+		// goes on resolving to a backend that no longer exists.
+		return fmt.Sprintf("kubectl delete --namespace %s --ignore-not-found deployment,service,secret,ingress %s %s-env",
 			hosting.Namespace, appName, appName)
 	}
 	return ""
@@ -639,14 +641,26 @@ func (s *Server) deployToCloudRun(
 	return strings.TrimSpace(string(urlOutput)), nil
 }
 
-// k8sManifestFor builds the Deployment and Service applied to GKE. envFrom is
-// the optional block wiring in the app's required values.
+// k8sManifestFor builds the Deployment and Service applied to GKE, and an
+// Ingress when the deployment has a hostname to answer to.
 //
 // The container port, the Service's target, and PORT all come from the same
 // constant: routing to a port the app was never told to listen on produces a
 // pod that runs and a LoadBalancer that never answers.
-func k8sManifestFor(deploymentName, imageName, envFrom string) string {
-	return fmt.Sprintf(`apiVersion: apps/v1
+//
+// With a hostname the Service is a ClusterIP behind a shared Ingress that routes
+// on Host, rather than a LoadBalancer of its own. That is what a wildcard DNS
+// record requires -- every demo has to answer at one address for a single record
+// to cover them all -- and it is cheaper besides, since a LoadBalancer bills per
+// hour and there was previously one per demo. Without a hostname the old shape
+// stands, so a project that has given Mendel no domain keeps working.
+func k8sManifestFor(deploymentName, imageName, envFrom, hostname string) string {
+	serviceType := "LoadBalancer"
+	if hostname != "" {
+		serviceType = "ClusterIP"
+	}
+
+	manifest := fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: %s
@@ -674,15 +688,53 @@ kind: Service
 metadata:
   name: %s
 spec:
-  type: LoadBalancer
+  type: %s
   selector:
     app: %s
   ports:
   - port: 80
     targetPort: %d
 `, deploymentName, deploymentName, deploymentName, imageName,
-		hosting.ContainerPort, hosting.ContainerPort, envFrom, deploymentName, deploymentName,
+		hosting.ContainerPort, hosting.ContainerPort, envFrom, deploymentName, serviceType, deploymentName,
 		hosting.ContainerPort)
+
+	if hostname == "" {
+		return manifest
+	}
+
+	// kubectl warns that kubernetes.io/ingress.class is deprecated in favour of
+	// spec.ingressClassName. Following that advice stops the Ingress working:
+	// GKE ships no IngressClass resource, so ingressClassName: gce names a class
+	// nothing provides, and the Ingress is never reconciled -- no address, and no
+	// events at all, which leaves nothing to read that would explain it. Verified
+	// both ways against a real cluster.
+	//
+	// One Ingress per deployment, all sharing a static address. Kubernetes
+	// merges rules across Ingresses on the same class, so each demo brings and
+	// removes its own rule and teardown needs no edit of a shared object --
+	// which would otherwise be a read-modify-write race between demos starting
+	// and stopping at once.
+	manifest += fmt.Sprintf(`---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: %s
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+spec:
+  rules:
+  - host: %s
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: %s
+            port:
+              number: 80
+`, deploymentName, hostname, deploymentName)
+	return manifest
 }
 
 // gkeSession is an authenticated, isolated CLI environment for one GKE operation.
@@ -899,7 +951,9 @@ func (s *Server) deployToGKE(
 		envFrom = fmt.Sprintf("\n        envFrom:\n        - secretRef:\n            name: %s", secretName)
 	}
 
-	manifest := k8sManifestFor(deploymentName, imageName, envFrom)
+	// A hostname only exists if the user gave Mendel a domain to build one from.
+	hostname := domain.DeploymentHostname(deploymentName, env[domain.BaseDomainCredential])
+	manifest := k8sManifestFor(deploymentName, imageName, envFrom, hostname)
 
 	manifestPath := filepath.Join(workDir, "k8s-deploy.yaml")
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0644); err != nil {
@@ -918,6 +972,15 @@ func (s *Server) deployToGKE(
 	rolloutCmd := session.kubectl(ctx, "rollout", "status", "deployment/"+deploymentName, "--timeout=180s")
 	if output, err := rolloutCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("rollout failed: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+
+	// With a hostname the address is the wildcard record's, which already
+	// resolves, so there is nothing to wait for and the URL is known in advance.
+	// https because that is the whole point of having a name: a certificate can
+	// be issued for it, which cannot be done for an address.
+	if hostname != "" {
+		logInfo("Reachable at " + hostname + " once the Ingress has programmed itself")
+		return "https://" + hostname, nil
 	}
 
 	// Wait for external IP

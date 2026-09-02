@@ -115,7 +115,9 @@ func DeployURLLimitation(deployURL string) string {
 	case isIP && parsed.Scheme != "https":
 		return "This deployment is reached at " + deployURL + ", a bare IP address over plain " +
 			"http. Sign-in providers accept neither: a redirect URI has to name a host rather " +
-			"than an address, and has to be https. Registering this one will be refused."
+			"than an address, and has to be https. Registering this one will be refused. " +
+			"This platform does not issue hostnames, so giving Mendel a domain you control " +
+			"as " + BaseDomainCredential + " is what lets a deployment have a name."
 	case isIP:
 		return "This deployment is reached at " + deployURL + ", a bare IP address. Sign-in " +
 			"providers require a host name rather than an address, so registering this one " +
@@ -268,4 +270,23 @@ func UnmetSummary(statuses []RequirementStatus) string {
 		parts = append(parts, "unconfirmed setup steps: "+strings.Join(acks, ", "))
 	}
 	return strings.Join(parts, "; ")
+}
+
+// DeploymentHostname is the name a deployment answers to under a base domain.
+//
+// One label, because a wildcard DNS record covers exactly one: *.demos.example.com
+// answers for pong-abc123.demos.example.com and not for anything deeper. That is
+// what lets the user create a single record and Mendel invent names under it
+// afterwards without touching DNS again.
+func DeploymentHostname(appName, baseDomain string) string {
+	baseDomain = strings.TrimSpace(strings.Trim(strings.TrimSpace(baseDomain), "."))
+	if baseDomain == "" || appName == "" {
+		return ""
+	}
+	// A name Mendel generated may not be a legal label on its own.
+	label := strings.Trim(strings.ToLower(appName), "-")
+	if label == "" {
+		return ""
+	}
+	return label + "." + baseDomain
 }

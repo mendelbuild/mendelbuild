@@ -2648,7 +2648,7 @@ func (db *DB) AssignOwnerToUnownedProjects(ctx context.Context, userID uuid.UUID
 // ListHostingPlatforms returns all available hosting platforms.
 func (db *DB) ListHostingPlatforms(ctx context.Context) ([]domain.HostingPlatform, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, slug, name, deployer_image, instructions, setup_script, setup_prerequisites, setup_input_label, setup_input_credential, created_at, updated_at
+		SELECT id, slug, name, deployer_image, instructions, setup_script, setup_prerequisites, setup_input_label, setup_input_credential, hostname_source, created_at, updated_at
 		FROM hosting_platforms
 		ORDER BY name
 	`)
@@ -2660,7 +2660,7 @@ func (db *DB) ListHostingPlatforms(ctx context.Context) ([]domain.HostingPlatfor
 	var platforms []domain.HostingPlatform
 	for rows.Next() {
 		var p domain.HostingPlatform
-		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.DeployerImage, &p.Instructions, &p.SetupScript, &p.SetupPrerequisites, &p.SetupInputLabel, &p.SetupInputCredential, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.DeployerImage, &p.Instructions, &p.SetupScript, &p.SetupPrerequisites, &p.SetupInputLabel, &p.SetupInputCredential, &p.HostnameSource, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		platforms = append(platforms, p)
@@ -2672,10 +2672,10 @@ func (db *DB) ListHostingPlatforms(ctx context.Context) ([]domain.HostingPlatfor
 func (db *DB) GetHostingPlatformBySlug(ctx context.Context, slug string) (*domain.HostingPlatform, error) {
 	var p domain.HostingPlatform
 	err := db.Pool.QueryRow(ctx, `
-		SELECT id, slug, name, deployer_image, instructions, setup_script, setup_prerequisites, setup_input_label, setup_input_credential, created_at, updated_at
+		SELECT id, slug, name, deployer_image, instructions, setup_script, setup_prerequisites, setup_input_label, setup_input_credential, hostname_source, created_at, updated_at
 		FROM hosting_platforms
 		WHERE slug = $1
-	`, slug).Scan(&p.ID, &p.Slug, &p.Name, &p.DeployerImage, &p.Instructions, &p.SetupScript, &p.SetupPrerequisites, &p.SetupInputLabel, &p.SetupInputCredential, &p.CreatedAt, &p.UpdatedAt)
+	`, slug).Scan(&p.ID, &p.Slug, &p.Name, &p.DeployerImage, &p.Instructions, &p.SetupScript, &p.SetupPrerequisites, &p.SetupInputLabel, &p.SetupInputCredential, &p.HostnameSource, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -2688,10 +2688,14 @@ func (db *DB) UpsertHostingPlatform(ctx context.Context, p *domain.HostingPlatfo
 	if prereqs == nil {
 		prereqs = []string{}
 	}
+	hostnameSource := p.HostnameSource
+	if hostnameSource == "" {
+		hostnameSource = domain.HostnameFromPlatform
+	}
 	_, err := db.Pool.Exec(ctx, `
 		INSERT INTO hosting_platforms (id, slug, name, deployer_image, instructions, setup_script,
-			setup_prerequisites, setup_input_label, setup_input_credential, created_at, updated_at)
-		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+			setup_prerequisites, setup_input_label, setup_input_credential, hostname_source, created_at, updated_at)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
 		ON CONFLICT (slug) DO UPDATE SET
 			name = EXCLUDED.name,
 			deployer_image = EXCLUDED.deployer_image,
@@ -2700,9 +2704,10 @@ func (db *DB) UpsertHostingPlatform(ctx context.Context, p *domain.HostingPlatfo
 			setup_prerequisites = EXCLUDED.setup_prerequisites,
 			setup_input_label = EXCLUDED.setup_input_label,
 			setup_input_credential = EXCLUDED.setup_input_credential,
+			hostname_source = EXCLUDED.hostname_source,
 			updated_at = NOW()
 	`, p.Slug, p.Name, p.DeployerImage, p.Instructions, p.SetupScript,
-		prereqs, p.SetupInputLabel, p.SetupInputCredential)
+		prereqs, p.SetupInputLabel, p.SetupInputCredential, hostnameSource)
 	return err
 }
 
@@ -2725,7 +2730,7 @@ func (db *DB) CountHostingPlatforms(ctx context.Context) (int, error) {
 func (db *DB) ListSupportedDeploymentCombos(ctx context.Context) ([]domain.SupportedDeploymentCombo, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT sdc.id, sdc.artifact_kind, sdc.hosting_platform_id, sdc.notes, sdc.guidance, sdc.created_at,
-			   hp.id, hp.slug, hp.name, hp.deployer_image, hp.instructions, hp.setup_script, hp.setup_prerequisites, hp.setup_input_label, hp.setup_input_credential, hp.created_at, hp.updated_at
+			   hp.id, hp.slug, hp.name, hp.deployer_image, hp.instructions, hp.setup_script, hp.setup_prerequisites, hp.setup_input_label, hp.setup_input_credential, hp.hostname_source, hp.created_at, hp.updated_at
 		FROM supported_deployment_combos sdc
 		JOIN hosting_platforms hp ON hp.id = sdc.hosting_platform_id
 		ORDER BY sdc.artifact_kind, hp.name
@@ -2741,7 +2746,7 @@ func (db *DB) ListSupportedDeploymentCombos(ctx context.Context) ([]domain.Suppo
 		var hp domain.HostingPlatform
 		if err := rows.Scan(
 			&c.ID, &c.ArtifactKind, &c.HostingPlatformID, &c.Notes, &c.Guidance, &c.CreatedAt,
-			&hp.ID, &hp.Slug, &hp.Name, &hp.DeployerImage, &hp.Instructions, &hp.SetupScript, &hp.SetupPrerequisites, &hp.SetupInputLabel, &hp.SetupInputCredential, &hp.CreatedAt, &hp.UpdatedAt,
+			&hp.ID, &hp.Slug, &hp.Name, &hp.DeployerImage, &hp.Instructions, &hp.SetupScript, &hp.SetupPrerequisites, &hp.SetupInputLabel, &hp.SetupInputCredential, &hp.HostnameSource, &hp.CreatedAt, &hp.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -2757,13 +2762,13 @@ func (db *DB) GetSupportedDeploymentCombo(ctx context.Context, artifactKind doma
 	var hp domain.HostingPlatform
 	err := db.Pool.QueryRow(ctx, `
 		SELECT sdc.id, sdc.artifact_kind, sdc.hosting_platform_id, sdc.notes, sdc.guidance, sdc.created_at,
-			   hp.id, hp.slug, hp.name, hp.deployer_image, hp.instructions, hp.setup_script, hp.setup_prerequisites, hp.setup_input_label, hp.setup_input_credential, hp.created_at, hp.updated_at
+			   hp.id, hp.slug, hp.name, hp.deployer_image, hp.instructions, hp.setup_script, hp.setup_prerequisites, hp.setup_input_label, hp.setup_input_credential, hp.hostname_source, hp.created_at, hp.updated_at
 		FROM supported_deployment_combos sdc
 		JOIN hosting_platforms hp ON hp.id = sdc.hosting_platform_id
 		WHERE sdc.artifact_kind = $1 AND sdc.hosting_platform_id = $2
 	`, artifactKind, platformID).Scan(
 		&c.ID, &c.ArtifactKind, &c.HostingPlatformID, &c.Notes, &c.Guidance, &c.CreatedAt,
-		&hp.ID, &hp.Slug, &hp.Name, &hp.DeployerImage, &hp.Instructions, &hp.SetupScript, &hp.SetupPrerequisites, &hp.SetupInputLabel, &hp.SetupInputCredential, &hp.CreatedAt, &hp.UpdatedAt,
+		&hp.ID, &hp.Slug, &hp.Name, &hp.DeployerImage, &hp.Instructions, &hp.SetupScript, &hp.SetupPrerequisites, &hp.SetupInputLabel, &hp.SetupInputCredential, &hp.HostnameSource, &hp.CreatedAt, &hp.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -2804,7 +2809,7 @@ func (db *DB) CountSupportedDeploymentCombos(ctx context.Context) (int, error) {
 // Uses LEFT JOIN so channels with missing/deleted platforms are still returned.
 func (db *DB) GetActiveProjectDeploymentChannel(ctx context.Context, projectID uuid.UUID) (*domain.ProjectDeploymentChannel, error) {
 	var c domain.ProjectDeploymentChannel
-	var hpID, hpSlug, hpName, hpDeployerImage, hpInstructions, hpSetupScript, hpInputLabel, hpInputCredential *string
+	var hpID, hpSlug, hpName, hpDeployerImage, hpInstructions, hpSetupScript, hpInputLabel, hpInputCredential, hpHostnameSource *string
 	var hpPrereqs []string
 	var hpCreatedAt, hpUpdatedAt *time.Time
 	err := db.Pool.QueryRow(ctx, `
@@ -2812,7 +2817,7 @@ func (db *DB) GetActiveProjectDeploymentChannel(ctx context.Context, projectID u
 			   pdc.demo_validated_at, pdc.demo_validating_at, pdc.demo_validation_error,
 			   pdc.prod_validated_at, pdc.prod_validating_at, pdc.prod_validation_error,
 			   pdc.disabled_at, pdc.created_at, pdc.updated_at,
-			   hp.id, hp.slug, hp.name, hp.deployer_image, hp.instructions, hp.setup_script, hp.setup_prerequisites, hp.setup_input_label, hp.setup_input_credential, hp.created_at, hp.updated_at
+			   hp.id, hp.slug, hp.name, hp.deployer_image, hp.instructions, hp.setup_script, hp.setup_prerequisites, hp.setup_input_label, hp.setup_input_credential, hp.hostname_source, hp.created_at, hp.updated_at
 		FROM project_deployment_channels pdc
 		LEFT JOIN hosting_platforms hp ON hp.id = pdc.hosting_platform_id
 		WHERE pdc.project_id = $1 AND pdc.disabled_at IS NULL
@@ -2821,7 +2826,7 @@ func (db *DB) GetActiveProjectDeploymentChannel(ctx context.Context, projectID u
 		&c.DemoValidatedAt, &c.DemoValidatingAt, &c.DemoValidationError,
 		&c.ProdValidatedAt, &c.ProdValidatingAt, &c.ProdValidationError,
 		&c.DisabledAt, &c.CreatedAt, &c.UpdatedAt,
-		&hpID, &hpSlug, &hpName, &hpDeployerImage, &hpInstructions, &hpSetupScript, &hpPrereqs, &hpInputLabel, &hpInputCredential, &hpCreatedAt, &hpUpdatedAt,
+		&hpID, &hpSlug, &hpName, &hpDeployerImage, &hpInstructions, &hpSetupScript, &hpPrereqs, &hpInputLabel, &hpInputCredential, &hpHostnameSource, &hpCreatedAt, &hpUpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -2849,6 +2854,9 @@ func (db *DB) GetActiveProjectDeploymentChannel(ctx context.Context, projectID u
 		if hpInputCredential != nil {
 			hp.SetupInputCredential = *hpInputCredential
 		}
+		if hpHostnameSource != nil {
+			hp.HostnameSource = domain.HostnameSource(*hpHostnameSource)
+		}
 		if hpCreatedAt != nil {
 			hp.CreatedAt = *hpCreatedAt
 		}
@@ -2867,7 +2875,7 @@ func (db *DB) ListProjectDeploymentChannels(ctx context.Context, projectID uuid.
 			   pdc.demo_validated_at, pdc.demo_validating_at, pdc.demo_validation_error,
 			   pdc.prod_validated_at, pdc.prod_validating_at, pdc.prod_validation_error,
 			   pdc.disabled_at, pdc.created_at, pdc.updated_at,
-			   hp.id, hp.slug, hp.name, hp.deployer_image, hp.instructions, hp.setup_script, hp.setup_prerequisites, hp.setup_input_label, hp.setup_input_credential, hp.created_at, hp.updated_at
+			   hp.id, hp.slug, hp.name, hp.deployer_image, hp.instructions, hp.setup_script, hp.setup_prerequisites, hp.setup_input_label, hp.setup_input_credential, hp.hostname_source, hp.created_at, hp.updated_at
 		FROM project_deployment_channels pdc
 		JOIN hosting_platforms hp ON hp.id = pdc.hosting_platform_id
 		WHERE pdc.project_id = $1
@@ -2887,7 +2895,7 @@ func (db *DB) ListProjectDeploymentChannels(ctx context.Context, projectID uuid.
 			&c.DemoValidatedAt, &c.DemoValidatingAt, &c.DemoValidationError,
 			&c.ProdValidatedAt, &c.ProdValidatingAt, &c.ProdValidationError,
 				&c.DisabledAt, &c.CreatedAt, &c.UpdatedAt,
-			&hp.ID, &hp.Slug, &hp.Name, &hp.DeployerImage, &hp.Instructions, &hp.SetupScript, &hp.SetupPrerequisites, &hp.SetupInputLabel, &hp.SetupInputCredential, &hp.CreatedAt, &hp.UpdatedAt,
+			&hp.ID, &hp.Slug, &hp.Name, &hp.DeployerImage, &hp.Instructions, &hp.SetupScript, &hp.SetupPrerequisites, &hp.SetupInputLabel, &hp.SetupInputCredential, &hp.HostnameSource, &hp.CreatedAt, &hp.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
