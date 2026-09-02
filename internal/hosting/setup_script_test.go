@@ -151,3 +151,32 @@ func TestSelectableChannelsHaveASetupScript(t *testing.T) {
 		}
 	}
 }
+
+// TestSetupScriptsPrintEveryRequiredCredential is the rule behind the whole
+// point of these scripts: a user should finish one holding the values, not
+// holding output they have to interpret.
+//
+// The GKE script once ended with a cluster table and a page of JSON, and left
+// the reader to work out that NAME was GKE_CLUSTER_NAME, that LOCATION was
+// GKE_ZONE, and that the entire JSON document was one field. Every name the
+// channel will ask for must appear in the script that produces it.
+func TestSetupScriptsPrintEveryRequiredCredential(t *testing.T) {
+	scripts := map[string]string{}
+	for _, p := range DefaultPlatforms() {
+		scripts[p.Slug] = p.SetupScript
+	}
+
+	for _, combo := range DefaultCombos() {
+		script := scripts[combo.PlatformSlug]
+		if strings.TrimSpace(script) == "" {
+			continue // Covered by TestSelectableChannelsHaveASetupScript.
+		}
+		for _, name := range combo.RequiredCredentials {
+			if !strings.Contains(script, name) {
+				t.Errorf("%s asks for %s but its setup script never names it, so the user "+
+					"is left to work out which part of the output that is",
+					combo.PlatformSlug, name)
+			}
+		}
+	}
+}

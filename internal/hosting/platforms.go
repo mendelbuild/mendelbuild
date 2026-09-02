@@ -46,10 +46,10 @@ Before you start:
   3. Know which organization Mendel should deploy into — flyctl orgs list
 
 Mendel creates an app per demo and destroys it on teardown, so it needs a token
-scoped to the organization rather than to one app. Run the setup script; it
-prints the token as its last line.
+scoped to the organization rather than to one app. The script ends by printing
+it under the name it goes in here:
 
-  FLY_API_TOKEN  the token the script prints, including the "FlyV1 " prefix
+  FLY_API_TOKEN
 
 Each demo becomes its own Fly app, named after the project and variation, and
 is destroyed when the demo stops.`,
@@ -62,8 +62,17 @@ export FLY_ORG=<YOUR_FLY_ORG_HERE>
 # first one working, so re-running is safe and simply mints a fresh token.
 flyctl orgs show "$FLY_ORG" > /dev/null
 
-echo; echo "--- FLY_API_TOKEN: copy the whole line below, including FlyV1 ---"; echo
-flyctl tokens create org --org "$FLY_ORG" --name "Mendel" --expiry 8760h`,
+# Everything Mendel asks for, printed under the name Mendel asks for it under.
+TOKEN=$(flyctl tokens create org --org "$FLY_ORG" --name "Mendel" --expiry 8760h)
+
+echo
+echo "================= paste these into Mendel ================="
+echo
+echo "FLY_API_TOKEN"
+echo "  the whole line below, including the FlyV1 prefix"
+echo "-----------------------------------------------------------"
+printf '%s\n' "$TOKEN"
+echo "-----------------------------------------------------------"`,
 		},
 		{
 			Slug:          "cloud-run",
@@ -81,9 +90,10 @@ below. Replace the placeholder on its first line; everything after that pastes
 as-is, and the whole thing is safe to run again if you lose the key or need to
 repeat a step.
 
-  GCP_PROJECT_ID           what you set GCP_PROJECT to
-  GCP_SERVICE_ACCOUNT_KEY  the whole contents of mendel-key.json, which the
-                           script prints at the end
+The script ends by printing both of these under the name it goes in here:
+
+  GCP_PROJECT_ID
+  GCP_SERVICE_ACCOUNT_KEY
 
 Mendel deploys each demo as its own Cloud Run service in us-central1, built from
 your Dockerfile, and deletes the service on teardown.`,
@@ -119,8 +129,18 @@ gcloud artifacts repositories create cloud-run-source-deploy --repository-format
 
 gcloud iam service-accounts keys create mendel-key.json --iam-account "mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com"
 
-echo; echo "--- GCP_SERVICE_ACCOUNT_KEY: copy everything below ---"; echo
-cat mendel-key.json`,
+# Everything Mendel asks for, printed under the name Mendel asks for it under.
+echo
+echo "================= paste these into Mendel ================="
+echo
+echo "GCP_PROJECT_ID"
+echo "  $GCP_PROJECT"
+echo
+echo "GCP_SERVICE_ACCOUNT_KEY"
+echo "  everything between the two lines below, braces included"
+echo "-----------------------------------------------------------"
+cat mendel-key.json
+echo "-----------------------------------------------------------"`,
 		},
 		{
 			Slug:          "railway",
@@ -169,14 +189,16 @@ below. Replace the placeholder on its first line; everything after that pastes
 as-is, and the whole thing is safe to run again if you lose the key or need to
 repeat a step.
 
-The script ends by printing your clusters and the key. Those supply the four
-values:
+The script ends by printing each of these four values under the name it goes in
+here, so there is nothing to work out from its output:
 
-  GCP_PROJECT_ID           what you set GCP_PROJECT to
-  GCP_SERVICE_ACCOUNT_KEY  the whole contents of mendel-key.json
-  GKE_CLUSTER_NAME         NAME, from the cluster list
-  GKE_ZONE                 LOCATION, from the cluster list — a zone
-                           (us-central1-a) or a region (us-central1) both work
+  GCP_PROJECT_ID
+  GCP_SERVICE_ACCOUNT_KEY
+  GKE_CLUSTER_NAME
+  GKE_ZONE
+
+If the project holds more than one cluster the script lists them and asks which,
+since that is the one choice it cannot make for you.
 
 Mendel deploys into a namespace of its own, ` + Namespace + `, creating it if
 absent, and removes the Deployment, Service and Secret it created on teardown.`,
@@ -197,12 +219,41 @@ for ROLE in container.developer cloudbuild.builds.editor artifactregistry.writer
   gcloud projects add-iam-policy-binding "$GCP_PROJECT" --member "serviceAccount:mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com" --role "roles/$ROLE" --condition None --quiet > /dev/null
 done
 
-# The key itself, and the clusters you can deploy to.
+# The key itself.
 gcloud iam service-accounts keys create mendel-key.json --iam-account "mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com"
-gcloud container clusters list --project "$GCP_PROJECT"
 
-echo; echo "--- GCP_SERVICE_ACCOUNT_KEY: copy everything below ---"; echo
-cat mendel-key.json`,
+# Everything Mendel asks for, printed under the name Mendel asks for it under.
+# Reading a cluster table and a page of JSON and working out which part goes in
+# which box is work the script can do instead.
+CLUSTERS=$(gcloud container clusters list --project "$GCP_PROJECT" --format "value(name,location)")
+CLUSTER_COUNT=$(printf '%s' "$CLUSTERS" | grep -c . || true)
+
+echo
+echo "================= paste these into Mendel ================="
+echo
+echo "GCP_PROJECT_ID"
+echo "  $GCP_PROJECT"
+echo
+if [ "$CLUSTER_COUNT" -eq 1 ]; then
+  echo "GKE_CLUSTER_NAME"
+  printf '%s\n' "$CLUSTERS" | awk '{print "  " $1}'
+  echo
+  echo "GKE_ZONE"
+  printf '%s\n' "$CLUSTERS" | awk '{print "  " $2}'
+elif [ "$CLUSTER_COUNT" -eq 0 ]; then
+  echo "GKE_CLUSTER_NAME / GKE_ZONE"
+  echo "  No clusters in this project yet. Create one, then re-run this script."
+else
+  echo "GKE_CLUSTER_NAME / GKE_ZONE"
+  echo "  $CLUSTER_COUNT clusters found. Pick the one to deploy into:"
+  printf '%s\n' "$CLUSTERS" | awk '{print "    GKE_CLUSTER_NAME=" $1 "   GKE_ZONE=" $2}'
+fi
+echo
+echo "GCP_SERVICE_ACCOUNT_KEY"
+echo "  everything between the two lines below, braces included"
+echo "-----------------------------------------------------------"
+cat mendel-key.json
+echo "-----------------------------------------------------------"`,
 		},
 	}
 }
