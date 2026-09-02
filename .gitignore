@@ -37,3 +37,7 @@ labnotebook.md
 
 # Claude Code
 .claude/
+
+# Service account keys minted by a channel setup script, run from the repo root.
+mendel-key.json
+*-key.json
