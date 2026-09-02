@@ -55,7 +55,7 @@ func TestGKEDeployRoundTrip(t *testing.T) {
 	appSecrets := map[string]string{"MENDEL_ITEST_MARKER": "present"}
 
 	srv := &Server{}
-	teardown := teardownCommandFor("gke", deploymentName)
+	teardown := teardownCommandFor("gke", deploymentName, env)
 	t.Cleanup(func() {
 		session, err := newGKESession(context.Background(), env)
 		if err != nil {

@@ -184,7 +184,7 @@ func (s *Server) runChannelProdDeployment(
 		return fail(fmt.Errorf("deploy failed: %w", err))
 	}
 
-	teardown := teardownCommandFor(channel.HostingPlatform.Slug, appName)
+	teardown := teardownCommandFor(channel.HostingPlatform.Slug, appName, env)
 	if err := s.db.CompleteHostingDeployment(ctx, deployment.ID, url, teardown); err != nil {
 		return fail(fmt.Errorf("record deployment: %w", err))
 	}

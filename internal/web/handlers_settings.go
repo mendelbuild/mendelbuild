@@ -1100,7 +1100,10 @@ primary_region = "iad"
 func (s *Server) validateCloudRun(ctx context.Context, env map[string]string, mode string) error {
 	serviceName := fmt.Sprintf("mendel-validate-%d", time.Now().Unix())
 	projectID := env["GCP_PROJECT_ID"]
-	region := "us-central1"
+	region := env["GCP_REGION"]
+	if region == "" {
+		return fmt.Errorf("GCP_REGION is not set; re-run the setup script, which reports it")
+	}
 
 	// Write service account key to temp file
 	keyFile, err := os.CreateTemp("", "gcp-key-*.json")

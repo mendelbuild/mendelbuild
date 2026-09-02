@@ -53,12 +53,15 @@ func prodAppName(projectName string) string {
 // teardownCommandFor returns the shell command that tears down a deployment of
 // appName on the given platform. Stored with the deployment so teardown works
 // even if Mendel restarts.
-func teardownCommandFor(platformSlug, appName string) string {
+func teardownCommandFor(platformSlug, appName string, env map[string]string) string {
 	switch platformSlug {
 	case "fly-io":
 		return fmt.Sprintf("flyctl apps destroy %s --yes", appName)
 	case "cloud-run":
-		return fmt.Sprintf("gcloud run services delete %s --region us-central1 --quiet", appName)
+		// The region has to be captured here rather than assumed at teardown:
+		// the service was created in the user's region, and a teardown aimed at
+		// a different one silently deletes nothing.
+		return fmt.Sprintf("gcloud run services delete %s --region %s --quiet", appName, env["GCP_REGION"])
 	case "gke":
 		// The Secret holding the app's required values is named after the
 		// deployment and has to go with it; left behind, the user's cluster
@@ -399,7 +402,7 @@ func (s *Server) runChannelDemoDeployment(
 	// Update demo instance with URL
 	logMilestone("Demo deployed: " + url)
 
-	teardownCmd := teardownCommandFor(channel.HostingPlatform.Slug, appName)
+	teardownCmd := teardownCommandFor(channel.HostingPlatform.Slug, appName, env)
 
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE demo_instances
@@ -561,7 +564,13 @@ func (s *Server) deployToCloudRun(
 	logInfo func(string),
 ) (string, error) {
 	projectID := env["GCP_PROJECT_ID"]
-	region := "us-central1"
+	// The region is the user's, not Mendel's: a default written in here deploys
+	// everyone's services to one place regardless of where their data or their
+	// users are. The setup script reports it alongside the project.
+	region := env["GCP_REGION"]
+	if region == "" {
+		return "", fmt.Errorf("GCP_REGION is not set; re-run the setup script, which reports it")
+	}
 
 	// Write service account key to temp file
 	keyFile, err := os.CreateTemp("", "gcp-key-*.json")

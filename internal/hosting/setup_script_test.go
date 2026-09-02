@@ -229,3 +229,36 @@ func scriptFile(t *testing.T, script string) string {
 	}
 	return path
 }
+
+// TestNoHardcodedRegions keeps CLAUDE.md's rule about platform options honest
+// for the one option that is easiest to write in without noticing.
+//
+// A region baked into Mendel sends every user's workloads to wherever the author
+// happened to be: latency, data residency and price all vary by region, and the
+// choice belongs to whoever owns the project. Setup scripts read it from gcloud
+// or ask; the deploy paths read it from a credential.
+func TestNoHardcodedRegions(t *testing.T) {
+	// A literal cloud region: two or three dash-separated parts ending in a
+	// digit, optionally with a zone letter.
+	region := regexp.MustCompile(`\b(us|europe|asia|australia|southamerica|northamerica|me|africa)-[a-z]+[0-9](-[a-z])?\b`)
+
+	for _, p := range DefaultPlatforms() {
+		for _, field := range []struct{ name, text string }{
+			{"SetupScript", p.SetupScript},
+			{"Instructions", p.Instructions},
+		} {
+			for _, line := range strings.Split(field.text, "\n") {
+				// Listing regions to choose between is the opposite of hardcoding
+				// one, and an example of the format helps a reader recognise it.
+				if strings.Contains(line, "regions list") || strings.Contains(line, "for example") {
+					continue
+				}
+				if m := region.FindString(line); m != "" {
+					t.Errorf("%s %s hardcodes the region %q:\n  %s\n"+
+						"Read it from the user's configuration or ask, rather than choosing for them.",
+						p.Slug, field.name, m, strings.TrimSpace(line))
+				}
+			}
+		}
+	}
+}

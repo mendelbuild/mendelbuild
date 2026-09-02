@@ -84,8 +84,8 @@ is safe to run again if you lose the key or need to repeat a step.
 
 It ends by printing every value below under the name it goes in here.
 
-Mendel deploys each demo as its own Cloud Run service in us-central1, built from
-your Dockerfile, and deletes the service on teardown.`,
+Mendel deploys each demo as its own Cloud Run service in the region you give it,
+built from your Dockerfile, and deletes the service on teardown.`,
 			SetupPrerequisites: []string{
 				"Install the gcloud CLI — https://cloud.google.com/sdk/docs/install",
 				"Sign in — gcloud auth login",
@@ -97,6 +97,17 @@ your Dockerfile, and deletes the service on teardown.`,
 # a shell syntax error, deliberately: better to stop on line one than run the
 # whole script against a project that does not exist.
 export GCP_PROJECT=<YOUR_PROJECT_ID_HERE>
+
+# Where services go. Not Mendel's decision -- latency, data residency and cost
+# all vary by region -- so take what gcloud is already configured with, and ask
+# from the live list if there is nothing configured.
+GCP_REGION=${GCP_REGION:-$(gcloud config get-value compute/region 2>/dev/null | grep -v '^(unset)$')}
+if [ -z "$GCP_REGION" ]; then
+  echo "No region configured. Pick one of these and re-run with it, for example:"
+  gcloud compute regions list --project "$GCP_PROJECT" --format 'value(name)' | sed 's/^/  GCP_REGION=/'
+  echo "Or set a default once with: gcloud config set compute/region <region>"
+  return 2>/dev/null || exit 1
+fi
 
 # Cloud Run itself, the build that produces the image, and the registry it is
 # pushed to. Enabling an enabled API is a no-op.
@@ -121,7 +132,7 @@ gcloud iam service-accounts add-iam-policy-binding "$PROJECT_NUMBER-compute@deve
 # repository now means the first deploy does not have to, which also keeps it
 # from racing the grants above: a token minted moments after a binding can still
 # be refused, and the failure reads as a missing role rather than a stale token.
-gcloud artifacts repositories create cloud-run-source-deploy --repository-format docker --location us-central1 --project "$GCP_PROJECT" --quiet 2> /dev/null || true
+gcloud artifacts repositories create cloud-run-source-deploy --repository-format docker --location "$GCP_REGION" --project "$GCP_PROJECT" --quiet 2> /dev/null || true
 
 gcloud iam service-accounts keys create mendel-key.json --iam-account "mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com"
 
@@ -131,6 +142,9 @@ echo "================= paste these into Mendel ================="
 echo
 echo "GCP_PROJECT_ID"
 echo "  $GCP_PROJECT"
+echo
+echo "GCP_REGION"
+echo "  $GCP_REGION"
 echo
 echo "GCP_SERVICE_ACCOUNT_KEY"
 echo "  everything between the two lines below, braces included"
@@ -223,15 +237,29 @@ gcloud iam service-accounts keys create mendel-key.json --iam-account "mendel-de
 # someone who came here to connect a deployment target, and it bills for what
 # the demos actually request.
 MENDEL_CLUSTER=${MENDEL_CLUSTER:-mendel-cluster}
-MENDEL_REGION=${MENDEL_REGION:-us-central1}
+# Where to put it is not Mendel's to decide: latency, data residency and cost all
+# vary by region, and any default written into Mendel would be wrong for someone.
+# So take the region gcloud is already configured with, and otherwise ask, having
+# first read the live list out of GCP rather than reciting one.
+MENDEL_REGION=${MENDEL_REGION:-$(gcloud config get-value compute/region 2>/dev/null | grep -v '^(unset)$')}
 if [ -z "$(gcloud container clusters list --project "$GCP_PROJECT" --format 'value(name)')" ]; then
-  echo
-  echo "No cluster in $GCP_PROJECT yet. Creating $MENDEL_CLUSTER in $MENDEL_REGION."
-  echo "This takes a few minutes and the cluster costs money while it exists."
-  echo "To use your own instead, stop here, create one, and re-run this script."
-  echo
-  # Guarded so a cluster created between the check and here is not an error.
-  gcloud container clusters create-auto "$MENDEL_CLUSTER" --project "$GCP_PROJECT" --region "$MENDEL_REGION" || true
+  if [ -z "$MENDEL_REGION" ]; then
+    echo
+    echo "No cluster in $GCP_PROJECT, and no region configured to put one in."
+    echo "Pick one of these and re-run with it, for example:"
+    echo
+    gcloud compute regions list --project "$GCP_PROJECT" --format 'value(name)' | sed 's/^/  MENDEL_REGION=/'
+    echo
+    echo "Or set a default once with: gcloud config set compute/region <region>"
+  else
+    echo
+    echo "No cluster in $GCP_PROJECT yet. Creating $MENDEL_CLUSTER in $MENDEL_REGION."
+    echo "This takes a few minutes and the cluster costs money while it exists."
+    echo "To use your own instead, stop here, create one, and re-run this script."
+    echo
+    # Guarded so a cluster created between the check and here is not an error.
+    gcloud container clusters create-auto "$MENDEL_CLUSTER" --project "$GCP_PROJECT" --region "$MENDEL_REGION" || true
+  fi
 fi
 
 # Everything Mendel asks for, printed under the name Mendel asks for it under.
@@ -254,7 +282,7 @@ if [ "$CLUSTER_COUNT" -eq 1 ]; then
   printf '%s\n' "$CLUSTERS" | awk '{print "  " $2}'
 elif [ "$CLUSTER_COUNT" -eq 0 ]; then
   echo "GKE_CLUSTER_NAME / GKE_ZONE"
-  echo "  Cluster creation did not succeed. Check the error above, then re-run."
+  echo "  No cluster yet — see the message above for what to do."
 else
   echo "GKE_CLUSTER_NAME / GKE_ZONE"
   echo "  $CLUSTER_COUNT clusters found. Pick the one to deploy into:"
@@ -337,7 +365,7 @@ func DefaultCombos() []ComboSpec {
 			ArtifactKind:        domain.DeployArtifactContainer,
 			PlatformSlug:        "cloud-run",
 			Notes:               "Single container deployment to Google Cloud Run",
-			RequiredCredentials: []string{"GCP_PROJECT_ID", "GCP_SERVICE_ACCOUNT_KEY"},
+			RequiredCredentials: []string{"GCP_PROJECT_ID", "GCP_REGION", "GCP_SERVICE_ACCOUNT_KEY"},
 			Guidance: map[string]any{
 				"requires":    []string{"Dockerfile", "GCP project with Cloud Run API enabled"},
 				"healthCheck": "Cloud Run uses container PORT health by default",
