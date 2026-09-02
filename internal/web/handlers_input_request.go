@@ -385,7 +385,7 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 		if projUUID, perr := uuid.Parse(projectID); perr == nil {
 			if channel, cerr := s.db.GetActiveProjectDeploymentChannel(ctx, projUUID); cerr == nil &&
 				channel != nil && channel.HostingPlatform != nil {
-				view.SetupScript = channel.HostingPlatform.SetupScript
+				view.SetupScript = setupScriptText(channel.HostingPlatform.SetupScript)
 				view.SetupScriptLines = markUpSetupScript(channel.HostingPlatform.SetupScript)
 				view.SetupPrerequisites = channel.HostingPlatform.SetupPrerequisites
 				view.SetupInputLabel = channel.HostingPlatform.SetupInputLabel
@@ -2580,6 +2580,19 @@ type SetupScriptLine struct {
 
 // setupPlaceholder matches the token a user must replace before pasting.
 var setupPlaceholder = regexp.MustCompile(`<YOUR_[A-Z_]+_HERE>`)
+
+// setupScriptText is the script as it should leave Mendel: ending in a newline.
+//
+// Scripts are written as Go literals and none of them end with one, which is
+// invisible everywhere except the one place it matters -- a shell handed a final
+// line with no terminator. Fixing it here rather than in each literal means a
+// script added later cannot get it wrong.
+func setupScriptText(script string) string {
+	if script == "" || strings.HasSuffix(script, "\n") {
+		return script
+	}
+	return script + "\n"
+}
 
 // markUpSetupScript splits a setup script into lines and marks the one carrying
 // a placeholder.

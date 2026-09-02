@@ -254,10 +254,18 @@
                                 </svg>
                                 <span class="btn-copy-label">Copy</span>
                             </button>
+                            <button type="button" class="btn-copy" data-download-script{{if .SetupInputLabel}} disabled{{end}}
+                                    aria-label="Download the script as a file">
+                                <span class="btn-copy-label">Download .sh</span>
+                            </button>
                         </div>
                         <pre class="script-body"><code>{{- range .SetupScriptLines -}}
 <span class="script-line{{if .NeedsEdit}} script-line-edit{{end}}{{if .Comment}} script-line-comment{{end}}">{{.Text}}</span>
 {{- end -}}</code></pre>
+                        <p class="script-note">Pasting this much shell straight into a prompt is
+                           unreliable &mdash; depending on your shell it can sit at a continuation
+                           prompt and run nothing. Save it instead and run
+                           <code>bash ~/Downloads/mendel-setup.sh</code>.</p>
                     </div>
                     <pre id="setup-script" hidden>{{.SetupScript}}</pre>
                 </div>

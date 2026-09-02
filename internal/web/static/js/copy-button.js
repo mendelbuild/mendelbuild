@@ -25,7 +25,12 @@ document.addEventListener('click', function (event) {
         }, 1600);
     };
 
-    navigator.clipboard.writeText(source.textContent).then(
+    // A final line with no newline is a line the shell has not been told is
+    // finished, which is how a paste ends up sitting at a continuation prompt.
+    let text = source.textContent;
+    if (text && !text.endsWith('\n')) text += '\n';
+
+    navigator.clipboard.writeText(text).then(
         function () { done('Copied'); },
         function () { done('Press ⌘C'); }
     );
