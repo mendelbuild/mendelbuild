@@ -179,17 +179,20 @@ Mendel cannot mint a service account key on your behalf, so run the setup script
 below. Give it your project ID and it is ready to paste as-is; the whole thing
 is safe to run again if you lose the key or need to repeat a step.
 
+If the project has no cluster the script creates one, so there is nothing to set
+up first; it says so before it starts, since a cluster takes a few minutes and
+costs money while it runs. A project that already has exactly one is used as-is,
+and one with several is listed for you to choose from.
+
 It ends by printing every value below under the name it goes in here, so there
-is nothing to work out from its output. If the project holds more than one
-cluster it lists them and asks which, since that is the one choice it cannot
-make for you.
+is nothing to work out from its output.
 
 Mendel deploys into a namespace of its own, ` + Namespace + `, creating it if
 absent, and removes the Deployment, Service and Secret it created on teardown.`,
 			SetupPrerequisites: []string{
 				"Install the gcloud CLI — https://cloud.google.com/sdk/docs/install",
 				"Sign in — gcloud auth login",
-				"Have a GKE cluster running, and rights to manage IAM on its project",
+				"Have rights to manage IAM and create clusters on the project — the script makes one if the project has none",
 			},
 			SetupInputLabel:      "Your GCP project ID",
 			SetupInputCredential: "GCP_PROJECT_ID",
@@ -213,6 +216,24 @@ done
 # The key itself.
 gcloud iam service-accounts keys create mendel-key.json --iam-account "mendel-deployer@$GCP_PROJECT.iam.gserviceaccount.com"
 
+# A cluster to deploy into. A project that already has one is left alone; only a
+# project with none gets this, so re-running never makes a second cluster.
+#
+# Autopilot, because it needs no node pool sizing or upgrades to be decided by
+# someone who came here to connect a deployment target, and it bills for what
+# the demos actually request.
+MENDEL_CLUSTER=${MENDEL_CLUSTER:-mendel-cluster}
+MENDEL_REGION=${MENDEL_REGION:-us-central1}
+if [ -z "$(gcloud container clusters list --project "$GCP_PROJECT" --format 'value(name)')" ]; then
+  echo
+  echo "No cluster in $GCP_PROJECT yet. Creating $MENDEL_CLUSTER in $MENDEL_REGION."
+  echo "This takes a few minutes and the cluster costs money while it exists."
+  echo "To use your own instead, stop here, create one, and re-run this script."
+  echo
+  # Guarded so a cluster created between the check and here is not an error.
+  gcloud container clusters create-auto "$MENDEL_CLUSTER" --project "$GCP_PROJECT" --region "$MENDEL_REGION" || true
+fi
+
 # Everything Mendel asks for, printed under the name Mendel asks for it under.
 # Reading a cluster table and a page of JSON and working out which part goes in
 # which box is work the script can do instead.
@@ -233,7 +254,7 @@ if [ "$CLUSTER_COUNT" -eq 1 ]; then
   printf '%s\n' "$CLUSTERS" | awk '{print "  " $2}'
 elif [ "$CLUSTER_COUNT" -eq 0 ]; then
   echo "GKE_CLUSTER_NAME / GKE_ZONE"
-  echo "  No clusters in this project yet. Create one, then re-run this script."
+  echo "  Cluster creation did not succeed. Check the error above, then re-run."
 else
   echo "GKE_CLUSTER_NAME / GKE_ZONE"
   echo "  $CLUSTER_COUNT clusters found. Pick the one to deploy into:"

@@ -735,11 +735,44 @@ func newGKESession(ctx context.Context, env map[string]string) (*gkeSession, err
 		env["GKE_CLUSTER_NAME"], "--location", env["GKE_ZONE"])
 	getCreds.Env = cmdEnv
 	if output, err := getCreds.CombinedOutput(); err != nil {
+		// Say which clusters the project does have. GKE_CLUSTER_NAME and
+		// GKE_ZONE are transcribed by hand, and the two are easy to swap, so
+		// the answer is nearly always in a list Mendel can already see -- and
+		// "no cluster named us-central1" sends the reader looking for a fault
+		// in the credentials rather than at the value in the box.
+		hint := gkeClusterHint(ctx, cmdEnv, projectID, env["GKE_CLUSTER_NAME"])
 		cleanup()
-		return nil, fmt.Errorf("failed to get cluster credentials: %s: %w", strings.TrimSpace(string(output)), err)
+		return nil, fmt.Errorf("failed to get cluster credentials: %s%s: %w",
+			strings.TrimSpace(string(output)), hint, err)
 	}
 
 	return &gkeSession{env: cmdEnv, projectID: projectID, namespace: hosting.Namespace, cleanup: cleanup}, nil
+}
+
+// gkeClusterHint names the clusters the project actually holds, for an error
+// about one that was not found. Best effort: if the listing fails too, the
+// original error is still the useful one and this adds nothing.
+func gkeClusterHint(ctx context.Context, cmdEnv []string, projectID, wanted string) string {
+	list := exec.CommandContext(ctx, "gcloud", "container", "clusters", "list",
+		"--project", projectID, "--format", "value(name,location)")
+	list.Env = cmdEnv
+	output, err := list.Output()
+	if err != nil {
+		return ""
+	}
+
+	var found []string
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 {
+			found = append(found, fmt.Sprintf("GKE_CLUSTER_NAME=%s with GKE_ZONE=%s", fields[0], fields[1]))
+		}
+	}
+	if len(found) == 0 {
+		return fmt.Sprintf("\nProject %s has no clusters at all, so there is nothing for %q to name yet.",
+			projectID, wanted)
+	}
+	return fmt.Sprintf("\nProject %s has: %s.", projectID, strings.Join(found, "; "))
 }
 
 // kubectl builds a kubectl command scoped to Mendel's namespace.
