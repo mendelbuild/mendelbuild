@@ -804,3 +804,54 @@ func TestSettledDecisionReadsAsProse(t *testing.T) {
 		}
 	}
 }
+
+// TestMemberRoleRendersOnEveryPageThatShowsIt renders the two pages that put a
+// membership role on screen. Both hand `memberRole` a domain.ProjectMemberRole
+// straight off a row, and html/template will not convert a named type for a
+// function that wants a plain string — it fails at execution time and writes
+// the error into the cell, so the Settings page showed each member's role as
+// `wrong type for value; expected string; got domain.ProjectMemberRole`.
+//
+// Parsing cannot catch that, and neither can the compiler. Executing can.
+func TestMemberRoleRendersOnEveryPageThatShowsIt(t *testing.T) {
+	projectID := uuid.New()
+	user := domain.User{ID: uuid.New(), Email: "ben@example.com", Name: "Ben Sigelman"}
+
+	t.Run("project_settings.html", func(t *testing.T) {
+		members := []struct {
+			User domain.User
+			Role domain.ProjectMemberRole
+		}{
+			{User: user, Role: domain.ProjectMemberRoleOwner},
+			{User: domain.User{ID: uuid.New(), Email: "sam@example.com"}, Role: domain.ProjectMemberRoleMember},
+		}
+		body := renderPageForTest(t, "project_settings.html", map[string]interface{}{
+			"ProjectID":   projectID.String(),
+			"SettingsTab": "project",
+			"Settings":    ProjectSettings{},
+			"AuthEnabled": true,
+			"Members":     members,
+			"IsOwner":     true,
+		})
+		for _, want := range []string{"Owner", "Member"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("settings page missing role label %q", want)
+			}
+		}
+	})
+
+	t.Run("dashboard.html", func(t *testing.T) {
+		projects := []struct {
+			Project *domain.Project
+			Role    domain.ProjectMemberRole
+		}{
+			{Project: &domain.Project{ID: projectID, Name: "pong", CreatedAt: time.Now()}, Role: domain.ProjectMemberRoleOwner},
+		}
+		body := renderPageForTest(t, "dashboard.html", map[string]interface{}{
+			"Projects": projects,
+		})
+		if !strings.Contains(body, "Owner") {
+			t.Error("dashboard missing role label \"Owner\"")
+		}
+	})
+}

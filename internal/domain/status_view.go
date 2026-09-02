@@ -93,15 +93,17 @@ func ValidationStatus(validating, validated bool, errMsg string) StatusView {
 	}
 }
 
-// MemberRole renders a project membership role.
-func MemberRole(role string) StatusView {
+// MemberRole renders a project membership role. Takes the domain type rather
+// than a string, because templates hand it a ProjectMemberRole straight off a
+// row and html/template will not convert one for us.
+func MemberRole(role ProjectMemberRole) StatusView {
 	switch role {
-	case "owner":
+	case ProjectMemberRoleOwner:
 		return StatusView{"Owner", ToneProgress}
-	case "member":
+	case ProjectMemberRoleMember:
 		return StatusView{"Member", ToneNeutral}
 	default:
-		return StatusView{role, ToneNeutral}
+		return StatusView{string(role), ToneNeutral}
 	}
 }
 
