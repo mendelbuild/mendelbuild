@@ -667,6 +667,7 @@ func (s *Server) setupRoutes() {
 		// Deployment channel routes
 		r.Get("/domain", s.handleProjectDomain)
 		r.Post("/domain", s.handleSaveProjectDomain)
+		r.Post("/domain/named-demos", s.handleSetNamedDemos)
 		r.Get("/deployment", s.handleDeploymentChannel)
 		r.Post("/deployment/channel", s.handleSetDeploymentChannel)
 		r.Post("/deployment/validate-demo", s.handleValidateDemoPath)

@@ -3032,11 +3032,11 @@ func (db *DB) GetProjectDomain(ctx context.Context, projectID uuid.UUID) (*domai
 	err := db.Pool.QueryRow(ctx, `
 		SELECT project_id, base_domain, demo_subdomain, prod_subdomain,
 		       static_ip, static_ip_name, acme_record_name, acme_record_value,
-		       certificate_name, created_at, updated_at
+		       certificate_name, named_demos_wanted, created_at, updated_at
 		FROM project_domains WHERE project_id = $1
 	`, projectID).Scan(&d.ProjectID, &d.BaseDomain, &d.DemoSubdomain, &d.ProdSubdomain,
 		&d.StaticIP, &d.StaticIPName, &d.ACMERecordName, &d.ACMERecordValue,
-		&d.CertificateName, &d.CreatedAt, &d.UpdatedAt)
+		&d.CertificateName, &d.NamedDemosWanted, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -3087,5 +3087,18 @@ func (db *DB) SetProjectCertificateChallenge(ctx context.Context, projectID uuid
 			certificate_name = EXCLUDED.certificate_name,
 			updated_at = NOW()
 	`, projectID, name, value, certName)
+	return err
+}
+
+// SetNamedDemosWanted records whether this project's demos need names, which is
+// a different thing from not having been asked.
+func (db *DB) SetNamedDemosWanted(ctx context.Context, projectID uuid.UUID, wanted bool) error {
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO project_domains (project_id, base_domain, named_demos_wanted)
+		VALUES ($1, '', $2)
+		ON CONFLICT (project_id) DO UPDATE SET
+			named_demos_wanted = EXCLUDED.named_demos_wanted,
+			updated_at = NOW()
+	`, projectID, wanted)
 	return err
 }

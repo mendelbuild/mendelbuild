@@ -749,6 +749,18 @@ func (s *Server) handleSetDeploymentChannel(w http.ResponseWriter, r *http.Reque
 	// value arrives as a failure instead of a question.
 	if active, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID); err == nil {
 		s.ensureDeploymentCredentialRequest(ctx, projectID, active)
+
+		// A platform that issues no hostnames raises a question this is the
+		// moment for: whether these demos have to be reachable by name. Asking
+		// here rather than later means the DNS errand starts alongside the
+		// credentials, not after variations exist and someone wants a demo now.
+		if active != nil && active.HostingPlatform != nil &&
+			active.HostingPlatform.HostnameSource == domain.HostnameFromUser {
+			if pd, err := s.db.GetProjectDomain(ctx, projectID); err == nil && pd.ShouldAskAboutNamedDemos() {
+				http.Redirect(w, r, "/p/"+projectID.String()+"/domain", http.StatusSeeOther)
+				return
+			}
+		}
 	}
 
 	http.Redirect(w, r, "/p/"+projectID.String()+"/deployment?success=1", http.StatusSeeOther)

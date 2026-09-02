@@ -2,8 +2,11 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -83,8 +86,32 @@ func (s *Server) handleSaveProjectDomain(w http.ResponseWriter, r *http.Request)
 	// Reserve the address and request the certificate now, so the records are on
 	// the page the user is about to be redirected to.
 	s.ensureDomainInfrastructure(ctx, projectID)
+	s.syncDomainRequest(ctx, projectID)
 
 	http.Redirect(w, r, "/p/"+projectID.String()+"/domain?success=1", http.StatusSeeOther)
+}
+
+// handleSetNamedDemos records whether this project's demos need names.
+func (s *Server) handleSetNamedDemos(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	wanted := r.FormValue("wanted") == "yes"
+	if err := s.db.SetNamedDemosWanted(ctx, projectID, wanted); err != nil {
+		http.Error(w, "failed to save: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.syncDomainRequest(ctx, projectID)
+
+	http.Redirect(w, r, "/p/"+projectID.String()+"/domain", http.StatusSeeOther)
 }
 
 // renderDomainPage draws the page from stored settings, or from a rejected
@@ -122,8 +149,24 @@ func (s *Server) renderDomainPage(
 	needsDomain := channel != nil && channel.HostingPlatform != nil &&
 		channel.HostingPlatform.HostnameSource == domain.HostnameFromUser
 
+	// What is actually true, rather than what anyone has asserted. Cheap enough
+	// to do on render: two DNS lookups, and the certificate only when a channel
+	// with credentials exists.
+	var steps []domain.DomainStep
+	var headline string
+	var waitingOnYou bool
+	if shown.WantsNamedDemos() || shown.BaseDomain != "" {
+		steps = shown.DomainReadiness(s.observeDomain(ctx, projectID, shown))
+		headline, waitingOnYou = domain.DomainHeadline(steps)
+	}
+
 	data := map[string]interface{}{
 		"Title":        "Domain: " + project.Name,
+		"Steps":        steps,
+		"Headline":     headline,
+		"WaitingOnYou": waitingOnYou,
+		"AskNamedDemos": needsDomain && shown.ShouldAskAboutNamedDemos(),
+		"WantsNamed":   shown.WantsNamedDemos(),
 		"SettingsTab":  "domain",
 		"ProjectID":    projectID.String(),
 		"Project":      project,
@@ -193,5 +236,100 @@ func (s *Server) ensureDomainInfrastructure(ctx context.Context, projectID uuid.
 	}
 	if err := s.ensureCertificate(ctx, projectID, pd, session); err != nil {
 		log.Printf("domain: could not request a certificate: %v", err)
+	}
+}
+
+// domainRequestTitle identifies the domain ask, so it is neither duplicated nor
+// left open once the records resolve.
+const domainRequestTitle = "Point your domain at Mendel"
+
+// syncDomainRequest keeps the queue in step with what Mendel can see.
+//
+// Filed while a step is the user's move, and closed by observation rather than
+// by anyone pressing a button: the records either resolve or they do not. That
+// distinction is the whole reason these are not acknowledgements -- a record
+// created with a typo would be acknowledged perfectly happily, and would surface
+// an hour later as a certificate that never issued.
+//
+// Waiting on a certificate authority files nothing. It is real, and it is
+// nobody's move, so it belongs in the ribbon and not in a list of things to do.
+func (s *Server) syncDomainRequest(ctx context.Context, projectID uuid.UUID) {
+	pd, err := s.db.GetProjectDomain(ctx, projectID)
+	if err != nil {
+		return
+	}
+	if !pd.WantsNamedDemos() {
+		s.closeDomainRequest(ctx, projectID)
+		return
+	}
+
+	steps := pd.DomainReadiness(s.observeDomain(ctx, projectID, pd))
+	headline, waitingOnYou := domain.DomainHeadline(steps)
+	if !waitingOnYou {
+		s.closeDomainRequest(ctx, projectID)
+		return
+	}
+
+	var detail strings.Builder
+	fmt.Fprintf(&detail, "%s.\n\nWhere this stands:\n", headline)
+	for _, step := range steps {
+		mark := " "
+		switch step.State {
+		case domain.StepDone:
+			mark = "x"
+		case domain.StepYourMove:
+			mark = ">"
+		}
+		fmt.Fprintf(&detail, "  [%s] %s — %s\n", mark, step.Name, step.Detail)
+	}
+	body := detail.String()
+	link := fmt.Sprintf("/p/%s/domain", projectID)
+
+	existing, err := s.db.FindOpenInputRequestByKind(ctx, projectID, domain.InputRequestKindManualSetup)
+	if err != nil {
+		return
+	}
+	if existing != nil && existing.Title == domainRequestTitle {
+		existing.Details = &body
+		existing.Link = &link
+		if err := s.db.UpdateInputRequest(ctx, existing); err != nil {
+			log.Printf("domain: could not update the domain request: %v", err)
+		}
+		return
+	}
+	if existing != nil {
+		return // Someone else's manual-setup ask; leave it be.
+	}
+
+	now := time.Now()
+	req := &domain.InputRequest{
+		ID:               uuid.New(),
+		ProjectID:        projectID,
+		Kind:             domain.InputRequestKindManualSetup,
+		Title:            domainRequestTitle,
+		Details:          &body,
+		Link:             &link,
+		ObjectivityScore: 1.0, // The records resolve or they do not.
+		ImportanceScore:  0.6, // Blocks sign-in and callbacks, not deployment.
+		Status:           domain.InputRequestStatusNeedsAssignment,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if err := s.db.CreateInputRequest(ctx, req); err != nil {
+		log.Printf("domain: could not create the domain request: %v", err)
+	}
+}
+
+func (s *Server) closeDomainRequest(ctx context.Context, projectID uuid.UUID) {
+	existing, err := s.db.FindOpenInputRequestByKind(ctx, projectID, domain.InputRequestKindManualSetup)
+	if err != nil || existing == nil || existing.Title != domainRequestTitle {
+		return
+	}
+	existing.Status = domain.InputRequestStatusResolved
+	existing.Resolution = strPtr("approved")
+	resolvedAt := time.Now()
+	existing.ResolvedAt = &resolvedAt
+	if err := s.db.UpdateInputRequest(ctx, existing); err != nil {
+		log.Printf("domain: could not close the domain request: %v", err)
 	}
 }

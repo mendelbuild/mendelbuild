@@ -24,6 +24,48 @@
 </div>
 {{end}}
 
+{{if .AskNamedDemos}}
+<div class="callout callout-waiting">
+    <p class="callout-title">Do these demos need to be reachable by name?</p>
+    <p class="callout-body">
+        This channel gives a deployment an address, not a name. That is fine unless
+        something has to call back to it &mdash; sign-in, a webhook, anything registered
+        with a third party &mdash; which needs a name and a certificate, and two DNS
+        records you create once. Mendel will track that for you if you want it.
+    </p>
+    <form method="POST" action="/p/{{.ProjectID}}/domain/named-demos" class="actions">
+        <button type="submit" name="wanted" value="yes" class="btn btn-primary btn-sm">Yes, set this up</button>
+        <button type="submit" name="wanted" value="no" class="btn btn-secondary btn-sm">Not needed</button>
+    </form>
+</div>
+{{end}}
+
+{{if .Steps}}
+<div class="card">
+    <div class="card-head">
+        <h2 class="card-title">Getting to https</h2>
+        <span class="badge badge-{{if .WaitingOnYou}}waiting{{else}}progress{{end}}">
+            {{if .WaitingOnYou}}Your move{{else}}{{.Headline}}{{end}}
+        </span>
+    </div>
+    <ol class="ladder">
+        {{range .Steps}}
+        <li class="ladder-step" data-state="{{.State}}">
+            <span class="ladder-mark" aria-hidden="true">{{if eq (printf "%v" .State) "done"}}&check;{{else}}&bull;{{end}}</span>
+            <span class="ladder-body">
+                <span class="ladder-name">{{.Name}}</span>
+                <span class="ladder-detail">{{.Detail}}</span>
+            </span>
+        </li>
+        {{end}}
+    </ol>
+    <p class="card-note subtle">
+        Mendel checks these itself &mdash; a record counts once it resolves, not once
+        it is reported. Nothing here is waiting on you being asked.
+    </p>
+</div>
+{{end}}
+
 <div class="split">
     <div class="stack">
 

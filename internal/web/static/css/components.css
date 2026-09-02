@@ -1812,3 +1812,42 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
     color: var(--ink-3);
     white-space: nowrap;
 }
+
+/* The ladder to a working name. Ordered, because the order is the point: a
+   certificate that will not issue is usually two rungs back at a record that
+   does not resolve. */
+.ladder {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+}
+
+.ladder-step {
+    display: flex;
+    gap: var(--sp-3);
+    align-items: flex-start;
+}
+
+.ladder-mark {
+    flex: 0 0 auto;
+    width: 20px;
+    text-align: center;
+    color: var(--ink-3);
+}
+
+.ladder-body { display: flex; flex-direction: column; gap: 2px; }
+.ladder-name { font-weight: 600; font-size: var(--text-base); }
+.ladder-detail { font-size: var(--text-sm); color: var(--ink-2); }
+
+.ladder-step[data-state="done"] .ladder-mark { color: var(--tone-success); }
+.ladder-step[data-state="done"] .ladder-name { color: var(--ink-2); font-weight: 400; }
+
+.ladder-step[data-state="yourmove"] .ladder-mark { color: var(--tone-waiting); }
+.ladder-step[data-state="yourmove"] .ladder-name { color: var(--tone-waiting-ink); }
+
+/* A step nothing has reached yet is dimmed rather than hidden: seeing what is
+   coming is useful, being invited to start it is not. */
+.ladder-step[data-state="blocked"] { opacity: 0.5; }

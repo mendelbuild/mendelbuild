@@ -43,8 +43,23 @@ type ProjectDomain struct {
 	ACMERecordValue string `json:"acme_record_value"`
 	CertificateName string `json:"certificate_name"`
 
+	// NamedDemosWanted is nil until the question has been put. Nil is not the
+	// same as false: one means nobody has been asked, the other that they said
+	// no, and only the first should prompt.
+	NamedDemosWanted *bool `json:"named_demos_wanted,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// WantsNamedDemos reports whether this project asked for demos reachable by name.
+func (d *ProjectDomain) WantsNamedDemos() bool {
+	return d != nil && d.NamedDemosWanted != nil && *d.NamedDemosWanted
+}
+
+// ShouldAskAboutNamedDemos reports whether the question is still outstanding.
+func (d *ProjectDomain) ShouldAskAboutNamedDemos() bool {
+	return d == nil || d.NamedDemosWanted == nil
 }
 
 // DefaultDemoSubdomain keeps demos in a label that says who made them, so a

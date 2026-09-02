@@ -1,0 +1,185 @@
+package domain
+
+import "fmt"
+
+// Getting a deployment reachable by name is a chain of steps, and only some of
+// them are Mendel's. The user creates two DNS records by hand, in a tool Mendel
+// cannot see into, and then waits on a certificate authority. Without something
+// tracking that, the honest answer to "where am I?" is a page of prose and a
+// guess.
+//
+// Every step here is *observed* rather than asserted. A DNS record can be typed
+// wrongly, and an acknowledgement would accept that cheerfully: the user says
+// they created it, Mendel believes them, and the failure surfaces much later as
+// a certificate that never issues. Resolving the name costs nothing and answers
+// the question properly.
+
+// DomainObservation is what Mendel found when it last looked, as opposed to what
+// it was told.
+type DomainObservation struct {
+	// WildcardTarget is the address the demo wildcard resolves to, empty when it
+	// does not resolve at all.
+	WildcardTarget string
+
+	// ChallengeTarget is what the certificate's ownership record resolves to.
+	ChallengeTarget string
+
+	// CertificateState is the authority's own word for it: PROVISIONING, ACTIVE,
+	// FAILED, or empty when no certificate has been requested.
+	CertificateState string
+}
+
+// DomainStepState is how far one step has got.
+type DomainStepState string
+
+const (
+	StepDone     DomainStepState = "done"
+	StepWaiting  DomainStepState = "waiting"  // Something else is working; nothing to do.
+	StepYourMove DomainStepState = "yourmove" // Blocked on the user.
+	StepBlocked  DomainStepState = "blocked"  // Cannot start until an earlier step finishes.
+)
+
+// DomainStep is one rung of the ladder.
+type DomainStep struct {
+	Name   string
+	State  DomainStepState
+	Detail string
+}
+
+// DomainReadiness is the whole ladder, in the order it has to happen.
+//
+// Ordered because the order is the point: a user staring at a certificate that
+// will not issue is usually two steps back, at a record that does not resolve.
+func (d *ProjectDomain) DomainReadiness(obs DomainObservation) []DomainStep {
+	if d == nil {
+		return nil
+	}
+
+	steps := make([]DomainStep, 0, 5)
+
+	// 1. The domain itself.
+	domainSet := d.BaseDomain != ""
+	steps = append(steps, DomainStep{
+		Name:   "Give Mendel a domain you control",
+		State:  stateIf(domainSet, StepYourMove),
+		Detail: detailIf(domainSet, d.BaseDomain, "Mendel puts names under this and never touches your DNS."),
+	})
+
+	// 2. The address its records point at. Mendel's own job.
+	haveIP := d.StaticIP != ""
+	steps = append(steps, DomainStep{
+		Name:   "Mendel reserves an address",
+		State:  gate(domainSet, haveIP, StepWaiting),
+		Detail: detailIf(haveIP, d.StaticIP, "Reserved on the next deploy or validation of this channel."),
+	})
+
+	// 3. The wildcard record. Verified, not taken on trust.
+	wildcardRight := haveIP && obs.WildcardTarget == d.StaticIP
+	wildcardDetail := "Create the A record listed below."
+	switch {
+	case wildcardRight:
+		wildcardDetail = d.DemoWildcard() + " resolves to " + d.StaticIP
+	case obs.WildcardTarget != "":
+		wildcardDetail = fmt.Sprintf("%s resolves to %s, but the deployments are at %s. "+
+			"The record points somewhere else.", d.DemoWildcard(), obs.WildcardTarget, d.StaticIP)
+	}
+	steps = append(steps, DomainStep{
+		Name:   "Create the wildcard A record",
+		State:  gate(haveIP, wildcardRight, StepYourMove),
+		Detail: wildcardDetail,
+	})
+
+	// 4. The ownership record for the certificate.
+	challengeAsked := d.ACMERecordName != ""
+	challengeRight := challengeAsked && obs.ChallengeTarget != "" &&
+		hostsEqual(obs.ChallengeTarget, d.ACMERecordValue)
+	challengeDetail := "Create the CNAME listed below."
+	switch {
+	case challengeRight:
+		challengeDetail = d.ACMERecordName + " resolves correctly"
+	case !challengeAsked:
+		challengeDetail = "Mendel requests the certificate first; the record appears once it has."
+	case obs.ChallengeTarget != "":
+		challengeDetail = fmt.Sprintf("%s resolves to %s rather than the value below.",
+			d.ACMERecordName, obs.ChallengeTarget)
+	}
+	steps = append(steps, DomainStep{
+		Name:   "Create the certificate record",
+		State:  gate(challengeAsked, challengeRight, StepYourMove),
+		Detail: challengeDetail,
+	})
+
+	// 5. The authority's part, which nobody can hurry.
+	certDetail := "Issued once the record above resolves. This can take up to an hour."
+	certDone := obs.CertificateState == "ACTIVE"
+	if obs.CertificateState != "" && !certDone {
+		certDetail = "Certificate state: " + obs.CertificateState
+	}
+	if certDone {
+		certDetail = "Deployments answer over https, and their URLs can be registered."
+	}
+	steps = append(steps, DomainStep{
+		Name:   "Certificate issued",
+		State:  gate(challengeRight, certDone, StepWaiting),
+		Detail: certDetail,
+	})
+
+	return steps
+}
+
+// DomainHeadline states where things stand in one line, and who is holding it up.
+func DomainHeadline(steps []DomainStep) (headline string, waitingOnYou bool) {
+	for _, s := range steps {
+		switch s.State {
+		case StepYourMove:
+			return s.Name, true
+		case StepWaiting:
+			return s.Name, false
+		}
+	}
+	if len(steps) > 0 {
+		return "Demos are reachable by name over https", false
+	}
+	return "", false
+}
+
+func stateIf(done bool, otherwise DomainStepState) DomainStepState {
+	if done {
+		return StepDone
+	}
+	return otherwise
+}
+
+// gate keeps a step from claiming to be anyone's move before it can be started.
+// A ladder that shows three things to do at once, two of which are impossible,
+// is worse than one that shows the next one.
+func gate(ready, done bool, active DomainStepState) DomainStepState {
+	switch {
+	case done:
+		return StepDone
+	case !ready:
+		return StepBlocked
+	default:
+		return active
+	}
+}
+
+func detailIf(done bool, whenDone, otherwise string) string {
+	if done {
+		return whenDone
+	}
+	return otherwise
+}
+
+// hostsEqual compares DNS names ignoring the trailing dot, which resolvers
+// include and people typing into a provider's form do not.
+func hostsEqual(a, b string) bool {
+	return trimDot(a) == trimDot(b)
+}
+
+func trimDot(s string) string {
+	for len(s) > 0 && s[len(s)-1] == '.' {
+		s = s[:len(s)-1]
+	}
+	return s
+}

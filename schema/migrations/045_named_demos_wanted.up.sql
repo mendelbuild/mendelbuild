@@ -1,0 +1,11 @@
+-- Whether this project's demos need to be reachable by name.
+--
+-- Most do not: a demo answering at an address is fine unless something has to
+-- call back to it. The ones that do -- sign-in, webhooks, anything registered
+-- with a third party -- need a name, a certificate, and two DNS records the user
+-- creates by hand, which is a real errand and should not be started on
+-- everyone's behalf.
+--
+-- NULL means the question has not been put yet, which is different from having
+-- been answered no. Only NULL prompts.
+ALTER TABLE project_domains ADD COLUMN named_demos_wanted BOOLEAN;

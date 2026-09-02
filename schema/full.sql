@@ -1140,6 +1140,9 @@ CREATE TABLE project_domains (
     acme_record_value TEXT NOT NULL DEFAULT '',
     certificate_name TEXT NOT NULL DEFAULT '',
 
+    -- NULL until the question is put; distinguishes "not asked" from "declined".
+    named_demos_wanted BOOLEAN,
+
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
