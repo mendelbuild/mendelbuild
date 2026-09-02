@@ -1782,3 +1782,33 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
     gap: var(--sp-2);
     padding: var(--sp-3) 0;
 }
+
+/* A field that takes one DNS label, with the rest of the name shown after it.
+   A full-width box invites a full domain, which is the one thing that cannot go
+   here: a wildcard record covers a single label. Showing the suffix makes the
+   shape of the answer visible before it is typed rather than after it is
+   rejected. */
+.input-suffixed {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+}
+
+/* Three classes deliberately: the general field rule is
+   `.field input[type="text"] { width: 100% }`, which outweighs two classes and
+   would otherwise keep this box full width -- the exact shape that invites a
+   whole domain where one label belongs. */
+.field .input-suffixed .input-label {
+    /* Wide enough for a real label, narrow enough not to read as "put a whole
+       domain here". */
+    width: 18ch;
+    flex: 0 0 auto;
+}
+
+.input-suffix {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--ink-3);
+    white-space: nowrap;
+}

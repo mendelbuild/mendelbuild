@@ -29,13 +29,31 @@ func TestStylesheetsAreWellFormed(t *testing.T) {
 		}
 		text := string(body)
 
-		if open, close := strings.Count(text, "{"), strings.Count(text, "}"); open != close {
+		if open, close := countOutsideComments(text); open != close {
 			t.Errorf("%s: %d opening braces and %d closing ones", name, open, close)
 		}
 
 		// Walk the top level and check what precedes each block.
-		depth, selStart := 0, 0
+		//
+		// Braces inside a comment are prose, not structure: a comment quoting a
+		// rule -- to explain what it has to outweigh, say -- is ordinary and must
+		// not be read as opening one. The selector text handed to checkSelector
+		// still includes comments, because a comment *inside* a selector is
+		// exactly the corruption this exists to catch.
+		depth, selStart, inComment := 0, 0, false
 		for i := 0; i < len(text); i++ {
+			if inComment {
+				if text[i] == '*' && i+1 < len(text) && text[i+1] == '/' {
+					inComment = false
+					i++
+				}
+				continue
+			}
+			if text[i] == '/' && i+1 < len(text) && text[i+1] == '*' {
+				inComment = true
+				i++
+				continue
+			}
 			switch text[i] {
 			case '{':
 				if depth == 0 {
@@ -95,4 +113,32 @@ func checkSelector(t *testing.T, file, raw string, line int) {
 
 func lineOf(text string, offset int) int {
 	return strings.Count(text[:offset], "\n") + 1
+}
+
+
+// countOutsideComments counts braces that structure the stylesheet, ignoring any
+// a comment happens to quote.
+func countOutsideComments(text string) (open, close int) {
+	inComment := false
+	for i := 0; i < len(text); i++ {
+		if inComment {
+			if text[i] == '*' && i+1 < len(text) && text[i+1] == '/' {
+				inComment = false
+				i++
+			}
+			continue
+		}
+		if text[i] == '/' && i+1 < len(text) && text[i+1] == '*' {
+			inComment = true
+			i++
+			continue
+		}
+		switch text[i] {
+		case '{':
+			open++
+		case '}':
+			close++
+		}
+	}
+	return open, close
 }

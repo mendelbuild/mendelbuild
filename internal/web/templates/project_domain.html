@@ -39,19 +39,25 @@
 
                 <div class="field">
                     <label for="demo_subdomain">Demos live under</label>
-                    <span class="hint">
-                        One label. A wildcard record covers exactly one, so demos are
-                        named <code>&lt;demo&gt;.&lt;this&gt;.{{if .Domain.BaseDomain}}{{.Domain.BaseDomain}}{{else}}example.com{{end}}</code>.
-                    </span>
-                    <input type="text" id="demo_subdomain" name="demo_subdomain" class="input-mono"
-                           value="{{.Domain.DemoSubdomain}}" placeholder="mendel-demos" autocomplete="off" spellcheck="false">
+                    <span class="hint">One label. A wildcard record covers exactly one.</span>
+                    <div class="input-suffixed">
+                        <input type="text" id="demo_subdomain" name="demo_subdomain" class="input-mono input-label"
+                               value="{{.Domain.DemoSubdomain}}" placeholder="mendel-demos"
+                               autocomplete="off" spellcheck="false">
+                        <span class="input-suffix" data-domain-suffix>.{{if .Domain.BaseDomain}}{{.Domain.BaseDomain}}{{else}}yourdomain.com{{end}}</span>
+                    </div>
+                    <span class="hint">A demo is then <code data-demo-example>&lt;demo&gt;.{{if .Domain.DemoSubdomain}}{{.Domain.DemoSubdomain}}{{else}}mendel-demos{{end}}.{{if .Domain.BaseDomain}}{{.Domain.BaseDomain}}{{else}}yourdomain.com{{end}}</code>.</span>
                 </div>
 
                 <div class="field">
                     <label for="prod_subdomain">Production answers at</label>
                     <span class="hint">One label, or leave empty if production has no name yet.</span>
-                    <input type="text" id="prod_subdomain" name="prod_subdomain" class="input-mono"
-                           value="{{.Domain.ProdSubdomain}}" placeholder="app" autocomplete="off" spellcheck="false">
+                    <div class="input-suffixed">
+                        <input type="text" id="prod_subdomain" name="prod_subdomain" class="input-mono input-label"
+                               value="{{.Domain.ProdSubdomain}}" placeholder="app"
+                               autocomplete="off" spellcheck="false">
+                        <span class="input-suffix" data-domain-suffix>.{{if .Domain.BaseDomain}}{{.Domain.BaseDomain}}{{else}}yourdomain.com{{end}}</span>
+                    </div>
                 </div>
 
                 <div class="actions">
@@ -138,4 +144,6 @@
         </div>
     </div>
 </div>
+
+<script src="/static/js/domain-suffix.js"></script>
 {{end}}

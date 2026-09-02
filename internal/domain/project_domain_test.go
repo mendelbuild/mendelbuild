@@ -135,3 +135,15 @@ func TestCertificateRecordIsListedWithTheOthers(t *testing.T) {
 		t.Errorf("record does not repeat what the authority minted: %+v", cert)
 	}
 }
+
+// TestRejectionNamesTheLabelMeant covers the message someone sees after pasting
+// a whole domain into a label field, which is the mistake the field invites.
+func TestRejectionNamesTheLabelMeant(t *testing.T) {
+	msg := ValidateDomain("pong.mendel.build", "mendel-demos.pong.mendel.build", "")
+	if msg == "" {
+		t.Fatal("a whole domain in a label field should be refused")
+	}
+	if !strings.Contains(msg, `"mendel-demos"`) {
+		t.Errorf("message does not suggest the label meant: %s", msg)
+	}
+}

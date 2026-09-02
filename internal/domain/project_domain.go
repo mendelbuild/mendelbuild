@@ -217,9 +217,13 @@ func ValidateDomain(base, demoLabel, prodLabel string) string {
 		if l.value == "" {
 			continue
 		}
-		if strings.Contains(NormalizeDomain(l.value), ".") {
-			return fmt.Sprintf("The %s must be a single label, so %q will not do: a wildcard record "+
-				"covers one label only.", l.what, l.value)
+		if cleaned := NormalizeDomain(l.value); strings.Contains(cleaned, ".") {
+			// Name the label that was probably meant. Rejecting without saying
+			// what would have been right leaves the reader guessing at which
+			// part of what they typed was the offending one.
+			return fmt.Sprintf("The %s is one label, not a whole name, because a wildcard record "+
+				"covers one label only. You gave %q; did you mean %q?",
+				l.what, l.value, NormalizeLabel(l.value))
 		}
 	}
 	return ""
