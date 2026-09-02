@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -162,6 +163,29 @@ type DNSRecord struct {
 	Name  string        `json:"name"`
 	Value string        `json:"value"`
 	Why   string        `json:"why"`
+}
+
+// ProdNameUnused reports that production has a name configured which the running
+// deployment is not actually using.
+//
+// The deployment URL is a record of what a deploy produced, and is not rewritten
+// afterwards -- correctly, because it is what the deployment answers to. When the
+// gateway fails to come up, that is a bare address, and the deployment genuinely
+// is only reachable there: no route to the name exists.
+//
+// So the URL is right and the situation is wrong, which is the awkward case to
+// report. Left alone it reads as Mendel having forgotten the domain, when what
+// it means is that a deploy fell back and the next one will not.
+func (d *ProjectDomain) ProdNameUnused(deployURL string) bool {
+	host := d.ProdHost()
+	if host == "" || deployURL == "" {
+		return false
+	}
+	parsed, err := url.Parse(deployURL)
+	if err != nil {
+		return false
+	}
+	return !strings.EqualFold(parsed.Hostname(), host)
 }
 
 // HostIn renders a record's name the way most DNS providers ask for it: relative

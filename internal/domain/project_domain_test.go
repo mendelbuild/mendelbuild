@@ -294,3 +294,42 @@ func TestHostInDeclinesRatherThanGuesses(t *testing.T) {
 		t.Errorf("case should not matter, got %q", got)
 	}
 }
+
+// A production deployment on a bare address while a name is configured means a
+// deploy fell back, not that Mendel forgot the domain.
+//
+// The deployment URL is not rewritten after the fact, and should not be: it
+// records what that deploy produced, and when the gateway fails to come up the
+// deployment genuinely is only reachable at an address -- no route to the name
+// exists. Which makes this the awkward case to report, because the URL is right
+// and the situation is wrong.
+func TestProdNameUnusedSpotsAFallbackDeploy(t *testing.T) {
+	d := &ProjectDomain{
+		BaseDomain: "pong.mendel.build", DemoSubdomain: "mendel-demos", ProdSubdomain: "app",
+	}
+
+	if !d.ProdNameUnused("http://34.56.24.112") {
+		t.Error("a bare address while app.pong.mendel.build is configured is a fallback")
+	}
+	for _, using := range []string{
+		"https://app.pong.mendel.build",
+		"http://app.pong.mendel.build",
+		"https://app.pong.mendel.build/",
+		"https://APP.PONG.MENDEL.BUILD",
+	} {
+		if d.ProdNameUnused(using) {
+			t.Errorf("%q is the configured name and must not be reported as unused", using)
+		}
+	}
+
+	// Nothing to report when no name was asked for: a project with no production
+	// subdomain is not missing anything.
+	none := &ProjectDomain{BaseDomain: "pong.mendel.build", DemoSubdomain: "mendel-demos"}
+	if none.ProdNameUnused("http://34.56.24.112") {
+		t.Error("no production name configured, so an address is simply the answer")
+	}
+	// And nothing to report before anything is deployed.
+	if d.ProdNameUnused("") {
+		t.Error("no deployment yet is not a fallback")
+	}
+}

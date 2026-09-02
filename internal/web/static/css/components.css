@@ -1922,3 +1922,15 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
     margin-top: 2px;
     font-size: var(--text-xs);
 }
+
+/* A short explanation attached to a value that is correct but not what was
+   wanted. Without it, a production URL showing an address reads as Mendel
+   having lost the domain rather than as a deploy that fell back. */
+.note-inline {
+    display: block;
+    margin-top: var(--sp-1);
+    max-width: 60ch;
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    color: var(--ink-3);
+}

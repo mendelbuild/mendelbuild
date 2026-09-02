@@ -686,6 +686,19 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 		setupPlaceholder = setupPlaceholder0(p.SetupScript)
 	}
 
+	// A production deployment on a bare address while a name is configured is a
+	// deploy that fell back, not a domain Mendel forgot. Saying so here is the
+	// only place the two facts meet: the Domain page knows the name and nothing
+	// about the deployment, and the deployment knows its URL and nothing about
+	// the name.
+	prodNameUnused, prodHostWanted := false, ""
+	if pd, err := s.db.GetProjectDomain(ctx, projectID); err == nil && pd != nil {
+		prodHostWanted = pd.ProdHost()
+		if prodDeployment != nil && prodDeployment.URL != nil {
+			prodNameUnused = pd.ProdNameUnused(*prodDeployment.URL)
+		}
+	}
+
 	data := map[string]interface{}{
 		"Title":                "Deployment: " + project.Name,
 		"CredentialAskID":      credentialAskID,
@@ -706,6 +719,8 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 		"ChannelHistory":       channels,
 		"Combos":               combos,
 		"ProdDeployment":       prodDeployment,
+		"ProdNameUnused":       prodNameUnused,
+		"ProdHostWanted":       prodHostWanted,
 		"LatestProdDeployment": latestProdDeployment,
 		"ProdLogPanel":         prodLogPanel,
 		"ProdHistory":          prodHistory,

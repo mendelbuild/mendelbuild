@@ -51,6 +51,14 @@
                 <dd>
                     <a href="{{.URL}}" target="_blank">{{.URL}}</a>
                     {{if .ShortCommit}}<span class="text-sm subtle">running <code>{{.ShortCommit}}</code></span>{{end}}
+                    {{if $.ProdNameUnused}}
+                    <span class="note-inline">
+                        This is where production actually answers. It was deployed before
+                        <code>{{$.ProdHostWanted}}</code> could be used &mdash; the gateway that
+                        serves the name did not come up, so the deployment fell back to an
+                        address. Deploying production again moves it onto the name.
+                    </span>
+                    {{end}}
                 </dd>
                 {{end}}
                 <dt>Configured</dt>
