@@ -659,8 +659,19 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// Where the setup script lives. Someone managing credentials is on this page,
+	// and until now nothing here led to the instructions for obtaining them --
+	// deleting one to "get the instructions back" left you on a page that had
+	// none.
+	var credentialAskID string
+	if ask, err := s.db.FindOpenInputRequestByKind(ctx, projectID, domain.InputRequestKindCredentialRequest); err == nil &&
+		ask != nil && ask.Title == deploymentCredentialRequestTitle {
+		credentialAskID = ask.ID.String()
+	}
+
 	data := map[string]interface{}{
 		"Title":                "Deployment: " + project.Name,
+		"CredentialAskID":      credentialAskID,
 		"SettingsTab":          "deployment",
 		"SupportMatrix":        s.buildSupportMatrix(ctx, projectID, channel),
 		"CloudCredentials":     cloudCredentials,
@@ -791,7 +802,10 @@ func (s *Server) ensureDeploymentCredentialRequest(ctx context.Context, projectI
 	details := fmt.Sprintf("Deploying to %s needs %s. Mendel keeps these encrypted and injects them at deploy time; nothing is written to your repository.",
 		channel.HostingPlatform.Name, strings.Join(missing, ", "))
 	instructions := channel.HostingPlatform.Instructions
-	link := fmt.Sprintf("/p/%s/deployment", projectID)
+	// No link. This used to point at the deployment page, labelled "Open the
+	// console", which was neither: it sent the reader away from the setup script
+	// and back to the page they had come from.
+	link := ""
 
 	if existing != nil {
 		// The channel may have changed under an open ask, which changes both

@@ -148,3 +148,40 @@ func TestCredentialFormFallsBackToAFreeFormName(t *testing.T) {
 		t.Error("no script was supplied, so none should be rendered")
 	}
 }
+
+// TestDeploymentPageLeadsToTheSetupInstructions covers the route someone
+// actually takes.
+//
+// Credentials are managed on the deployment page, so that is where a person goes
+// when one is missing -- and nothing there led to the script that explains how to
+// obtain it. Deleting a credential to "get the instructions back" left them on a
+// page with none, which is how this was found.
+func TestDeploymentPageLeadsToTheSetupInstructions(t *testing.T) {
+	projectID := uuid.New()
+	askID := uuid.New().String()
+
+	body := renderPageForTest(t, "deployment_channel.html", map[string]interface{}{
+		"ProjectID": projectID.String(),
+		"Project":   &domain.Project{ID: projectID, Name: "pong"},
+		"Channel":   validatedChannel(),
+		"RequiredCredentials": []RequiredCredentialView{
+			{Name: "GCP_PROJECT_ID", IsConfigured: false},
+		},
+		"CredentialAskID": askID,
+	})
+
+	if !strings.Contains(body, "/inputs/"+askID) {
+		t.Error("no link from the deployment page to the outstanding credential ask")
+	}
+
+	// With nothing outstanding there is no ask to link to, and a dead link would
+	// be worse than none.
+	quiet := renderPageForTest(t, "deployment_channel.html", map[string]interface{}{
+		"ProjectID": projectID.String(),
+		"Project":   &domain.Project{ID: projectID, Name: "pong"},
+		"Channel":   validatedChannel(),
+	})
+	if strings.Contains(quiet, "Setup instructions") {
+		t.Error("offered setup instructions with no outstanding ask")
+	}
+}
