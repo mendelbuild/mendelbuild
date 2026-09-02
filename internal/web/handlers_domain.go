@@ -1,6 +1,8 @@
 package web
 
 import (
+	"context"
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -78,6 +80,10 @@ func (s *Server) handleSaveProjectDomain(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Reserve the address and request the certificate now, so the records are on
+	// the page the user is about to be redirected to.
+	s.ensureDomainInfrastructure(ctx, projectID)
+
 	http.Redirect(w, r, "/p/"+projectID.String()+"/domain?success=1", http.StatusSeeOther)
 }
 
@@ -136,5 +142,56 @@ func (s *Server) renderDomainPage(
 
 	if err := s.renderPageFor(w, r, "project_domain.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// ensureDomainInfrastructure reserves the address and requests the certificate
+// as soon as Mendel has everything it needs to do so.
+//
+// Doing this on the first deploy was backwards. The records have to exist before
+// a deployment is reachable, so a user who deployed first got a name that
+// resolved nowhere, and only then learnt what to create. Running it when the
+// domain is saved -- and again when credentials arrive, since either can come
+// second -- means the records are on screen before there is anything to deploy.
+//
+// Quiet by design: nothing here gates saving a domain, and a project whose
+// channel cannot do this simply has no records yet, which the page explains.
+func (s *Server) ensureDomainInfrastructure(ctx context.Context, projectID uuid.UUID) {
+	pd, err := s.db.GetProjectDomain(ctx, projectID)
+	if err != nil || pd == nil || pd.BaseDomain == "" {
+		return
+	}
+	if pd.StaticIP != "" && pd.ACMERecordName != "" {
+		return // Both already done; neither changes.
+	}
+
+	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
+	if err != nil || channel == nil || channel.HostingPlatform == nil ||
+		channel.HostingPlatform.HostnameSource != domain.HostnameFromUser {
+		return
+	}
+
+	env, err := s.deployCredentialsForChannel(ctx, projectID, channel)
+	if err != nil {
+		return // Credentials not in yet; this runs again when they are.
+	}
+	session, err := newGKESession(ctx, env)
+	if err != nil {
+		log.Printf("domain: could not reach the cluster to prepare %s: %v", pd.BaseDomain, err)
+		return
+	}
+	defer session.cleanup()
+
+	if _, err := s.ensureStaticIP(ctx, projectID, session); err != nil {
+		log.Printf("domain: could not reserve an address: %v", err)
+		return
+	}
+	// Re-read: the address was just written, and the certificate request needs a
+	// record of it that includes what the reservation produced.
+	if pd, err = s.db.GetProjectDomain(ctx, projectID); err != nil || pd == nil {
+		return
+	}
+	if err := s.ensureCertificate(ctx, projectID, pd, session); err != nil {
+		log.Printf("domain: could not request a certificate: %v", err)
 	}
 }

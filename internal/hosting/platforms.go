@@ -279,6 +279,26 @@ if [ -z "$(gcloud container clusters list --project "$GCP_PROJECT" --format 'val
   fi
 fi
 
+# Gateway API, which is how a cluster serves https for names under your own
+# domain: an Ingress cannot carry the wildcard certificate those names need.
+# Off by default on GKE, and enabling it on a cluster that already has it is a
+# no-op, so this is safe on every run. Applies to whichever cluster is there,
+# including one this script just made.
+GW_CLUSTERS=$(gcloud container clusters list --project "$GCP_PROJECT" --format 'value(name,location)')
+GW_COUNT=$(printf '%s' "$GW_CLUSTERS" | grep -c . || true)
+if [ "$GW_COUNT" -eq 1 ]; then
+  GW_NAME=$(printf '%s\n' "$GW_CLUSTERS" | awk '{print $1}')
+  GW_LOCATION=$(printf '%s\n' "$GW_CLUSTERS" | awk '{print $2}')
+  echo "Enabling Gateway API on $GW_NAME (no-op if already on)..."
+  gcloud container clusters update "$GW_NAME" --location "$GW_LOCATION" --gateway-api=standard --project "$GCP_PROJECT" --quiet > /dev/null 2>&1 || true
+elif [ "$GW_COUNT" -gt 1 ]; then
+  # Turning it on for clusters you did not pick would change clusters this
+  # script has no business touching.
+  echo "More than one cluster here, so Gateway API was left alone. For the one you"
+  echo "give Mendel, run:"
+  printf '%s\n' "$GW_CLUSTERS" | awk '{print "  gcloud container clusters update " $1 " --location " $2 " --gateway-api=standard --project '"$GCP_PROJECT"'"}'
+fi
+
 # Everything Mendel asks for, printed under the name Mendel asks for it under.
 # Reading a cluster table and a page of JSON and working out which part goes in
 # which box is work the script can do instead.

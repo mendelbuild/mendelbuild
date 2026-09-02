@@ -336,6 +336,9 @@ func (s *Server) handleAddCloudCredential(w http.ResponseWriter, r *http.Request
 	// Supplying the last missing value should close the ask, not leave it open
 	// in the queue after the thing it asked for has been done.
 	s.syncDeploymentCredentialRequest(ctx, projectID)
+	// Credentials may be the piece that was missing before Mendel could reserve
+	// an address and request a certificate.
+	s.ensureDomainInfrastructure(ctx, projectID)
 
 	http.Redirect(w, r, "/p/"+projectID.String()+"/settings?success=1", http.StatusSeeOther)
 }
@@ -392,6 +395,9 @@ func (s *Server) handleUpdateCloudCredential(w http.ResponseWriter, r *http.Requ
 	// Supplying the last missing value should close the ask, not leave it open
 	// in the queue after the thing it asked for has been done.
 	s.syncDeploymentCredentialRequest(ctx, projectID)
+	// Credentials may be the piece that was missing before Mendel could reserve
+	// an address and request a certificate.
+	s.ensureDomainInfrastructure(ctx, projectID)
 
 	http.Redirect(w, r, "/p/"+projectID.String()+"/settings?success=1", http.StatusSeeOther)
 }
@@ -419,6 +425,9 @@ func (s *Server) handleDeleteCloudCredential(w http.ResponseWriter, r *http.Requ
 	// Supplying the last missing value should close the ask, not leave it open
 	// in the queue after the thing it asked for has been done.
 	s.syncDeploymentCredentialRequest(ctx, projectID)
+	// Credentials may be the piece that was missing before Mendel could reserve
+	// an address and request a certificate.
+	s.ensureDomainInfrastructure(ctx, projectID)
 
 	http.Redirect(w, r, "/p/"+projectID.String()+"/settings?success=1", http.StatusSeeOther)
 }
