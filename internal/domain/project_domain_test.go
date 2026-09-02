@@ -108,9 +108,6 @@ func TestCertificateRecordIsListedWithTheOthers(t *testing.T) {
 	d := &ProjectDomain{
 		BaseDomain: "example.com", DemoSubdomain: "mendel-demos", StaticIP: "34.1.2.3",
 	}
-	if !d.CertificateOutstanding() {
-		t.Error("no challenge minted yet, so the certificate is outstanding")
-	}
 	for _, r := range d.DNSRecords() {
 		if r.Kind == DNSRecordCertificate {
 			t.Fatal("a certificate record was offered before its value was known")
@@ -123,9 +120,6 @@ func TestCertificateRecordIsListedWithTheOthers(t *testing.T) {
 		RecordValue: "bbeef8e0-9922-46f4-8537-2107e1d4d9b0.4.authorize.certificatemanager.goog.",
 	}}
 
-	if d.CertificateOutstanding() {
-		t.Error("the challenge is known, so nothing is outstanding")
-	}
 	recs := d.DNSRecords()
 	if len(recs) != 2 {
 		t.Fatalf("want the wildcard and the certificate record, got %d", len(recs))

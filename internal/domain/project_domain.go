@@ -237,12 +237,6 @@ func (d *ProjectDomain) CertificateCovers(host string) bool {
 	return false
 }
 
-// CertificateOutstanding reports whether the names will resolve but not serve
-// https yet, which is the state that breaks sign-in while looking like it works.
-func (d *ProjectDomain) CertificateOutstanding() bool {
-	return d != nil && d.BaseDomain != "" && d.StaticIP != "" && len(d.Challenges) == 0
-}
-
 // DomainBlocker explains what stands between the settings as they are and
 // records the user could act on. Empty when the records are ready.
 func (d *ProjectDomain) DomainBlocker(hasKubernetesChannel bool) string {
