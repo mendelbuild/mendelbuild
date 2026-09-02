@@ -12,17 +12,33 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// Every page has to be reachable from another page.
+// No route may be registered that nothing refers to.
 //
-// The recurring fault in this app is not a screen rendering wrongly, it is a
-// capability quietly becoming unreachable: /costs shipped linked from nothing,
-// the open-request badge vanished from every page, log out disappeared
-// entirely. Each worked, each was tested, and no path led to it.
+// Be clear about what this is and is not, because its first name claimed more
+// than it does. It compares two lists that are already written down — the GET
+// routes the router registers, and the paths the templates and handlers contain
+// — and complains about anything in the first that is missing from the second.
 //
-// So this compares two lists — the GET routes the router registers, and the
-// links the templates and handlers actually emit — and complains about anything
-// in the first that is missing from the second. It needs no browser, no running
-// app and no database, because both lists are already written down.
+// That is a reference check, closer to hunting dead code than to reachability.
+// It does NOT establish that a person can get to a page. In particular it will
+// not notice:
+//
+//   - a link inside a branch that never renders. Log out sits in {{if .User}},
+//     and when .User stopped being set the link disappeared from every page in
+//     the app while the template still plainly contained the path.
+//   - a link only reachable from a page that is itself unreachable, since it
+//     never asks how the linking page is arrived at.
+//   - a capability lost without a route being lost. The open-request badge
+//     vanished everywhere and no route changed; it is a span, not a page.
+//
+// Of the four such faults found in September 2026, it catches one: /costs,
+// which shipped registered and linked from nothing. That is worth 150 lines and
+// no dependencies, but it is one class of fault, not the family.
+//
+// Establishing the real property needs a crawl of rendered pages from the front
+// door, which needs a seeded project, which needs fixtures that encode the data
+// model. Worth doing once that model settles; see the note in memory about
+// deferring frontend work until then.
 
 // notLinked are routes deliberately reachable only by typing the address or by
 // redirect. Each needs a reason: an unexplained entry here is how a route stops
@@ -34,7 +50,7 @@ var notLinked = map[string]string{
 	"/p/{projectID}/debug": "a JSON diagnostic dump, read by hand when something is wrong",
 }
 
-func TestEveryPageIsReachable(t *testing.T) {
+func TestNoOrphanedRoutes(t *testing.T) {
 	registered := registeredGETRoutes(t)
 	linked := linkedPaths(t)
 
@@ -49,8 +65,8 @@ func TestEveryPageIsReachable(t *testing.T) {
 	}
 	sort.Strings(unreachable)
 	for _, route := range unreachable {
-		t.Errorf("%s is registered but nothing links to it; it can only be reached "+
-			"by typing the address", route)
+		t.Errorf("%s is registered but no template or handler refers to it; "+
+			"it can only be reached by typing the address", route)
 	}
 
 	// An exemption for a route that no longer exists is a stale excuse, and the
