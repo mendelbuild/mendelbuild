@@ -154,32 +154,55 @@ This is a real narrowing, and for a monolith it is no narrowing at all.
 
 ### 3.2 What lifting that restriction actually takes
 
-A service mesh is the usual answer and it is the right one eventually, but it
-solves less of this than it appears to. Two things are needed, and a mesh
-provides one:
+Two things are needed: the Arm identity must reach each hop, and each hop must
+route on it. They are usually bundled under "get a service mesh", but they are
+different problems with different owners, and the first one is where this gets
+decided.
 
-1. **Routing on the Arm at each hop.** A sidecar intercepting outbound calls can
-   route on a header. This is what a mesh is for, and Istio's canonical example
-   is precisely this.
-2. **The Arm identity reaching each hop.** A sidecar sees an inbound request and
-   an outbound request as separate connections and **cannot correlate them**.
-   Istio is explicit that applications must forward the trace headers
-   themselves; the mesh does not do it. The same is true of anything else
-   carried per request, including an Arm.
+**Propagating the Arm is the wrong shape.** A sidecar sees an inbound request
+and an outbound request as unrelated connections and cannot correlate them;
+Istio is explicit that applications must forward trace headers themselves. So
+carrying an Arm the way trace context is carried makes experiment correctness
+depend on getting distributed context propagation right in someone else's
+application — notoriously subtle, and in places not even well defined. A service
+that batches fifty users' work into one call downstream has no single Arm for
+that call, and whatever context happens to be active when the batch flushes is
+arbitrary. The failure is silent and produces a *wrong* Arm.
 
-So propagation is an application responsibility whether or not a mesh is
-present. That is the same problem as trace context, and the same answer applies:
-**Arm identity is baggage.** An application already instrumented with
-OpenTelemetry propagates W3C `baggage` end to end, and an Arm can ride it rather
-than inventing a second mechanism — in which case much of the plumbing exists
-already.
+**Propagate the identity instead, and recompute.** Arm assignment is a pure
+function of the Assignment Unit key, the allocation and the salt. Give every hop
+the key and every hop derives the same Arm independently. There is no causal
+chain to preserve, nothing to lose across an async boundary — only a value that
+is present or absent.
 
-Two things follow. Mendel writes the application's code, so the propagation ask
-is far cheaper here than for a vendor who must persuade someone to add it —
-the same argument that settled the isolated `MeterProvider` in §13 §10. And a
-mesh should not be adopted for the routing half until the propagation half is
-in place, because a mesh with unpropagated headers routes every internal call to
-mainline while looking like it works.
+That changes the character of the requirement in three ways:
+
+- **The key is already in flight.** User and tenant identity move between
+  services as a matter of business necessity, since every hop that authorizes
+  anything needs them. Trace context is infrastructure Mendel would be asking a
+  team to add; identity is data they already pass.
+- **A missing key fails safe and legibly.** No key means mainline — a known
+  default — rather than an arbitrary Arm. Mendel can also observe internal calls
+  arriving without one, which turns a silent bias into a visible one.
+- **It needs no new declaration.** §13 §5 already requires the application to
+  say which cookie, header or claim carries the Assignment Unit key. This is
+  that same declaration, applied at every hop rather than only the first.
+
+Batching is still not solved — fifty users in one call have no single key — but
+it degrades to mainline and is detectable, rather than silently attributing the
+batch to whichever request was on the stack.
+
+**What this does not replace: east-west routing.** Something must still
+intercept internal calls and choose a backend, which is a mesh sidecar or an
+internal Gateway. What changes is the mesh's job: mechanical matching on a
+header that is already present, which is the part meshes do reliably, rather
+than correlating requests, which they cannot do at all.
+
+**The identity header becomes a routing input, and inputs from clients are
+spoofable.** A caller setting the identity header itself could choose its Arm.
+The edge must *overwrite* it from the validated session rather than pass through
+what arrived, or participants self-select and the comparison quietly stops
+meaning anything.
 
 ### 3.3 What this costs
 
@@ -334,7 +357,8 @@ channel, which §13 §15 records as the remaining staging move.
 | D25 | Weights not in `backendRefs` | Weighted backendRefs | They pick per request, splitting one visitor across Arms |
 | D26 | Kill switch removes the match rules | Set allocation to 100% mainline | Allocation only affects new visitors; the already-assigned keep their cookie |
 | D27 | A Variation may change one deployable service | Route east-west from day one | Edge routing is correct for one service; more than one needs propagation the app must do |
-| D28 | When multi-service arrives, Arm identity rides W3C `baggage` | A Mendel-specific header | A mesh cannot propagate either; an OTel-instrumented app already carries baggage |
+| D28 | Propagate the Assignment Unit key and recompute the Arm at each hop | Propagate the Arm as trace baggage | Identity is already in flight and needs no correlation; a lost key means mainline, a lost context means a wrong Arm |
+| D29 | The edge overwrites the identity header from the validated session | Trust what the client sent | Otherwise participants can select their own Arm |
 
 ## 10. Open questions
 
