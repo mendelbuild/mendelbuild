@@ -1761,3 +1761,14 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
 }
 
 .btn-copy[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+/* A requirement Mendel knows cannot be satisfied as stated. Saying so is the
+   designed answer where Mendel cannot supply what the provider needs; the
+   alternative is an instruction the console refuses without explanation. */
+.limitation {
+    color: var(--tone-warning-ink);
+    background: var(--tone-warning-bg);
+    border-left: 3px solid var(--tone-warning);
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: var(--radius-sm);
+}

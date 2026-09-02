@@ -218,6 +218,9 @@ full set rendered in every tone and state.
             <p class="callout-body">{{$deferredNote}}</p>
             {{else}}
             <p class="callout-detail">{{.ResolvedValue}}</p>
+            {{if .Limitation}}
+            <p class="callout-body limitation">{{.Limitation}}</p>
+            {{end}}
             {{if .Requirement.ConsoleURL}}
             <p class="callout-body"><a href="{{derefString .Requirement.ConsoleURL}}" target="_blank">Open the console</a></p>
             {{end}}

@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -70,6 +72,52 @@ func (r *VariationRequirement) ResolvedInstructions(deployURL string) string {
 	return strings.ReplaceAll(*r.Instructions, DeployURLPlaceholder, deployURL)
 }
 
+// DeployURLLimitation explains why a deployment's URL will not be accepted by
+// the service an acknowledgement points at, or "" when nothing is wrong with it.
+//
+// Providers that take a callback URL do not take just anything. Google's OAuth
+// rules refuse a raw IP address and refuse plain http outside localhost, and it
+// is a common shape of rule rather than a Google quirk. A Kubernetes demo is
+// reached at its LoadBalancer's address, so an acknowledgement telling the user
+// to register that address is asking for something the console will reject --
+// and they discover it in the console, several steps away from anything Mendel
+// said, with no reason to think Mendel was wrong rather than themselves.
+//
+// Naming the limitation is the honest answer where Mendel cannot supply a
+// hostname: the deployment still works, and only this requirement cannot be met
+// on this channel.
+func DeployURLLimitation(deployURL string) string {
+	if deployURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(deployURL)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+
+	host := parsed.Hostname()
+	isIP := net.ParseIP(host) != nil
+	isLocal := host == "localhost" || (isIP && net.ParseIP(host).IsLoopback())
+	if isLocal {
+		return "" // Providers exempt loopback from both rules.
+	}
+
+	switch {
+	case isIP && parsed.Scheme != "https":
+		return "This deployment is reached at " + deployURL + ", a bare IP address over plain " +
+			"http. Sign-in providers accept neither: a redirect URI has to name a host rather " +
+			"than an address, and has to be https. Registering this one will be refused."
+	case isIP:
+		return "This deployment is reached at " + deployURL + ", a bare IP address. Sign-in " +
+			"providers require a host name rather than an address, so registering this one " +
+			"will be refused."
+	case parsed.Scheme != "https":
+		return "This deployment is reached over plain http. Sign-in providers require https " +
+			"for anything that is not localhost, so registering this URL will be refused."
+	}
+	return ""
+}
+
 // NeedsDeployURL reports whether this requirement's instructions depend on
 // knowing where the code will be deployed. Such a requirement cannot be
 // acknowledged before the URL is known.
@@ -114,6 +162,10 @@ type RequirementStatus struct {
 	// Met is true when the secret has a stored value, or when this exact
 	// resolved value has been acknowledged.
 	Met bool `json:"met"`
+
+	// Limitation explains why the deployment's URL will not be accepted where
+	// this requirement says to register it. Empty when there is no such problem.
+	Limitation string `json:"limitation,omitempty"`
 
 	// Deferred is true for an acknowledgement that cannot be judged yet
 	// because the deployment's URL is not known until it exists. It is neither
@@ -162,6 +214,12 @@ func EvaluateRequirements(reqs []VariationRequirement, ev RequirementEvidence, d
 			}
 			st.ResolvedValue = req.ResolvedInstructions(deployURL)
 			st.Met = ev.Acknowledged[req.ID][st.ResolvedValue]
+			// Only where the instruction actually names the deployment: a
+			// requirement that says something else entirely is not affected by
+			// what the URL happens to look like.
+			if req.NeedsDeployURL() && !st.Met {
+				st.Limitation = DeployURLLimitation(deployURL)
+			}
 		}
 
 		statuses = append(statuses, st)
