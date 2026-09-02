@@ -226,7 +226,7 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 		Resolution:   resolution,
 	}
 
-	templateName := "input_request_roadmap.html"
+	templateName := templateForKind(inputRequest.Kind)
 
 	switch inputRequest.Kind {
 	case domain.InputRequestKindRoadmapReview:
@@ -283,7 +283,6 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 		}
 
 	case domain.InputRequestKindVariationReview:
-		templateName = "input_request_variation.html"
 
 		// Build a map of variation name -> conflicting variation names
 		conflictMap := make(map[string][]string)
@@ -378,7 +377,6 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 		}
 
 	case domain.InputRequestKindCredentialRequest:
-		templateName = "input_request_credential.html"
 		// The setup script belongs to the platform, not the request, so that
 		// editing it is a platform refresh rather than a rewrite of every ask
 		// already filed against it.
@@ -404,7 +402,6 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 		}
 
 	case domain.InputRequestKindVariationSelection:
-		templateName = "input_request_selection.html"
 		// Load hop and variations
 		if inputRequest.SubjectType != nil && *inputRequest.SubjectType == "hop" && inputRequest.SubjectID != nil {
 			view.Hop, _ = s.db.GetHop(ctx, *inputRequest.SubjectID)
@@ -523,7 +520,6 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 		}
 
 	case domain.InputRequestKindMeasurement:
-		templateName = "input_request_measurement.html"
 		if inputRequest.SubjectID != nil {
 			rows, err := s.measurementRows(ctx, *inputRequest.SubjectID, time.Now())
 			if err != nil {
@@ -534,7 +530,6 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 		}
 
 	case domain.InputRequestKindHostingPlatform:
-		templateName = "input_request_hosting.html"
 		// Provide common hosting platform options
 		// In the future, AI could suggest based on project context
 		view.HostingPlatforms = []HostingPlatformOption{
@@ -2608,6 +2603,42 @@ func setupScriptText(script string) string {
 // bash has no setopt, hence the redirect; nothing here is worth failing over.
 const interactiveCommentsPrelude = "setopt interactive_comments 2>/dev/null || true\n" +
 	"# ^ so the comments below are comments, in zsh as well as bash.\n\n"
+
+// templateForKind says which view a request gets.
+//
+// Explicit for every kind, and never defaulting to one that offers to act. This
+// used to default to the roadmap review, so any kind without a case rendered
+// "Approve and create the Hops" and "Reject this roadmap" over a request that had
+// neither -- on a manual setup step whose whole point is that it happens
+// somewhere Mendel cannot reach. It failed silently, because a page rendering the
+// wrong form still renders.
+//
+// The generic view is a deliberate choice rather than a fallback: it shows what
+// the request says and offers nothing, which is the only safe thing to do with a
+// kind nobody has designed a view for. TestEveryKindHasItsOwnView keeps this in
+// step with the kinds that exist.
+func templateForKind(k domain.InputRequestKind) string {
+	switch k {
+	case domain.InputRequestKindRoadmapReview:
+		return "input_request_roadmap.html"
+	case domain.InputRequestKindVariationReview:
+		return "input_request_variation.html"
+	case domain.InputRequestKindVariationSelection:
+		return "input_request_selection.html"
+	case domain.InputRequestKindCredentialRequest:
+		return "input_request_credential.html"
+	case domain.InputRequestKindMeasurement:
+		return "input_request_measurement.html"
+	case domain.InputRequestKindHostingPlatform:
+		return "input_request_hosting.html"
+	case domain.InputRequestKindManualSetup:
+		// Work Mendel cannot do and cannot be told about: closed by observing
+		// that it was done, so there is nothing to approve and nothing to tick.
+		return "input_request_manual_setup.html"
+	default:
+		return "input_request_generic.html"
+	}
+}
 
 // markUpSetupScript splits a setup script into lines and marks the one carrying
 // a placeholder.

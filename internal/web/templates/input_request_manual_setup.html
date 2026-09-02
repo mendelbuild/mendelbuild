@@ -1,0 +1,53 @@
+{{define "page-content"}}
+{{template "decision-head" .}}
+{{with .View}}
+
+<div class="split">
+    <div class="stack">
+
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">What needs doing</h2></div>
+            {{if .InputRequest.Instructions}}
+            <p class="card-note pre-wrap">{{.InputRequest.Instructions}}</p>
+            {{else}}
+            <p class="card-note">
+                This is a step Mendel cannot take for you. It happens somewhere else
+                &mdash; your DNS provider, a cloud console, this project's settings.
+            </p>
+            {{end}}
+
+            {{if .InputRequest.Link}}
+            <div class="actions">
+                <a class="btn btn-primary" href="{{.InputRequest.Link}}">Go to where this is done</a>
+            </div>
+            {{end}}
+        </div>
+
+        {{if .InputRequest.Details}}
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">Where this stands</h2></div>
+            <p class="pre-wrap muted">{{.InputRequest.Details}}</p>
+        </div>
+        {{end}}
+
+    </div>
+
+    <div class="stack">
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">How this closes</h2></div>
+            {{if .Open}}
+            <p class="card-note">
+                Mendel checks this itself and closes it when the work is actually done.
+                There is nothing to approve here, and nothing to mark off &mdash; saying
+                a record exists would not make it resolve, and a step ticked off in
+                error surfaces much later as something else failing.
+            </p>
+            {{else}}
+            <p class="card-note">Done. Mendel saw this finish and closed it.</p>
+            {{end}}
+        </div>
+    </div>
+</div>
+
+{{end}}
+{{end}}

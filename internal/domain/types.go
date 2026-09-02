@@ -680,6 +680,29 @@ const (
 	InputRequestKindMeasurement InputRequestKind = "measurement"
 )
 
+// AllInputRequestKinds is every kind that exists.
+//
+// Enumerated so the things that must handle each one can be checked against the
+// list rather than against whatever the author remembered. The detail page picks
+// its template from the kind and defaulted to the roadmap review, so a kind with
+// no case rendered "Approve and create the Hops" over a request that had no hops
+// and nothing to approve.
+func AllInputRequestKinds() []InputRequestKind {
+	return []InputRequestKind{
+		InputRequestKindPassFail,
+		InputRequestKindChooseOne,
+		InputRequestKindChooseMany,
+		InputRequestKindRoadmapReview,
+		InputRequestKindVariationReview,
+		InputRequestKindVariationSelection,
+		InputRequestKindCredentialRequest,
+		InputRequestKindManualSetup,
+		InputRequestKindConfirmation,
+		InputRequestKindHostingPlatform,
+		InputRequestKindMeasurement,
+	}
+}
+
 // InputRequestStatus represents the lifecycle state of an InputRequest.
 type InputRequestStatus string
 

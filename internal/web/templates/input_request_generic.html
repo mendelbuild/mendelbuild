@@ -1,0 +1,45 @@
+{{define "page-content"}}
+{{template "decision-head" .}}
+{{with .View}}
+
+<div class="split">
+    <div class="stack">
+        {{if .InputRequest.Instructions}}
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">What is being asked</h2></div>
+            <p class="card-note pre-wrap">{{.InputRequest.Instructions}}</p>
+            {{if .InputRequest.Link}}
+            <div class="actions">
+                <a class="btn btn-primary" href="{{.InputRequest.Link}}">Go to where this is done</a>
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+
+        {{if .InputRequest.Details}}
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">Details</h2></div>
+            <p class="pre-wrap muted">{{.InputRequest.Details}}</p>
+        </div>
+        {{end}}
+    </div>
+
+    <div class="stack">
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">No actions here yet</h2></div>
+            <p class="card-note">
+                Mendel has no purpose-built view for a
+                <code>{{.InputRequest.Kind}}</code> request, so it is showing what the
+                request says and nothing else.
+            </p>
+            <p class="card-note subtle">
+                Deliberately empty rather than borrowing another kind's buttons. This
+                page used to fall back to the roadmap review, which offered to create
+                Hops on requests that had none.
+            </p>
+        </div>
+    </div>
+</div>
+
+{{end}}
+{{end}}
