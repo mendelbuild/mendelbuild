@@ -44,10 +44,10 @@ is no Envoy alongside each application pod, and no east-west interception.
 That is the distinction between an ingress gateway and a service mesh. A mesh
 puts a proxy next to every workload for mTLS and east-west policy, and it is a
 far heavier thing to adopt. Splitting *inbound* traffic across Arms of one
-service needs none of that.
+application needs none of that.
 
 So the footprint is: **one Envoy for the experiment's Gateway.** Not one per
-Arm, not one per service, not one per pod.
+Arm, not one per deployable unit, not one per pod.
 
 ### 2.2 Two installs, at different levels
 
@@ -125,7 +125,7 @@ matching.** Assignment is only needed for a request that has no cookie yet.
                     └─────────────────────────────────────┘
 ```
 
-The assigner is a Mendel-built service, and the important property is that **it
+The assigner is a Mendel-built component, and the important property is that **it
 is not a proxy**. It receives a request with no assignment cookie, picks an Arm
 by weight, sets `Set-Cookie: mendel_arm=<arm>`, and returns `302` to the same
 URL. It never forwards a body, never streams, never holds an upstream
@@ -136,21 +136,42 @@ Every subsequent request from that visitor carries the cookie and is routed by
 header matching, which *is* core Gateway API — so the portability claim holds on
 every conformant implementation, with no Envoy-specific extension anywhere.
 
-### 3.1 One service, or the Arm leaks
+### 3.1 Reaching the Arm, not just knowing it
 
 Everything above routes traffic **at the edge**. Once a request is inside the
-cluster, an Arm's service calls its collaborators by their ordinary names, and
-those resolve to mainline. So Arm b's service A talks to mainline B.
+cluster, an Arm's code calls its collaborators by their ordinary names, and
+those resolve to mainline. So Arm b's unit A talks to mainline B.
 
 When a Variation changes only A that is not a flaw, it is correct: B is
 byte-identical in both Arms, and there is nothing to isolate. When a Variation
-changes A *and* B, it is broken — new A talking to old B is neither Arm, and
-whatever the experiment measures is a mixture nobody designed.
+changes A *and* B, and A calls B, it is broken — new A talking to old B is
+neither Arm, and whatever the experiment measures is a mixture nobody designed.
 
-**So: a Variation may change exactly one deployable service.** Mendel can see
-this in the diff — more than one service's directory touched — and decline with
-that reason, the same way §13 declines a migration it cannot prove additive.
-This is a real narrowing, and for a monolith it is no narrowing at all.
+The earlier rule here was "a Variation may change exactly one deployable unit",
+enforced by counting touched directories in the diff. Counting is the wrong
+test, and it is wrong in both directions. Two units entered independently from
+the edge — a web frontend and an API the browser calls directly — are both
+routed by the same visitor cookie, so changing both is perfectly safe and the
+count forbids it. Meanwhile one unit that calls itself through a queue is
+counted as one and is not obviously safe at all.
+
+**The constraint is a call edge between two changed units**, not how many
+changed. Two conditions, and both must hold:
+
+1. **Every changed unit can extract the Assignment Unit key and recompute the
+   Arm** (D28, applied per unit). A unit blind to the key cannot know which Arm
+   it is serving, so it serves mainline.
+2. **No changed unit is reached from another changed unit by an internal call**,
+   unless east-west routing exists to carry that call to the right Arm.
+
+Condition 1 is what makes an Arm *knowable*; condition 2 is what makes it
+*reachable*. Extraction alone is not enough, because the edge cannot see an
+internal call at all — that is §3.2's subject, and until a mesh or internal
+Gateway is in place, condition 2 is satisfied only by the changed units being
+entered independently from the edge.
+
+For a monolith this is no narrowing whatever: one deployable unit, no internal
+call edges between changed units, condition 2 vacuous.
 
 ### 3.2 What lifting that restriction actually takes
 
@@ -164,7 +185,7 @@ and an outbound request as unrelated connections and cannot correlate them;
 Istio is explicit that applications must forward trace headers themselves. So
 carrying an Arm the way trace context is carried makes experiment correctness
 depend on getting distributed context propagation right in someone else's
-application — notoriously subtle, and in places not even well defined. A service
+application — notoriously subtle, and in places not even well defined. A unit
 that batches fifty users' work into one call downstream has no single Arm for
 that call, and whatever context happens to be active when the batch flushes is
 arbitrary. The failure is silent and produces a *wrong* Arm.
@@ -178,7 +199,7 @@ is present or absent.
 That changes the character of the requirement in three ways:
 
 - **The key is already in flight.** User and tenant identity move between
-  services as a matter of business necessity, since every hop that authorizes
+  deployable units as a matter of business necessity, since every hop that authorizes
   anything needs them. Trace context is infrastructure Mendel would be asking a
   team to add; identity is data they already pass.
 - **A missing key fails safe and legibly.** No key means mainline — a known
@@ -422,7 +443,7 @@ channel, which §13 §15 records as the remaining staging move.
 | D24 | Weights in a ConfigMap the assigner reads | Assigner queries Mendel per request | Production traffic must not depend on Mendel being up |
 | D25 | Weights not in `backendRefs` | Weighted backendRefs | They pick per request, splitting one visitor across Arms |
 | D26 | Kill switch removes the match rules | Set allocation to 100% mainline | Allocation only affects new visitors; the already-assigned keep their cookie |
-| D27 | A Variation may change one deployable service | Route east-west from day one | Edge routing is correct for one service; more than one needs propagation the app must do |
+| D27 | A Variation may change any number of deployable units, provided each can extract the Assignment Unit key and no changed unit calls another without east-west routing | Restrict a Variation to one | Counting is wrong in both directions: two edge-entered units are safe, one self-calling unit is not. The real constraint is the call edge (O13, §3.1) |
 | D28 | Propagate the Assignment Unit key and recompute the Arm at each hop | Propagate the Arm as trace baggage | Identity is already in flight and needs no correlation; a lost key means mainline, a lost context means a wrong Arm |
 | D29 | The edge overwrites the identity header from the validated session | Trust what the client sent | Otherwise participants can select their own Arm |
 | D30 | Require the Assignment Unit key to be edge-extractable | Analyse whether extraction precedes divergent code | Reachability in an arbitrary codebase is not decidable from a diff; the structural rule needs no analysis |
@@ -435,18 +456,68 @@ request and nothing else. Excluding a cohort — logged-out users, a region, a
 plan tier — needs an attribute it does not have. Either the app supplies one on
 the request, or targeting is limited to "everyone" in the first cut.
 
-**O11 — What happens to a visitor whose Arm is withdrawn mid-session?** Their
-cookie names an Arm that no longer routes, so they fall through to mainline,
-which is correct. But if the Arm wrote per-Assignment-Unit state they will see
-some of it and not the rest, which is exactly the §13 §5 dissonance the user
-approved in the abstract. Worth checking that the approval text covers it.
+**O11 — What happens to a visitor whose Arm is withdrawn mid-session? —
+resolved.** Their cookie names an Arm that no longer routes, so they fall
+through to mainline, which is correct. If the Arm wrote per-Assignment-Unit
+state they then see some of it and not the rest.
 
-**O13 — How does Mendel identify a "deployable service" in an arbitrary repo?**
-D27 rests on counting them in a diff, which needs a definition. No longer blocks
-eligibility, since D30 settles that structurally; still needed for D27's
-one-service constraint. A monolith is
-one; a repo of Dockerfiles is several; a monorepo with one deployed entrypoint
-is one again. Likely a `.mendel/` declaration rather than inference.
+This needs no new mechanism, but it does change the wording of one that exists.
+§13 §5 item 5 has the Mendel user type a summary of the dissonance
+character-for-character, and that summary is written **about rollback**. D26
+reaches the same state sooner: the kill switch works by removing the match
+rules, so everyone already assigned falls through immediately — no rollback, no
+migration reversed, and it happens on the emergency path where nobody is going
+to re-read a form.
+
+So the acknowledgement is phrased about **the Arm ceasing to serve**, not about
+rollback, and it is taken once at admission. Rollback, kill switch and an
+allocation change that withdraws an Arm all produce it, and the one a user is
+most likely to reach in a hurry is the one they would otherwise not have been
+shown.
+
+To be explicit about who is being asked: this is the **Mendel user**
+acknowledging what a visitor will experience. Visitors are not told they are in
+an experiment and are asked for nothing. The word "consent" does not belong
+anywhere near this — it names a different thing, owed to a different person.
+
+**O13 — How does Mendel identify a deployable unit in an arbitrary repo? —
+resolved, and D27 relaxed with it.**
+
+A **deployable unit** is the smallest thing that can be deployed on its own. It
+is defined by the deployment, not by the architecture: a serverless function is
+a deployable unit and is very small; an everything-binary monolith is one
+deployable unit and is very large. A repo of Dockerfiles has several; a monorepo
+with one deployed entrypoint has one.
+
+Counting them was the wrong test, and wrong in both directions — see §3.1. A
+Variation may change **any number** of deployable units, provided each can
+extract the Assignment Unit key (D28 applied per unit) and no changed unit is
+reached from another changed unit by an internal call.
+
+The second half is the one worth being explicit about, because extraction alone
+reads like enough and is not. Extraction makes an Arm *knowable*; it does not
+make it *reachable*. The edge cannot see an internal call, so Arm b's A calling
+B still lands on mainline B however well B can read the key. Until east-west
+routing exists (§3.2), multi-unit Variations are admissible exactly when the
+changed units are entered independently from the edge — which is a real and
+common shape, a frontend and a browser-called API being the obvious one.
+
+This removes the need to infer a boundary from directory layout: what Mendel
+must establish is extraction per unit and the absence of a call edge between
+changed units.
+
+**A note on the word.** "Service" is one of
+the most overloaded words in the vocabulary — it means a process, a bounded
+context, a Kubernetes `Service`, a SaaS product, and a team, often in the same
+paragraph. Where a more specific word exists, use it: **deployable unit** for
+the thing being deployed, `Service` in backticks for the Kubernetes resource,
+**application** for what the user is building. Ambiguity in this area costs
+correctness, since a Kubernetes `Service` and a deployable unit are neither the
+same thing nor reliably one-to-one.
+
+It survives in this document in exactly three places, all of them earned: twice
+in "service mesh", which is the name of the thing, and once inside a quotation
+from §13 that is reproduced verbatim.
 
 **O12 — One HTTPRoute per experiment, or one per project?** Two experiments on
 different paths of one application both want to attach to the same parent

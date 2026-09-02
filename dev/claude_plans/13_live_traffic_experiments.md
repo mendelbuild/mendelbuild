@@ -193,12 +193,25 @@ Six things, all required before admission:
    class). Keep a prose rationale for the human to read; do not let it be the
    gate — an LLM asserting a query is fine is weak evidence.
 
-5. **User-visible dissonance on rollback**, where it exists — a plain
-   description of what a person who experienced the Variation will feel when it
-   is withdrawn. The Mendel user must **type a short summary character-for-
-   character** to approve, so approval cannot be a reflexive click. This reuses
-   the `requirement_acknowledgements` shape exactly: keyed by the precise string
-   confirmed, recording who and when.
+5. **User-visible dissonance when the Arm stops serving**, where it exists — a
+   plain description of what a person who experienced the Variation will feel
+   when it is withdrawn. The Mendel user must **type a short summary character-
+   for-character** to approve, so approval cannot be a reflexive click. This
+   reuses the `requirement_acknowledgements` shape exactly: keyed by the precise
+   string confirmed, recording who and when.
+
+   Deliberately *not* "on rollback". An Arm stops serving for three reasons —
+   rollback, the kill switch, and an allocation change that withdraws it — and
+   the kill switch gets there fastest, because §16 D26 removes the match rules
+   so everyone already assigned falls through to mainline at once. Wording this
+   around rollback would leave the emergency path as the one case the user had
+   never been shown, at the moment they are least able to absorb it. Taken once,
+   at admission, covering all three (§16 O11).
+
+   To be clear about who is being asked: the acknowledgement is the **Mendel
+   user** confirming what a *visitor* will experience. Visitors are not told
+   they are in an experiment and are asked for nothing, so this is not consent
+   and should never be described as it.
 
 6. **Success criteria**, including the statistics (§8).
 
