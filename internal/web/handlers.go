@@ -237,6 +237,13 @@ func (s *Server) addUserToData(r *http.Request, data map[string]interface{}) {
 
 // addOpenInputCount adds the open input request count to template data for the nav badge.
 func (s *Server) addOpenInputCount(ctx context.Context, data map[string]interface{}) {
+	// A server with no database cannot count anything. It already gives up
+	// silently when the query fails, and this is the same answer one step
+	// earlier -- which also lets the chrome be exercised in a test without
+	// standing up Postgres.
+	if s.db == nil {
+		return
+	}
 	projectIDStr, ok := data["ProjectID"].(string)
 	if !ok || projectIDStr == "" {
 		return
