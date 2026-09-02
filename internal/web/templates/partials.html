@@ -513,50 +513,77 @@ document.querySelectorAll('[data-tl-today]').forEach(function (el) {
 {{end}}
 
 {{/*
-    support-matrix is the grid of what Mendel can deploy where. Takes a
-    *web.SupportMatrix.
+    support-matrix is the channel picker: what Mendel can deploy, where, and
+    which pairing this project uses. Takes a *web.SupportMatrix.
 
-    The channel list above says what you may choose; it cannot say what you may
-    not, which is the question someone asks when the thing they wanted is not
-    there. A grid answers both at once.
+    It replaced a list of the supported pairings, which could say what you may
+    choose but never what you may not -- so the answer to "why is my platform
+    not here" was a gap in a list rather than a row with nothing ticked. A grid
+    answers both at once, and since every selectable thing is already in it,
+    selecting from it is one screen instead of two.
+
+    Both axes come from the database. CLAUDE.md forbids hardcoding platform
+    lists in Go, and that applies to the shape of a table about them as much as
+    to the options in a form: seeding a new platform must make it appear here on
+    its own.
 */}}
 {{define "support-matrix"}}
 {{if .HasAny}}
 <div class="card">
-    <div class="card-head"><h2 class="card-title">What Mendel can deploy where</h2></div>
-    <p class="card-note">
-        Rows are hosting platforms, columns are what a project produces. Only the
-        ticked pairings can be run, and each is proved by a validation deploy before
-        Mendel uses it for anything real.
-    </p>
-    <div class="table-scroll">
-        <table class="table table-ruled">
-            <thead>
-                <tr>
-                    <th>Platform</th>
-                    {{range .ArtifactKinds}}<th class="table-num">{{.}}</th>{{end}}
-                </tr>
-            </thead>
-            <tbody>
-                {{range .Rows}}
-                <tr>
-                    <td>{{.Platform}}</td>
-                    {{range .Cells}}
-                    <td class="table-num">
-                        {{if .Current}}
-                        <span class="badge badge-success" title="This project&rsquo;s channel">&check; in use</span>
-                        {{else if .Supported}}
-                        <span class="cell-yes" title="{{if .Note}}{{.Note}}{{else}}Supported{{end}}" aria-label="supported">&check;</span>
-                        {{else}}
-                        <span class="cell-no" aria-label="not supported">&middot;</span>
-                        {{end}}
-                    </td>
-                    {{end}}
-                </tr>
-                {{end}}
-            </tbody>
-        </table>
+    <div class="card-head">
+        <h2 class="card-title">{{if .Configured}}Change the channel{{else}}Choose a channel{{end}}</h2>
     </div>
+    <p class="card-note">
+        A channel is what this project produces paired with where it runs. Only the
+        pairings you can select are ones Mendel knows how to deploy; a blank cell is a
+        combination it cannot. Each is proved by a validation deploy before it is used
+        for anything real, so changing the channel means validating the new path first.
+    </p>
+
+    <form method="POST" action="/p/{{.ProjectID}}/deployment/channel">
+        <div class="table-scroll">
+            <table class="table table-ruled matrix">
+                <thead>
+                    <tr>
+                        <th>Platform</th>
+                        {{range .ArtifactKinds}}<th class="table-num">{{.}}</th>{{end}}
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Rows}}
+                    <tr>
+                        <td>{{.Platform}}</td>
+                        {{range .Cells}}
+                        <td class="table-num">
+                            {{if .Supported}}
+                            {{/* The radio is the "supported" mark as well as the
+                                 control: a tick beside it would say the same
+                                 thing twice. */}}
+                            <label class="matrix-cell" {{if .Note}}title="{{.Note}}"{{end}}>
+                                <input type="radio" name="combo_id" value="{{.ComboID}}"
+                                       {{if .Current}}checked{{end}}>
+                                {{if .Current}}<span class="matrix-current">in use</span>{{end}}
+                            </label>
+                            {{else}}
+                            {{/* Faint on purpose. A grid of red crosses reads as a wall
+                                 of failures rather than a list of what is possible. */}}
+                            <span class="cell-no" aria-label="not supported">&middot;</span>
+                            {{end}}
+                        </td>
+                        {{end}}
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="actions">
+            <button type="submit" class="btn {{if .Configured}}btn-secondary{{else}}btn-primary{{end}}">
+                {{if .Configured}}Update channel{{else}}Set channel{{end}}
+            </button>
+        </div>
+    </form>
+
     <p class="text-xs subtle">
         This list is seeded on startup and refreshed with <code>mendel platforms refresh</code>,
         so it follows what Mendel actually supports rather than a list written into the page.

@@ -107,13 +107,46 @@ func TestSupportMatrixRenders(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"What Mendel can deploy where",
+		// The grid is the picker, so it is titled as one.
+		"Change the channel",
 		"Fly.io", "Google Kubernetes Engine", "Render",
 		"container", "kubernetes",
-		"in use", // the project's own channel, marked in place
+		"in use",              // the project's own channel, marked in place
+		`name="combo_id"`,     // and every supported cell is selectable
+		"Update channel",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("support matrix missing %q", want)
 		}
+	}
+
+	// Three supported pairings, so three radios -- and no more. An unsupported
+	// pairing must not be selectable, which is the whole reason the grid can
+	// replace the list rather than sit beside it.
+	if n := strings.Count(body, `name="combo_id"`); n != 3 {
+		t.Errorf("expected a radio for each supported pairing, got %d", n)
+	}
+}
+
+// A project that has never chosen reads as a first choice, not a change.
+func TestSupportMatrixBeforeAnyChannel(t *testing.T) {
+	fly := domain.HostingPlatform{ID: uuid.New(), Name: "Fly.io"}
+	projectID := uuid.New()
+
+	m := pivotSupportMatrix([]domain.HostingPlatform{fly},
+		[]domain.SupportedDeploymentCombo{{ArtifactKind: "container", HostingPlatformID: fly.ID}}, nil)
+	m.ProjectID = projectID.String()
+
+	body := renderPageForTest(t, "deployment_channel.html", map[string]interface{}{
+		"ProjectID": projectID.String(), "SettingsTab": "deployment",
+		"Project": &domain.Project{ID: projectID, Name: "pong"}, "SupportMatrix": m,
+	})
+	for _, want := range []string{"Choose a channel", "Set channel"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("an unconfigured project missing %q", want)
+		}
+	}
+	if strings.Contains(body, "in use") {
+		t.Error("nothing is in use yet")
 	}
 }

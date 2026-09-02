@@ -633,7 +633,7 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 	data := map[string]interface{}{
 		"Title":                "Deployment: " + project.Name,
 		"SettingsTab":          "deployment",
-		"SupportMatrix":        s.buildSupportMatrix(ctx, channel),
+		"SupportMatrix":        s.buildSupportMatrix(ctx, projectID, channel),
 		"CloudCredentials":     cloudCredentials,
 		"RequiredCredentials":  requiredCredentials,
 		"ProjectID":            projectID.String(),
@@ -1319,6 +1319,9 @@ func (s *Server) cloudCredentialViews(ctx context.Context, projectID uuid.UUID) 
 // in Go, and that applies to the shape of a table about them as much as to the
 // options in a form: seeding a new platform must make it appear here on its own.
 type SupportMatrix struct {
+	// ProjectID is carried so the grid can post to this project's channel
+	// route without its host template threading the ID through.
+	ProjectID     string
 	ArtifactKinds []string
 	Rows          []SupportRow
 }
@@ -1334,6 +1337,27 @@ type SupportCell struct {
 	Supported bool
 	Current   bool   // The channel this project is using
 	Note      string // The combo's own note, when it has one
+	// ComboID is what selecting this cell posts. The grid is the channel
+	// picker: a list of the supported pairings could say what you may choose
+	// but never what you may not, and the answer to "why is my platform not
+	// here" was a gap in a list rather than a row with nothing ticked.
+	ComboID string
+}
+
+// Configured reports whether the project has already chosen a channel, which
+// decides whether the grid reads as a first choice or a change.
+func (m *SupportMatrix) Configured() bool {
+	if m == nil {
+		return false
+	}
+	for _, row := range m.Rows {
+		for _, cell := range row.Cells {
+			if cell.Current {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // HasAny reports whether the matrix is worth drawing.
@@ -1342,7 +1366,7 @@ func (m *SupportMatrix) HasAny() bool {
 }
 
 // buildSupportMatrix reads the platforms and combos, then pivots them.
-func (s *Server) buildSupportMatrix(ctx context.Context, current *domain.ProjectDeploymentChannel) *SupportMatrix {
+func (s *Server) buildSupportMatrix(ctx context.Context, projectID uuid.UUID, current *domain.ProjectDeploymentChannel) *SupportMatrix {
 	platforms, err := s.db.ListHostingPlatforms(ctx)
 	if err != nil {
 		return nil
@@ -1351,7 +1375,11 @@ func (s *Server) buildSupportMatrix(ctx context.Context, current *domain.Project
 	if err != nil {
 		return nil
 	}
-	return pivotSupportMatrix(platforms, combos, current)
+	m := pivotSupportMatrix(platforms, combos, current)
+	if m != nil {
+		m.ProjectID = projectID.String()
+	}
+	return m
 }
 
 // pivotSupportMatrix is the pivot itself, kept free of the database so every
@@ -1388,6 +1416,7 @@ func pivotSupportMatrix(platforms []domain.HostingPlatform, combos []domain.Supp
 			cell := SupportCell{}
 			if combo, ok := supported[kind+"\x00"+p.ID.String()]; ok {
 				cell.Supported = true
+				cell.ComboID = combo.ID.String()
 				if combo.Notes != nil {
 					cell.Note = *combo.Notes
 				}

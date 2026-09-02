@@ -690,6 +690,35 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
    It is context, not the decision. */
 .table tr.is-existing td { background: var(--surface-sunken); color: var(--ink-2); }
 
+/* ---- The channel grid --------------------------------------------------
+   A whole cell is the click target, because a radio the size of a full stop in
+   the middle of a wide column is a target you have to aim at. */
+.matrix td { padding: 0; }
+.matrix td:first-child { padding: var(--sp-3) var(--sp-4); }
+.matrix-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-2);
+    padding: var(--sp-3) var(--sp-4);
+    cursor: pointer;
+    min-height: 44px;
+}
+.matrix-cell:hover { background: var(--surface-hover); }
+.matrix-cell input { margin: 0; }
+.matrix-current {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--tone-success-ink);
+    white-space: nowrap;
+}
+/* The chosen pairing, so the grid says which one is live as well as which are
+   possible. */
+.matrix-cell:has(input:checked) {
+    background: var(--tone-success-bg);
+    box-shadow: inset 0 0 0 2px var(--tone-success);
+}
+
 /* Supported / not, in a grid where most cells are one or the other. The
    unsupported mark is deliberately faint: it is the absence of a fact, and a
    grid of red crosses reads as a wall of failures rather than a capability

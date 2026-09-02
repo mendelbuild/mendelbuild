@@ -231,48 +231,20 @@
             </form>
         </div>
 
+        {{if .SupportMatrix.HasAny}}
+        {{template "support-matrix" .SupportMatrix}}
+        {{else}}
         <div class="card">
-            <div class="card-head">
-                <h2 class="card-title">{{if .Channel}}Change the channel{{else}}Choose a channel{{end}}</h2>
-            </div>
-            <p class="card-note">
-                A channel is what this project produces paired with where it runs. Changing it
-                means validating the new path before anything can deploy through it.
-            </p>
-
-            {{if .Combos}}
-            <form method="POST" action="/p/{{.ProjectID}}/deployment/channel">
-                <div class="stack-tight">
-                    {{range .Combos}}
-                    <label class="choice">
-                        <input type="radio" name="combo_id" value="{{.ID}}"
-                            {{if $.Channel}}{{if and (eq $.Channel.ArtifactKind .ArtifactKind) (eq $.Channel.HostingPlatformID .HostingPlatformID)}}checked{{end}}{{end}}>
-                        <span>
-                            <span class="choice-title">{{.ArtifactKind}} &rarr;
-                                {{if .HostingPlatform}}{{.HostingPlatform.Name}}{{end}}</span>
-                            {{if .Notes}}<span class="choice-note">{{.Notes}}</span>{{end}}
-                        </span>
-                    </label>
-                    {{end}}
-                </div>
-                <div class="actions">
-                    <button type="submit" class="btn {{if .Channel}}btn-secondary{{else}}btn-primary{{end}}">
-                        {{if .Channel}}Update channel{{else}}Set channel{{end}}
-                    </button>
-                </div>
-            </form>
-            {{else}}
+            <div class="card-head"><h2 class="card-title">Choose a channel</h2></div>
             <p class="empty">
                 No deployment options are available. Run <code>mendel platforms refresh</code> to
                 load the current list.
             </p>
-            {{end}}
         </div>
+        {{end}}
     </div>
 
     <div class="stack">
-        {{template "support-matrix" .SupportMatrix}}
-
         <div class="card">
             <div class="card-head"><h2 class="card-title">What a channel is</h2></div>
             <dl class="kv">
