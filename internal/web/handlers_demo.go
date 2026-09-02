@@ -1027,7 +1027,7 @@ func (s *Server) deployToGKE(
 	// an address for its records to point at. Reserving the address here rather
 	// than at channel setup means it exists by the time anything needs it, and
 	// costs nothing on a project that never asks for a domain.
-	hostname, ipName := "", ""
+	hostname, ipName, servesHTTPS := "", "", false
 	if pd, err := s.db.GetProjectDomain(ctx, projectID); err == nil && pd != nil && pd.BaseDomain != "" {
 		if _, err := s.ensureStaticIP(ctx, projectID, session); err != nil {
 			logInfo("Could not reserve an address, so this deployment keeps a bare one: " + err.Error())
@@ -1054,6 +1054,11 @@ func (s *Server) deployToGKE(
 				if err := s.ensureGateway(ctx, session, ipName, certMap); err != nil {
 					logInfo("Could not raise the gateway, so this deployment keeps a bare address: " + err.Error())
 					hostname, ipName = "", ""
+				} else {
+					// The gateway serves https only where there is a certificate
+					// to present, so that is the only case where Mendel may
+					// report one.
+					servesHTTPS = certMap != ""
 				}
 			}
 		}
@@ -1084,8 +1089,17 @@ func (s *Server) deployToGKE(
 	// https because that is the whole point of having a name: a certificate can
 	// be issued for it, which cannot be done for an address.
 	if hostname != "" {
-		logInfo("Reachable at " + hostname + " once the Ingress has programmed itself")
-		return "https://" + hostname, nil
+		// Report the scheme actually served. Saying https before a certificate
+		// exists gives a URL that refuses to connect, while the http one works --
+		// a broken link that looks like a broken deployment.
+		scheme := "http"
+		if servesHTTPS {
+			scheme = "https"
+		} else {
+			logInfo("No certificate yet, so this is http. The Domain tab lists the record that fixes that.")
+		}
+		logInfo("Reachable at " + hostname + " once the gateway has programmed itself")
+		return scheme + "://" + hostname, nil
 	}
 
 	// Wait for external IP

@@ -147,3 +147,18 @@ func TestRejectionNamesTheLabelMeant(t *testing.T) {
 		t.Errorf("message does not suggest the label meant: %s", msg)
 	}
 }
+
+// TestLimitationFollowsTheSchemeActuallyServed is the pairing that matters: a
+// name served over http is still refused by a sign-in provider, so naming it is
+// not enough on its own.
+func TestLimitationFollowsTheSchemeActuallyServed(t *testing.T) {
+	// A name without a certificate. Better than an address, still not
+	// registerable, and Mendel has to keep saying so.
+	if DeployURLLimitation("http://app.pong.mendel.build") == "" {
+		t.Error("http on a real hostname is still refused; the limitation should stand")
+	}
+	// The same name once the certificate exists.
+	if msg := DeployURLLimitation("https://app.pong.mendel.build"); msg != "" {
+		t.Errorf("https on a real hostname is registerable, but got: %s", msg)
+	}
+}
