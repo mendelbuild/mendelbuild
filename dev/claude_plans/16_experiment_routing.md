@@ -362,11 +362,11 @@ This is that reading, and the login-transition problem turns out to dissolve
 rather than need solving.
 
 **The application mints a bucket** (D47). Codegen adds middleware that computes
-`hash(assignment key, salt) mod 100` and sets it on the response; the client
-carries it back on every subsequent request; the edge matches the value exactly
-and routes. The salt is per experiment, injected as an environment variable by
-the same machinery that already injects requirement secrets and the OTLP
-endpoint.
+`hash(assignment key, salt) mod 100` and sets it as a cookie on the response;
+the client sends it back on every subsequent request; the edge matches the value
+exactly and routes. The salt is per experiment, injected as an environment
+variable by the same machinery that already injects requirement secrets and the
+OTLP endpoint.
 
 The constraint that shapes this is easy to miss: **the value has to be on the
 inbound request**, because the edge decides routing before anything is reached.
@@ -374,6 +374,46 @@ So the application cannot compute the bucket for the request being routed — it
 computes it for the *next* one. That is not a limitation, it is the mechanism:
 the value is minted once on whatever request first knows who the visitor is, and
 is simply present thereafter.
+
+### How the client comes to know its bucket
+
+Worth setting out plainly, because "the client carries a value" invites the
+question of how it got it and what happens when it has not.
+
+**The middleware sets it on any response where the key is known and the cookie
+is absent or does not match what it should be.** Not specifically at login —
+login is merely the usual first such response. Stating it as a condition rather
+than an event means there is no code path that has to remember to do it, and no
+enrolment step to get wrong.
+
+**Losing the cookie costs nothing, because it is a cache and not the source of
+truth.** The value is `hash(key, salt)`, which the application can recompute at
+any moment from data it already has. A visitor who clears their cookies is
+handed the same bucket back on their next authenticated response. A visitor on a
+second device gets that same bucket without ever having had it on the first.
+This is the property the `device` path cannot have at all: an edge-minted
+assignment is a random draw pinned to one browser, so clearing it re-draws, and
+a laptop and a phone are two participants (§13 §14 says so in as many words).
+Here the browser stores a value; the identity determines it.
+
+**A first authenticated request enrols one request late.** The login `POST`
+itself, and anything before the cookie exists, are served mainline. For Tier 2
+that is exactly right — durable writes happen after enrolment — and for metrics
+the participant counts from enrolment. It is a request, not a session.
+
+**A client that does not handle cookies for itself needs the client change D31
+already describes.** A browser does this without being asked. A native mobile
+client does not: it has to store what the response gave it and send it back,
+which is a few lines in a client Mendel also wrote, and is the same remedy D31
+names for the same reason. Where that has not been done, requests arrive without
+a bucket and are served mainline — the safe direction, and observable rather
+than silent.
+
+**And it is still a cookie.** What §3.4 stops paying for is not cookies; it is
+*minting identity at the edge* — the redirect, the extra round trip, the service
+in the request path, and the fact that what gets minted is a fresh random draw
+rather than a function of who the visitor actually is. The cookie itself was
+never the expensive part.
 
 Which is also what dissolves the login transition. Before a visitor is
 identified there is no bucket, no match, and they are served mainline. At login
