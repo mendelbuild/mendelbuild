@@ -21,10 +21,24 @@ import (
 )
 
 // Store is a Postgres database an experiment runs against.
-type Store struct{ Pool *pgxpool.Pool }
+type Store struct {
+	Pool *pgxpool.Pool
+
+	// disposable marks a scratch datastore Mendel may change and reset, as
+	// opposed to the user's live one.
+	disposable bool
+}
 
 // New returns a Store over the given pool.
 func New(pool *pgxpool.Pool) *Store { return &Store{Pool: pool} }
+
+// NewScratch is a datastore that exists to be experimented on and thrown away.
+//
+// Worth being a separate constructor rather than a flag on New: the difference
+// decides whether a migration may be applied for real, and a caller that has to
+// remember to set a boolean will eventually forget on the connection where it
+// matters.
+func NewScratch(pool *pgxpool.Pool) *Store { return &Store{Pool: pool, disposable: true} }
 
 func (s *Store) Kind() string { return "postgres" }
 
@@ -34,7 +48,7 @@ func (s *Store) Kind() string { return "postgres" }
 // immediately, so an adapter for it would answer false here and experiments
 // with migrations would be refused rather than approximated.
 func (s *Store) Capabilities() experiment.Capabilities {
-	return experiment.Capabilities{SpeculativeApply: true, StructuralDiff: true}
+	return experiment.Capabilities{SpeculativeApply: true, StructuralDiff: true, Disposable: s.disposable}
 }
 
 // Statements that are never safe against a shared production database.
@@ -91,10 +105,21 @@ var concurrentIndex = regexp.MustCompile(`(?is)(CREATE\s+(?:UNIQUE\s+)?INDEX\s+)
 // addition and behaviourally a change to how mainline deletes rows. The
 // catalogue shows it.
 //
-// The change runs against the real schema inside a transaction that is always
-// rolled back, so the answer is about the schema as it actually is, with no
-// scratch copy to drift from it and nothing left behind.
+// On a scratch datastore the change is applied for real and left there. That
+// is the better answer wherever one is available: a transaction that must be
+// rolled back cannot contain CREATE INDEX CONCURRENTLY, so the statement written
+// precisely to avoid locking a live table has to be rewritten into the locking
+// form to be verified at all -- and then what was verified is not what will run.
+// On a copy, it runs as written.
+//
+// Against a live datastore it runs inside a transaction that is always rolled
+// back. Correct, and not free: the locks are real for as long as it takes, which
+// is why a project is asked for somewhere else to do this.
 func (s *Store) VerifySpeculatively(ctx context.Context, change string) (experiment.Delta, error) {
+	if s.disposable {
+		return s.verifyByApplying(ctx, change)
+	}
+
 	var delta experiment.Delta
 
 	err := pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
@@ -121,6 +146,36 @@ func (s *Store) VerifySpeculatively(ctx context.Context, change string) (experim
 		return experiment.Delta{}, err
 	}
 	return delta, nil
+}
+
+// verifyByApplying runs the change where it does not matter and reads what it
+// did, with no transaction and nothing rewritten.
+//
+// The caller is responsible for resetting the datastore afterwards. That is the
+// bargain a disposable datastore makes, and it buys the two things the
+// transactional path cannot give: statements verified exactly as written, and no
+// requirement that the engine have transactional DDL at all.
+func (s *Store) verifyByApplying(ctx context.Context, change string) (experiment.Delta, error) {
+	conn, err := s.Pool.Acquire(ctx)
+	if err != nil {
+		return experiment.Delta{}, err
+	}
+	defer conn.Release()
+
+	before, err := readCatalogue(ctx, conn)
+	if err != nil {
+		return experiment.Delta{}, fmt.Errorf("read catalogue before: %w", err)
+	}
+	for _, stmt := range s.Split(change) {
+		if _, err := conn.Exec(ctx, stmt); err != nil {
+			return experiment.Delta{}, fmt.Errorf("migration does not apply: %q: %w", firstLine(stmt), err)
+		}
+	}
+	after, err := readCatalogue(ctx, conn)
+	if err != nil {
+		return experiment.Delta{}, fmt.Errorf("read catalogue after: %w", err)
+	}
+	return diffCatalogues(before, after), nil
 }
 
 // errRollBack unwinds the speculative transaction. BeginFunc commits on a nil
@@ -291,7 +346,13 @@ type catalogue struct {
 	constraints map[string]string
 }
 
-func readCatalogue(ctx context.Context, tx pgx.Tx) (catalogue, error) {
+// querier is whatever can run a query: the speculative path has a transaction,
+// the disposable path has a plain connection and deliberately no transaction.
+type querier interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}
+
+func readCatalogue(ctx context.Context, tx querier) (catalogue, error) {
 	c := catalogue{
 		columns:     map[string]string{},
 		indexes:     map[string]string{},

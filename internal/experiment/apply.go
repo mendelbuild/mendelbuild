@@ -72,9 +72,26 @@ func (l PGLocker) Acquire(ctx context.Context, key string) (func(), error) {
 // Applier runs experiment migrations against the datastore a user's
 // application shares with mainline.
 type Applier struct {
-	// Store is the user's datastore, whatever it is. Mendel's own choice of
+	// Store is the user's live datastore, whatever it is. Mendel's own choice of
 	// Postgres says nothing about it.
+	//
+	// Read during admission and written only by Apply. Nothing speculative ever
+	// touches it.
 	Store Datastore
+
+	// Verify is a non-production datastore Mendel may change and reset. The
+	// migration is run here to find out what it does.
+	//
+	// Separate from Store because learning what a change does means running it,
+	// and running it against production is not free even when it is rolled
+	// back: ADD COLUMN takes an exclusive lock held until the rollback, and a
+	// CREATE INDEX CONCURRENTLY -- written precisely to avoid locking
+	// production -- cannot run inside a transaction at all, so it would have to
+	// be verified as the locking build it was written to avoid.
+	//
+	// Defaults to Store when unset, which preserves the old single-datastore
+	// behaviour for a caller that has nowhere else to look.
+	Verify Datastore
 
 	// Lock serialises Mendel's own migrations against each other.
 	Lock Locker
@@ -93,24 +110,29 @@ type Applier struct {
 //  2. The adapter's deny-list, before anything is executed, so a
 //     categorically destructive change never reaches step 3 — which would
 //     briefly lock live tables to learn what the deny-list already says.
-//  3. Speculative application: run the change, read what it did, undo it.
-//     This is the affirmative judgment. Patterns say what a change looks
+//  3. Application to the verification datastore: run the change, read what it
+//     did. This is the affirmative judgment. Patterns say what a change looks
 //     like; only this says what it does.
 //  4. The namespace and identity rules, which are about whether the
 //     experiment can be withdrawn afterwards.
+//  5. That the two datastores agree about the collections being touched. A
+//     verification is only evidence about production while the shape it ran
+//     against matches production's -- which is the same drift check Apply
+//     makes across time, made here across databases.
 func (a *Applier) Admit(ctx context.Context, m Migration) (*Admission, error) {
-	if err := RequireForExperiments(a.Store); err != nil {
+	verify := a.verifyStore()
+	if err := RequireForExperiments(verify, a.Store); err != nil {
 		return nil, err
 	}
 
-	if reasons := a.Store.Forbidden(m.Up); len(reasons) > 0 {
+	if reasons := verify.Forbidden(m.Up); len(reasons) > 0 {
 		return nil, fmt.Errorf("migration is not additive:\n  %s", strings.Join(reasons, "\n  "))
 	}
 	if strings.TrimSpace(m.Down) == "" {
 		return nil, fmt.Errorf("migration has no down: an experiment that cannot be withdrawn cannot be run")
 	}
 
-	delta, err := a.Store.VerifySpeculatively(ctx, m.Up)
+	delta, err := verify.VerifySpeculatively(ctx, m.Up)
 	if err != nil {
 		return nil, err
 	}
@@ -131,12 +153,34 @@ func (a *Applier) Admit(ctx context.Context, m Migration) (*Admission, error) {
 
 	shapes := make(map[string]TableSchema)
 	for _, c := range TouchedCollections(delta.Added) {
+		// Read from the live datastore: these are what Apply re-reads and
+		// refuses on if they have moved, so they have to describe the place the
+		// migration will actually run.
 		shape, err := a.Store.Shape(ctx, c)
 		if err != nil {
 			return nil, fmt.Errorf("read shape of %s: %w", c, err)
 		}
 		if len(shape) == 0 {
 			return nil, fmt.Errorf("%s does not exist, so the migration cannot add to it", c)
+		}
+
+		// And the verification only means something about production while the
+		// two agree. A drifted copy gives a confident answer about the wrong
+		// schema, which is worse than no answer -- so name the difference and
+		// decline rather than trusting the copy.
+		if verify != a.Store {
+			mirror, err := verify.Shape(ctx, c)
+			if err != nil {
+				return nil, fmt.Errorf("read shape of %s on the verification datastore: %w", c, err)
+			}
+			// The mirror was read after the migration ran on it, so the objects
+			// this change adds are expected to be present there and absent
+			// here. Everything else must match.
+			if diff := describeShapeDiff(shape, withoutAdded(mirror, c, delta.Added)); diff != "" {
+				return nil, fmt.Errorf(
+					"the verification datastore does not match production for %s, so what it "+
+						"proved does not apply: %s", c, diff)
+			}
 		}
 
 		// Without an identity there is no way to say which record an archived
@@ -154,6 +198,35 @@ func (a *Applier) Admit(ctx context.Context, m Migration) (*Admission, error) {
 	}
 
 	return &Admission{Migration: m, Delta: delta, Shapes: shapes}, nil
+}
+
+// verifyStore is where speculative work happens.
+//
+// Falls back to the live datastore so a caller with nowhere else to look still
+// works, exactly as it did before there were two. That path takes production
+// locks, and RequireForExperiments will refuse it outright for any datastore
+// without transactional DDL.
+func (a *Applier) verifyStore() Datastore {
+	if a.Verify != nil {
+		return a.Verify
+	}
+	return a.Store
+}
+
+// withoutAdded removes the objects this migration created from a shape read
+// after it ran, so the remainder can be compared against a datastore where it
+// has not run yet.
+func withoutAdded(shape TableSchema, collection string, added []Object) TableSchema {
+	out := make(TableSchema, len(shape))
+	for k, v := range shape {
+		out[k] = v
+	}
+	for _, o := range added {
+		if o.Collection == collection && o.Name != "" {
+			delete(out, o.Name)
+		}
+	}
+	return out
 }
 
 // Apply runs the up migration, under the lock, after confirming that nothing

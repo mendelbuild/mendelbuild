@@ -187,7 +187,25 @@ assignment unit is a property of the *application* — what one participant is,
 and where that identity can be read at the edge — and is the same for every
 Variation. The migration is a property of *this* Variation.
 
-Validation here is **structural only**. Whether a migration is genuinely
+A live experiment also needs a **non-production datastore Mendel may reset**.
+Additivity is settled by running the migration and diffing the catalogue, and
+running it against production is not free even when rolled back: `ADD COLUMN`
+holds an exclusive lock until the rollback, and `CREATE INDEX CONCURRENTLY` --
+written precisely to avoid locking a live table -- cannot run inside a
+transaction at all, so it would have to be verified as the locking build it was
+written to avoid. So the judgment is made on a copy and *checked against*
+production: `Applier.Verify` runs the migration, `Applier.Store` is only read,
+and the shapes of the touched collections must agree or the migration is
+declined naming the difference.
+
+This also removes transactional DDL as a hard requirement. A datastore that
+commits DDL immediately cannot be probed in place, because the probe would be
+the change; on a copy that is about to be discarded, it can. `pgstore.NewScratch`
+marks such a datastore, and `RequireForExperiments` takes both stores so it can
+refuse the two ways this goes wrong -- verifying in place without the ability to
+undo, and marking the live datastore disposable.
+
+Validation in `experiment.json` is **structural only**. Whether a migration is genuinely
 additive is settled by applying it to the user's datastore and diffing, not by
 reading the text, and the lints that read text are dialect-specific — running a
 Postgres lint at declaration time would assume the user's database is Postgres.

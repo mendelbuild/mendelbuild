@@ -147,6 +147,18 @@ type Capabilities struct {
 	// StructuralDiff is whether the adapter can describe a change's effect on
 	// structure at all. A schemaless datastore may not be able to.
 	StructuralDiff bool
+
+	// Disposable is whether this datastore exists to be experimented on and
+	// reset. Set by the constructor rather than derived from the engine: it
+	// describes the role the connection is being used in, not what the software
+	// can do.
+	//
+	// It is what lets a datastore without transactional DDL be verified against
+	// at all. MySQL commits DDL immediately, so applying a change to learn what
+	// it does is indistinguishable from making the change -- which is
+	// unacceptable on the live datastore and completely fine on one that is
+	// about to be thrown away.
+	Disposable bool
 }
 
 // ErrUnsupportedDatastore is returned when Mendel has no adapter for what the
@@ -177,18 +189,35 @@ type DumpQuery struct {
 // This is where "Mendel does not know a safe way to do this against your
 // datastore" gets said out loud, which is better than doing something
 // Postgres-shaped and finding out in production.
-func RequireForExperiments(d Datastore) error {
-	if d == nil {
+func RequireForExperiments(verify, live Datastore) error {
+	if verify == nil || live == nil {
 		return ErrUnsupportedDatastore
 	}
-	c := d.Capabilities()
-	if !c.SpeculativeApply {
-		return fmt.Errorf("%w: %s cannot apply a change and undo it without a trace, so Mendel cannot establish that a migration only adds before running it against live traffic",
-			ErrUnsupportedDatastore, d.Kind())
-	}
-	if !c.StructuralDiff {
+
+	vc := verify.Capabilities()
+	if !vc.StructuralDiff {
 		return fmt.Errorf("%w: %s cannot describe what a change does to its structure, which is what admitting an experiment depends on",
-			ErrUnsupportedDatastore, d.Kind())
+			ErrUnsupportedDatastore, verify.Kind())
+	}
+
+	// Learning what a change does means running it. That is only acceptable
+	// where it can be undone without a trace, or where the datastore exists to
+	// be thrown away -- and the second is why a project is asked for a
+	// non-production datastore at all. Without either, there is no empirical
+	// answer to "is this purely additive", and the textual checks alone are not
+	// enough to risk production data on.
+	if !vc.SpeculativeApply && !vc.Disposable {
+		return fmt.Errorf("%w: %s cannot apply a change and undo it without a trace, so it can only be verified against if it is a non-production datastore Mendel may reset",
+			ErrUnsupportedDatastore, verify.Kind())
+	}
+
+	// The live datastore is only ever read during admission, so it needs no
+	// capability beyond being readable. It must not be the disposable one: a
+	// verification that ran against production is the thing this arrangement
+	// exists to prevent.
+	if live.Capabilities().Disposable {
+		return fmt.Errorf("%w: the live datastore is marked disposable, so the migration would be verified and applied against the same throwaway copy and never reach production",
+			ErrUnsupportedDatastore)
 	}
 	return nil
 }
