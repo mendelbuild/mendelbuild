@@ -450,11 +450,19 @@ cookie and an env var with no Mendel import anywhere in it.
   `RegularExpression` match exactly as the Arm cookie does, and this path stands
   or falls with O23 on the same terms as the `device` path.
 
+  Gateway API v1 has no cookie matcher at all — an `HTTPRouteMatch` offers
+  `path`, `headers`, `queryParams` and `method`, and the header match types are
+  `Exact` and `RegularExpression` — which is why a cookie is reached through the
+  `Cookie` header in the first place, and why `Exact` could only isolate a bucket
+  in an application whose visitors hold exactly one cookie.
+
   It could only have been otherwise by carrying the bucket in a header of its
-  own, which a browser will not do unasked — the property that made a cookie the
-  obvious carrier in the first place. A client Mendel writes could send one
-  (D31), and that is worth remembering if O23 comes back badly, but it is not
-  available for ordinary web traffic and so is not the design.
+  own, and that is unavailable where it matters most: **a browser will not send
+  a custom header on a top-level navigation**, so a page load — the launch
+  surface — cannot carry one however the application is written. An SPA's
+  `fetch` can, and a native client Mendel writes can (D31), which is worth
+  remembering if O23 comes back badly. It is not a general answer, and cookies
+  are unavoidable for page loads rather than merely convenient.
 - **D28 gets simpler.** That decision propagates the key and recomputes the Arm
   at each hop, to avoid a lost context producing a *wrong* Arm. A bucket has the
   same safety property with nothing to recompute: it is stable, it is
@@ -492,8 +500,29 @@ routes on, as D29 requires for an identity header, it is reading a credential in
 flight, which needs TLS, which needs a certificate, which needs a domain nobody
 issues for a bare address. Where the routed value is a **bucket**, there is
 nothing to validate: spoofing it selects a cohort and nothing else, which is the
-same line D31 already draws for client-supplied tokens. So the domain
-requirement attaches to edge-validated identity, and to no other mechanism here.
+same line D31 already draws for client-supplied tokens. So *this* requirement
+attaches to edge-validated identity, and to no other mechanism here.
+
+**A hostname is still required, for an unrelated reason, and the two were being
+conflated.** §2.1's Gateway is one per namespace — `gatewayName = "mendel"` —
+and the hostname is how one deployment's traffic is told from another's on it.
+`k8sManifestFor` returns after the Deployment and Service when there is no
+hostname, emitting no `HTTPRoute` at all, and `ExperimentDeployment.Validate`
+refuses outright: *"an experiment needs a hostname: the routes are matched on
+it."* An experiment without one has nothing to attach Arm matching to,
+whatever it would have matched on.
+
+That is a property of Mendel's deployment model rather than of assignment, and
+lifting it means revisiting the shared Gateway — one address and one certificate
+serving every deployment, which is what a single wildcard record and a single
+reserved address require. Not a change this amendment intends.
+
+So there are two requirements where this document previously described one. The
+cookie does not need a domain and the TLS requirement attaches only to
+edge-validated identity, both of which stand. And a hostname is needed
+regardless, because the Gateway is shared. Keeping them apart matters: the first
+is a constraint on what a mechanism may route on, the second is a constraint on
+Mendel's own topology, and only the second is what a user has to go and satisfy.
 
 Nor is a spoofable bucket a new exposure. The `mendel_arm` cookie D23 sets is
 equally editable by whoever holds it, so a visitor determined to pick their Arm

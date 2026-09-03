@@ -387,8 +387,8 @@ conditions down the side, functional areas across.
 | Every `secret` requirement has a value | declared | user | | ● | ● | | ● | ● | |
 | Every `acknowledgement` is confirmed | declared | user | | ● | ● | | ● | ● | |
 | The deployment's URL is registrable | derived | unavailable | | ● | ● | | | | |
-| A base domain is set | asked | user | | | | ● | | | |
-| The certificate is issued | observed | elsewhere | | | | ● | | | |
+| A base domain is set | asked | user | | | | ● | ● | ● | |
+| The certificate is issued | observed | elsewhere | | | | ● | ● | ● | |
 | The platform can route by Assignment Unit | declared | unavailable | | | | | ● | ● | |
 | A Gateway API controller is installed | probed | **either** | | | | | ● | ● | |
 | A `GatewayClass` is `Accepted` | probed | mendel | | | | | ● | ● | |
@@ -400,7 +400,7 @@ conditions down the side, functional areas across.
 | An adapter exists for the datastore | probed | unavailable | | | | | | ● | ● |
 | A privileged datastore credential is available | asked | user | | | | | | | ● |
 
-● required. The experiment rows carried two `○` cells until O21 resolved them away.
+● required
 
 Three things this table says that the prose could not.
 
@@ -416,17 +416,26 @@ appear — which is §13's own conclusion (Tier 1 "falls out of Tier 2 rather th
 preceding it") arrived at independently. Enforce shares one cell with them and
 is otherwise disjoint, which is §3.5's answer.
 
-**The two blank cells where a domain would have gone are a finding.** Nothing
-in §13 or §16 said a live experiment requires a domain the user controls, and
-drawing the table made the question unavoidable — assignment worked by a cookie,
-and a cookie is scoped to a host. Pulling on it exposed something about §16
-rather than about this document, and the answer came back *no*: the requirement
-was never cookies but whether the edge has to **validate** what it routes on,
-and §16 §3.6 now routes on a value that needs no validation. O21 records the
-argument and §16 D45–D49 record the amendment.
+**The two domain cells on the experiment rows are a finding.** Nothing in §13
+or §16 said a live experiment requires a domain the user controls, and drawing
+the table made the question unavoidable. The cells are marked required, but not
+for the reason that first suggested them, and the difference is the whole value
+of having asked.
 
-This is the second thing the table paid for. Neither finding was available from
-the prose, and both were unavoidable once the cells had to be filled in.
+The reason offered first was cookies: assignment worked by a cookie, a cookie is
+scoped to a host. That turned out to be wrong twice over — a host-only cookie on
+a bare address works, and §16 §3.6 now routes on a value needing no validation
+at all. What survives is unrelated to assignment: Mendel runs **one Gateway per
+namespace**, and the hostname is how one deployment's traffic is told from
+another's. Without a hostname there is no `HTTPRoute` emitted, so there is
+nothing to attach Arm matching to, whatever it would have matched on.
+
+O21 records how the question travelled; §16 D45–D49 record the amendment it
+produced along the way.
+
+This is the second thing the table paid for, and the more instructive of the
+two. The cell was right and every reason given for it was wrong, which no amount
+of prose was going to surface — it took having to defend one cell.
 
 ### 4.3 A functional area may be a condition of another
 
@@ -653,9 +662,11 @@ arguably one condition. Forcing it into the catalogue may lose something the
 ribbon does well. Listed, not committed.
 
 **O21 — Does a live experiment require a domain the user controls? — resolved:
-no.** The argument is kept in full because it is what produced §16 D45–D49, and
-because the route from the question to the answer is more useful than the
-answer. The first draft of this question assumed it followed from cookies: assignment works by a cookie the assigner sets (§16 D23),
+yes, and every reason first given for it was wrong.** The argument is kept in
+full because the route is more useful than the answer: it produced §16 D45–D49
+along the way, and it is a worked example of a cell that survives having all of
+its stated justifications removed. The first draft assumed it followed from
+cookies: assignment works by a cookie the assigner sets (§16 D23),
 a cookie is scoped to a host, and a bare LoadBalancer IP over http is a poor
 host to scope anything to.
 
@@ -758,14 +769,29 @@ narrowed to `device` rather than withdrawn, because minting identity at the edge
 is still the only mechanism that works for a visitor nobody has identified —
 which is Tier 1, the launch surface. D45–D49 record it.
 
-One correction fell out of writing that up, and it is why the answer here is a
-flat no rather than "only for some mechanisms". The `device` cookie was assumed
-to need a domain too; it does not. A host-only cookie on a bare address works,
-and the `mendel_arm` cookie is no more spoofable than a bucket. So the domain
-requirement attaches to **edge-validated identity** and to nothing else in §16 —
-and since every mechanism now computes the Arm somewhere that already has the
-identity, no live experiment requires a domain at all. The base-domain and
-certificate cells in §4.2 are empty for both experiment rows.
+**And then the answer came back yes anyway, on a reason nobody had offered.**
+Both cookie arguments do fall: a host-only cookie on a bare address works, the
+`mendel_arm` cookie is no more spoofable than a bucket, and the TLS requirement
+attaches to edge-validated identity, which no adopted mechanism uses. What none
+of that reached is Mendel's own topology. There is **one Gateway per namespace**
+(`gatewayName = "mendel"`), and the hostname is how one deployment's traffic is
+told from another's on it. `k8sManifestFor` emits no `HTTPRoute` at all without
+a hostname, and `ExperimentDeployment.Validate` says so directly: *"an
+experiment needs a hostname: the routes are matched on it."*
+
+So the cells are required, the assignment argument was a red herring in both
+directions, and lifting the requirement would mean revisiting the shared Gateway
+— one address and one certificate serving every deployment, which is what a
+single wildcard record and a single reserved address require.
+
+Two lessons worth keeping, since this is the most instructive thing in the
+document. **A condition can be right while every reason given for it is wrong**,
+which is an argument for D39's insistence that the sentence naming what is
+missing be written per condition and kept true, rather than inferred from
+whichever rationale was fashionable when the cell was filled in. And a matrix
+that had merely recorded `●` here would have been correct and useless: it was
+being made to *defend* the cell that found the real reason, and that is worth
+remembering when §9 step 5 decides how much of the reasoning the page shows.
 
 ---
 
