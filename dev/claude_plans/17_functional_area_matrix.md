@@ -321,8 +321,9 @@ The first draft proposed a `degrades` severity on the cell for these, and left
 the alternative — that they are separate functional areas — as an open question.
 **Drawing the matrix answered it, and there is no severity field** (D38).
 
-§4.2 shows it: *Enforce Arm containment* shares almost no conditions with *Run a
-live experiment with schema changes*. It needs the datastore adapter and the
+§4.2 shows it — or so this document argued, and see O17, which reopened on
+evidence that landed after it was written. *Enforce Arm containment* shares
+almost no conditions with *Run a live experiment with schema changes*. It needs the datastore adapter and the
 privileged credential and nothing else, while the experiment row needs the
 migration column set and the whole routing column set and not the privileged
 credential. Two rows that overlap in one cell out of twenty are not one row with
@@ -604,10 +605,35 @@ for three DNS records. A project with twenty demos and a per-deployment
 acknowledgement produces "3 of 20 confirmed", and the remaining seventeen have
 no obvious presentation. The domain ladder's precedent does not reach this far.
 
-**O17 — resolved.** Whether "absence that narrows" is a cell severity or a
-separate functional area. Drawing §4.2 settled it: separate rows, no severity
-field. Recorded here because the question was open in the previous draft and
-someone reading the two side by side should see why it closed.
+**O17 — reopened.** Whether "absence that narrows" is a cell severity or a
+separate functional area. Drawing §4.2 appeared to settle it — separate rows, no
+severity field — and D38 was written on that basis.
+
+It reopened before this document was merged, on evidence from the routing work
+rather than from any argument here. `DomainStep` grew an `Advisory` flag, for a
+step "worth doing and does not have to be done", with the reasoning that *"not
+every property is required-true: some are conditional on what is actually being
+attempted, and some are real concerns that are a poor reason to refuse to
+proceed"* — and that without the flag the two are indistinguishable from a state,
+so callers end up matching on step names to tell them apart.
+
+That is the severity field D38 declined, arrived at independently, in the very
+prototype §9 step 2 requires this design to reproduce byte for byte. Which means
+one of three things, and they are worth separating rather than picking quickly:
+
+- **D38 is wrong**, and a required/advisory distinction belongs on the cell.
+- **The ladder's `Advisory` is a different thing** — a *conditional* condition,
+  one that does not apply given what is being attempted, which is closer to the
+  "not applicable" half of D33's cell than to a severity at all.
+- **Both are right and the word is doing double duty**, in which case the
+  general model needs the distinction the flag's own comment gestures at: a
+  condition that does not apply here, versus one that applies and is not fatal.
+
+The second reading is the one to test first, because it would leave D33 and D38
+intact and merely mean `Advisory` is named for the wrong half of what it does.
+Whichever it is, it has to be settled before §9 step 2, not after: that step
+requires reproducing the ladder exactly, and it cannot reproduce a flag the
+model has no room for.
 
 **O18 — How stale may an observation be before it is `unknown` again?** The
 existing domain cache has an answer for DNS. A cluster access probe, a channel
@@ -716,12 +742,15 @@ Both objections point the same way: **the application-emitted bucket is the
 strong version of the idea**, and direct field mapping is the convenient version
 that needs two guards direct mapping cannot easily provide.
 
-There is one conformance cost to weigh. Gateway API's exact header match is Core
-support; regular-expression matching is implementation-specific. Direct
-prefix-matching therefore needs a regex and steps down a conformance level,
-which is the axis §16 §6.2 used to reject the Lua filter, so it should not be
-adopted without noticing. Matching an enumerated bucket value is exact, and
-stays Core — a hundred match rules is unlovely and Mendel generates them.
+A conformance argument was offered here and does not survive. It ran: exact
+header matching is Core support, regular-expression matching is
+implementation-specific, so an enumerated bucket stays Core where a prefix match
+does not. It is wrong, and §16 O23 is why — a bucket travels in a cookie, so the
+edge matches the `Cookie` header, which carries every cookie the visitor holds,
+and an exact match on a whole header value cannot find one entry in a list. Both
+mechanisms need the same regular-expression match, and both stand or fall with
+O23. The case for the application-emitted bucket rests on the salt and the
+uniformity, which are enough.
 
 **Where this landed.** §16 §3.6 and §3.7 take the application-emitted bucket for
 `user`, `session` and `tenant`, and weighted `backendRefs` for `request`; D23 is

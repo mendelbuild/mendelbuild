@@ -442,10 +442,19 @@ cookie and an env var with no Mendel import anywhere in it.
 - **Uniformity by construction.** A hash is uniform whatever it is fed —
   sequential integer ids, tenant slugs, email addresses. See below for why that
   matters.
-- **Core conformance.** Matching an enumerated bucket value is an `Exact` header
-  match, which is Core support in Gateway API. Nothing here steps down a
-  conformance level, which is the objection §6.2 raised against Lua and which
-  applies with less force but the same direction to anything implementation-specific.
+- ~~**Core conformance.**~~ **Withdrawn.** This was claimed on the grounds that
+  matching an enumerated bucket value is an `Exact` header match. It is not, and
+  O23 is why: the bucket arrives inside the `Cookie` header alongside every
+  other cookie the visitor holds, and Gateway API's `Exact` match compares whole
+  header values rather than finding one entry in a list. So the bucket needs a
+  `RegularExpression` match exactly as the Arm cookie does, and this path stands
+  or falls with O23 on the same terms as the `device` path.
+
+  It could only have been otherwise by carrying the bucket in a header of its
+  own, which a browser will not do unasked — the property that made a cookie the
+  obvious carrier in the first place. A client Mendel writes could send one
+  (D31), and that is worth remembering if O23 comes back badly, but it is not
+  available for ordinary web traffic and so is not the design.
 - **D28 gets simpler.** That decision propagates the key and recomputes the Arm
   at each hop, to avoid a lost context producing a *wrong* Arm. A bucket has the
   same safety property with nothing to recompute: it is stable, it is
@@ -694,7 +703,7 @@ than reopening the range this plan started with.
 |---|---|---|---|
 | D45 | Compute the Arm where the identity already is; the edge only matches. Three mechanisms behind one seam, chosen by the declared Assignment Unit | One mechanism for every unit — the edge-minted cookie | It makes the effective unit the browser for *every* experiment, which §13 §14 accepts only for Tier 1 and calls out as a cost |
 | D46 | `assignment_unit: request` routes by weighted `backendRefs` | An assigner for it too | Splitting per request is not a hazard of this unit, it is its definition; and §13 §5.1 already bars the durable writes stickiness was protecting |
-| D47 | For `user`, `session` and `tenant`, the application mints a bucket from the key and a per-experiment salt Mendel injects; the edge matches it exactly | Prefix-match an existing identity field with a regular expression | No salt to turn, so every experiment draws the same cohort; assumes a uniformity a sequential id does not have; and regex matching is implementation-specific where exact matching is Core |
+| D47 | For `user`, `session` and `tenant`, the application mints a bucket from the key and a per-experiment salt Mendel injects; the edge matches it | Prefix-match an existing identity field | No salt to turn, so every experiment draws the same cohort, and it assumes a uniformity a sequential id does not have. A conformance argument was also offered here and is withdrawn — both carry a cookie and both need the regex match O23 is about |
 | D48 | One bucket per running experiment, in its own cookie; the salt is fixed for that experiment's life | One project-wide bucket reused across experiments | A single scalar cannot answer for two salts, and rotating mid-flight re-buckets everyone at once |
 | D49 | On the bucket path an Arm grows from unallocated buckets or is withdrawn to mainline; a bucket never moves between Arms | Reassign buckets freely when the allocation changes | Moving one switches everybody in it mid-experiment, and hands a participant with Tier 2 writes under Arm a to Arm b |
 
@@ -775,7 +784,12 @@ It survives in this document in exactly three places, all of them earned: twice
 in "service mesh", which is the name of the thing, and once inside a quotation
 from §13 that is reproduced verbatim.
 
-**O14 — Does GKE honour a RegularExpression header match at runtime?** The Arm
+**O23 — Does GKE honour a RegularExpression header match at runtime?**
+Renumbered from O14, which
+[17_functional_area_matrix.md](17_functional_area_matrix.md) had already taken;
+the two documents were written in parallel and the numbering is global.
+
+The Arm
 cookie is matched with a regex on the `Cookie` header, because that header
 carries every cookie a visitor has and Gateway API's Exact match cannot find one
 value inside a list. `RegularExpression` is an *Extended* feature in the spec,
@@ -797,6 +811,12 @@ Cheap to settle, and worth settling before more is built on it: deploy an
 experiment on a throwaway name under the demo wildcard, which already resolves
 and carries no real traffic, and observe whether a request with a given Arm
 cookie reaches that Arm.
+
+It applies to **every** cookie-carried path, not only the `device` one. §3.6's
+bucket travels in a cookie for the same reason the Arm does — a browser sends
+cookies unasked and sends nothing else — so it is found inside the same
+`Cookie` header by the same kind of match. One experiment settles both. Only
+§3.7 is unaffected, since weighted `backendRefs` match nothing at all.
 
 **O12 — One HTTPRoute per experiment, or one per project?** Two experiments on
 different paths of one application both want to attach to the same parent
