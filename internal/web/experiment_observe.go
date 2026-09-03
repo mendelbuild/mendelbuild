@@ -51,6 +51,12 @@ func (s *Server) observeExperimentReadiness(ctx context.Context, projectID uuid.
 		}
 	}
 
+	// Left unknown deliberately: this page is about the project, and whether an
+	// experiment changes the schema is a property of the experiment. Reporting
+	// it as false here would tell someone they need nothing, and as true would
+	// demand a database of a project that may never need one.
+	obs.SchemaChanges = domain.FactUnknown
+
 	obs.GatewayAPI, obs.EnableGatewayCommand = s.observeGatewayAPI(ctx, projectID)
 	obs.VerifyDatastore, obs.VerifyReachable = s.observeVerifyDatastore(ctx, projectID)
 	return obs

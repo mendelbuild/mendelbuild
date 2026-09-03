@@ -519,6 +519,29 @@ It survives in this document in exactly three places, all of them earned: twice
 in "service mesh", which is the name of the thing, and once inside a quotation
 from §13 that is reproduced verbatim.
 
+**O14 — Does GKE honour a RegularExpression header match at runtime?** The Arm
+cookie is matched with a regex on the `Cookie` header, because that header
+carries every cookie a visitor has and Gateway API's Exact match cannot find one
+value inside a list. `RegularExpression` is an *Extended* feature in the spec,
+which implementations may support or not.
+
+A server-side dry run against a real GKE cluster (Gateway API v1.5.0 CRDs)
+accepts the HTTPRoute, and the GatewayClass advertises no `supportedFeatures`
+list, so acceptance is all that is established. That is exactly the shape of the
+two failures this area has already had: `ingressClassName: gce` named a class
+nothing provided, and `networking.gke.io/certmap` on an Ingress was ignored
+outright -- both accepted, both silent.
+
+It is load-bearing. If regex header matching is not honoured, cookie-based
+matching does not work, and the alternatives all give up something the design
+chose deliberately: a hostname per Arm changes the URL the visitor sees and the
+scope of their cookies, and an Envoy filter undoes the portability §6.2 claims.
+
+Cheap to settle, and worth settling before more is built on it: deploy an
+experiment on a throwaway name under the demo wildcard, which already resolves
+and carries no real traffic, and observe whether a request with a given Arm
+cookie reaches that Arm.
+
 **O12 — One HTTPRoute per experiment, or one per project?** Two experiments on
 different paths of one application both want to attach to the same parent
 Gateway and hostname. Gateway API merges routes across resources, but the

@@ -78,6 +78,14 @@ type DomainStep struct {
 	Name   string
 	State  DomainStepState
 	Detail string
+
+	// Advisory marks a step that is worth doing and does not have to be done.
+	// Not every property is required-true: some are conditional on what is
+	// actually being attempted, and some are real concerns that are a poor
+	// reason to refuse to proceed. Without this the two are indistinguishable
+	// from a state, and a caller ends up matching on step names to tell them
+	// apart.
+	Advisory bool
 }
 
 // DomainReadiness is the whole ladder, in the order it has to happen.

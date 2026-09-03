@@ -74,6 +74,16 @@ type ExperimentObservation struct {
 	// the comparison quietly meaningless.
 	ProdHTTPS Fact
 
+	// SchemaChanges is whether any Arm of the experiment in question declares a
+	// migration. Unknown on the settings page, where there is no experiment yet
+	// and the honest answer is "it depends what you run".
+	//
+	// An experiment that changes no schema needs none of the datastore
+	// machinery: it is a presentation-only comparison, and demanding a database
+	// of a project that has none would block the simplest experiment there is on
+	// the requirements of the hardest.
+	SchemaChanges Fact
+
 	// VerifyDatastore is whether a non-production datastore has been given.
 	// Additivity is settled by running the migration and diffing, and running it
 	// against production is not free even rolled back.
@@ -101,38 +111,65 @@ func ExperimentReadiness(obs ExperimentObservation) []ReadinessStep {
 			"arm matching to. Set a production subdomain on the Domain tab.",
 		"Mendel could not read this project's domain settings."))
 
-	steps = append(steps, factStep(obs.ProdHTTPS,
+	https := factStep(obs.ProdHTTPS,
 		"That name serves https",
 		"Traffic to production is encrypted, so the assignment cookie can be Secure.",
 		"Production answers over http only. An experiment can run, but its assignment cookie "+
 			"cannot be marked Secure, so it can be rewritten in transit and a participant could "+
 			"choose their own arm.",
-		"Mendel could not determine the certificate state."))
+		"Mendel could not determine the certificate state.")
+	https.Advisory = true
+	steps = append(steps, https)
 
-	steps = append(steps, factStep(obs.VerifyDatastore,
-		"A non-production datastore to verify against",
+	// An experiment that changes no schema is done here. Everything below is
+	// about proving a migration additive, and there is no migration.
+	if obs.SchemaChanges == FactFalse {
+		return append(steps, ReadinessStep{
+			Name:   datastoreStep,
+			State:  StepDone,
+			Detail: "Not needed: nothing in this experiment changes the schema.",
+		})
+	}
+
+	needed := obs.SchemaChanges == FactTrue
+
+	store := factStep(obs.VerifyDatastore,
+		datastoreStep,
 		"Migrations are proved additive here rather than against production.",
 		"No verification datastore. Whether a migration only adds is settled by running it and "+
 			"diffing, and doing that against production takes real locks on live tables.",
-		"Mendel could not read the stored connection."))
+		"Mendel could not read the stored connection.")
+	if !needed {
+		store.Advisory = true
+		if store.State == StepYourMove {
+			store.Detail = "Needed once a Variation changes the schema. Nothing has declared one yet."
+		}
+	}
+	steps = append(steps, store)
 
 	// Only worth asking once there is something to reach.
 	reach := ReadinessStep{
-		Name:  "That datastore is reachable",
-		State: StepBlocked,
+		Name:   "That datastore is reachable",
+		State:  StepBlocked,
 		Detail: "Checked once a connection has been given.",
 	}
+	reach.Advisory = !needed
 	if obs.VerifyDatastore == FactTrue {
 		reach = factStep(obs.VerifyReachable,
 			"That datastore is reachable",
 			"Mendel connected to it and can read its structure.",
 			"Mendel could not connect, so nothing can be verified against it.",
 			"Not checked yet.")
+		reach.Advisory = !needed
 	}
 	steps = append(steps, reach)
 
 	return steps
 }
+
+// datastoreStep is named once, because three places have to agree about which
+// step is the conditional one.
+const datastoreStep = "A non-production datastore to verify against"
 
 // factStep renders one property, keeping "could not tell" distinct from "no".
 func factStep(f Fact, name, whenTrue, whenFalse, whenUnknown string) ReadinessStep {
@@ -155,13 +192,14 @@ func detailOr(value, fallback string) string {
 
 // ExperimentHeadline states where things stand and who is holding it up.
 //
-// HTTPS is deliberately not allowed to hold it up. It is a real concern about
-// the integrity of the assignment and a poor reason to refuse to run: reporting
-// it as a warning says so, where blocking on it would overstate the case.
+// Advisory steps are counted as warnings rather than allowed to block. https is
+// always one -- a real concern about the integrity of the assignment and a poor
+// reason to refuse to run -- and the datastore is one until an experiment
+// actually declares a migration.
 func ExperimentHeadline(steps []ReadinessStep) (headline string, blocked bool) {
 	warnings := 0
 	for _, s := range steps {
-		if s.Name == "That name serves https" {
+		if s.Advisory {
 			if s.State == StepYourMove {
 				warnings++
 			}
@@ -185,8 +223,8 @@ func ExperimentHeadline(steps []ReadinessStep) (headline string, blocked bool) {
 func ExperimentBlockers(steps []ReadinessStep) []string {
 	var out []string
 	for _, s := range steps {
-		if s.Name == "That name serves https" {
-			continue // A warning, not a blocker.
+		if s.Advisory {
+			continue
 		}
 		if s.State == StepYourMove || s.State == StepBlocked {
 			out = append(out, fmt.Sprintf("%s: %s", s.Name, s.Detail))

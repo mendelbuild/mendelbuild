@@ -120,9 +120,10 @@
                     cookie cannot be Secure, so it can be rewritten in transit and a
                     visitor could choose their own arm.</dd>
                 <dt>A verification datastore</dt>
-                <dd>So proving a migration additive costs production nothing. It also
-                    lets Mendel support datastores that cannot undo a change, since a
-                    copy can simply be reset.</dd>
+                <dd>Only when a Variation changes the schema. Proving a migration
+                    additive means running it, and doing that against production takes
+                    real locks on live tables. An experiment that only changes what is
+                    shown needs none of this.</dd>
             </dl>
         </div>
     </div>

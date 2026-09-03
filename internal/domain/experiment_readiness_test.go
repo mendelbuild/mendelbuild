@@ -10,10 +10,13 @@ func ladderByName(steps []ReadinessStep) map[string]ReadinessStep {
 	return out
 }
 
+// allTrue is a project ready for the hardest experiment: one that changes the
+// schema, and so needs everything.
 func allTrue() ExperimentObservation {
 	return ExperimentObservation{
 		GatewayAPI: FactTrue, ProdHostname: FactTrue, ProdHost: "app.example.com",
-		ProdHTTPS: FactTrue, VerifyDatastore: FactTrue, VerifyReachable: FactTrue,
+		ProdHTTPS: FactTrue, SchemaChanges: FactTrue,
+		VerifyDatastore: FactTrue, VerifyReachable: FactTrue,
 	}
 }
 
@@ -112,5 +115,64 @@ func TestReachabilityIsNotAskedBeforeThereIsSomethingToReach(t *testing.T) {
 	steps := ladderByName(ExperimentReadiness(obs))
 	if got := steps["That datastore is reachable"]; got.State != StepBlocked {
 		t.Errorf("reachability should wait for a connection, got %q", got.State)
+	}
+}
+
+// An experiment that changes no schema needs none of the datastore machinery.
+//
+// Pong is one Node pod with no database. Demanding a verification datastore of
+// it would block the simplest experiment there is -- two presentations, one
+// cookie -- on the requirements of the hardest.
+func TestPresentationOnlyExperimentNeedsNoDatastore(t *testing.T) {
+	obs := allTrue()
+	obs.SchemaChanges = FactFalse
+	obs.VerifyDatastore = FactFalse
+	obs.VerifyReachable = FactFalse
+
+	steps := ExperimentReadiness(obs)
+	if _, blocked := ExperimentHeadline(steps); blocked {
+		t.Error("a presentation-only experiment was blocked on a database it does not use")
+	}
+	if blockers := ExperimentBlockers(steps); len(blockers) != 0 {
+		t.Errorf("no blockers expected, got %v", blockers)
+	}
+	// And it does not ask about reaching a datastore that is not part of this.
+	for _, s := range steps {
+		if s.Name == "That datastore is reachable" {
+			t.Error("a presentation-only experiment was asked whether it can reach a datastore")
+		}
+	}
+}
+
+// The settings page has no experiment in front of it, so it cannot know whether
+// one will change the schema. That is a thing to be told, not blocked on.
+func TestSettingsPageDoesNotBlockOnAnUndeclaredMigration(t *testing.T) {
+	obs := allTrue()
+	obs.SchemaChanges = FactUnknown
+	obs.VerifyDatastore = FactFalse
+	obs.VerifyReachable = FactFalse
+
+	steps := ExperimentReadiness(obs)
+	if _, blocked := ExperimentHeadline(steps); blocked {
+		t.Error("a project was blocked over a migration nobody has declared")
+	}
+	if blockers := ExperimentBlockers(steps); len(blockers) != 0 {
+		t.Errorf("an undeclared migration is not a blocker, got %v", blockers)
+	}
+}
+
+// But once an experiment does declare a migration, the datastore is required.
+func TestDeclaredMigrationRequiresTheDatastore(t *testing.T) {
+	obs := allTrue()
+	obs.SchemaChanges = FactTrue
+	obs.VerifyDatastore = FactFalse
+	obs.VerifyReachable = FactFalse
+
+	steps := ExperimentReadiness(obs)
+	if _, blocked := ExperimentHeadline(steps); !blocked {
+		t.Error("an experiment with a migration was allowed to run with nowhere to verify it")
+	}
+	if len(ExperimentBlockers(steps)) == 0 {
+		t.Error("the missing datastore should be listed as a blocker")
 	}
 }
