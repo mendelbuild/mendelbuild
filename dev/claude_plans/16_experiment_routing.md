@@ -105,6 +105,62 @@ That distinction has to exist in the data model, or a user with a working deploy
 channel will be told experiments are available and find out otherwise at the
 worst moment.
 
+The test for it is not the one this section assumed. §2.3 treats "is there a
+Gateway API controller" as the question, and on GKE the answer is always yes —
+the controller is a managed cluster feature rather than something anyone
+installs, which appeared to make §2's whole install path inapplicable there.
+O23 shows the question was wrong. GKE's managed controller exists and **cannot
+match a header by regular expression on the class Mendel deploys**, which is
+what cookie-carried Arm matching needs. So experiment-capable means *"has a
+controller that can match headers by regular expression"*, not *"has Gateway API
+enabled"* — and §2's install path is live again on the one platform it looked
+irrelevant to.
+
+### 2.5 What to do about a controller that cannot match
+
+Four options, none free, and this one is Ben's to pick rather than the
+document's — it changes what a user has to set up before an experiment is
+possible at all.
+
+**A. Install a conformant controller** — Envoy Gateway or Istio, both of which
+support regex header matching. This is §2 in full: the
+`SelfSubjectAccessReview` probe, the install when permitted, the administrator
+script when not, and validation of the result. It keeps every semantic the
+design chose — sticky assignment, a cookie carrier, one URL for every Arm — and
+it *restores* §6.2's portability argument rather than straining it: Mendel emits
+standard Gateway API and requires a conformant implementation of an Extended
+feature. GKE's single-cluster managed class simply is not one for this purpose.
+Recommended.
+
+**B. Move to a multi-cluster GatewayClass** (`gke-l7-global-external-managed-mc`),
+which does support regex. It needs a Fleet and a config cluster, which is real
+setup for someone running one cluster, and it buys GKE-specific machinery to
+work around a GKE-specific gap. More coupling than A for less.
+
+**C. A hostname per Arm.** Hostname matching is Core on every class, so this
+works today with no install. It is rejected on merit rather than on effort: the
+visitor sees a different URL per Arm, which is not the experiment anybody
+intended to run, and host-scoped cookies mean a session established on one Arm
+does not exist on another — so a visitor whose Arm is withdrawn (D26, O11) lands
+on mainline logged out. Getting there also needs a redirect, which is the
+assigner's 302 back again with a URL change on top.
+
+**D. Ship `request` assignment only, for now.** Weighted `backendRefs` work on
+the stock class today, so this is the zero-setup offering and it is honest. It
+is also very limited: §13 §5.1 bars per-participant durable writes under
+`request` and rules out any user-scoped metric, since one person meets both
+Arms — so conversion, the metric these experiments exist to move, is
+unavailable. Worth having as the thing that works while A is being set up; not
+worth mistaking for the product.
+
+The shape that follows from A is worth stating even before it is chosen: the
+controller install stops being a cluster-side nicety and becomes the gate on
+everything except D. That makes it exactly the condition
+[17_functional_area_matrix.md](17_functional_area_matrix.md) §6 nominates as the
+one most likely to break a premature abstraction — a property Mendel can
+sometimes satisfy itself and sometimes only emit a script for — and it is no
+longer hypothetical.
+
 ---
 
 ## 3. How a request reaches an Arm
@@ -124,11 +180,17 @@ Where the identity already is depends on what an Assignment Unit is, so there
 are three mechanisms behind the one seam §13 §6.3 established, chosen by the
 declared unit rather than configured:
 
-| Assignment Unit | Where the Arm is computed | What the edge matches |
-|---|---|---|
-| `request` | Nowhere; every request is independent | Nothing — weighted `backendRefs` (§3.7) |
-| `device` | A Mendel-built assigner at the edge | The `mendel_arm` cookie it set (below) |
-| `user`, `session`, `tenant` | The application, which knows who this is | A bucket the client carries (§3.6) |
+| Assignment Unit | Where the Arm is computed | What the edge matches | On today's GatewayClass |
+|---|---|---|---|
+| `request` | Nowhere; every request is independent | Nothing — weighted `backendRefs` (§3.7) | works |
+| `device` | A Mendel-built assigner at the edge | The `mendel_arm` cookie it set (below) | **blocked, O23** |
+| `user`, `session`, `tenant` | The application, which knows who this is | A bucket the client carries (§3.6) | **blocked, O23** |
+
+The last column is a late finding and does not change the design, only what can
+run before §2.5 is settled. Both blocked mechanisms carry their value in a
+cookie, and the GatewayClass Mendel currently deploys cannot match a cookie —
+O23 has the evidence and §2.5 the options. Everything below is written as though
+that were fixed, because the fix is a controller rather than a redesign.
 
 The rest of this section is the `device` path, which is the one §13 D20 names
 for Tier 1 and the only one that works for a visitor nobody has identified yet.
@@ -686,12 +748,19 @@ it "the control changed underneath the comparison" has nowhere to be recorded.
    the channel.
 4. **Assignment**, cheapest path first, since each is independently useful and
    the order is also increasing risk. Weighted `backendRefs` for `request`
-   (§3.7) need nothing but route generation. The bucket path (§3.6) needs the
+   (§3.7) need nothing but route generation, and are the only path that runs on
+   the stock GatewayClass — so they are now both the cheapest and the only thing
+   demonstrable before §2.5 is settled. The bucket path (§3.6) needs the
    middleware codegen emits, the salt injection, and the bucket-to-Arm match
-   rules — all testable as pure functions: given a key, a salt and an
-   allocation, which Arm. **The assigner** (§3, §3.5) comes last of the three:
-   it is a service to build, deploy and keep alive, and it serves only the
-   `device` path.
+   rules — all testable as pure functions, given a key, a salt and an
+   allocation, which Arm, and all worth building while the controller question
+   is open, since none of it depends on the answer. **The assigner** (§3, §3.5)
+   comes last of the three: it is a service to build, deploy and keep alive, and
+   it serves only the `device` path.
+
+   The controller work in item 3 moves ahead of all of this if §2.5 lands on
+   option A, because nothing cookie-carried can be demonstrated end to end
+   until it does.
 5. **Arm deployment and HTTPRoute generation** (§4), as pure functions first —
    the same shape as `k8sManifestFor`, so the resources can be tested without a
    cluster.
@@ -730,9 +799,9 @@ than reopening the range this plan started with.
 
 | # | Decision | Rejected alternative | Why |
 |---|---|---|---|
-| D45 | Compute the Arm where the identity already is; the edge only matches. Three mechanisms behind one seam, chosen by the declared Assignment Unit | One mechanism for every unit — the edge-minted cookie | It makes the effective unit the browser for *every* experiment, which §13 §14 accepts only for Tier 1 and calls out as a cost |
+| D45 | Compute the Arm where the identity already is; the edge only matches. **Blocked below D46 until §2.5 is settled: O23 shows the deployed GatewayClass cannot match a cookie.** Three mechanisms behind one seam, chosen by the declared Assignment Unit | One mechanism for every unit — the edge-minted cookie | It makes the effective unit the browser for *every* experiment, which §13 §14 accepts only for Tier 1 and calls out as a cost |
 | D46 | `assignment_unit: request` routes by weighted `backendRefs` | An assigner for it too | Splitting per request is not a hazard of this unit, it is its definition; and §13 §5.1 already bars the durable writes stickiness was protecting |
-| D47 | For `user`, `session` and `tenant`, the application mints a bucket from the key and a per-experiment salt Mendel injects; the edge matches it | Prefix-match an existing identity field | No salt to turn, so every experiment draws the same cohort, and it assumes a uniformity a sequential id does not have. A conformance argument was also offered here and is withdrawn — both carry a cookie and both need the regex match O23 is about |
+| D47 | For `user`, `session` and `tenant`, the application mints a bucket from the key and a per-experiment salt Mendel injects; the edge matches it | Prefix-match an existing identity field | **Blocked with D23 by O23.** No salt to turn, so every experiment draws the same cohort, and it assumes a uniformity a sequential id does not have. A conformance argument was also offered here and is withdrawn — both carry a cookie and both need the regex match O23 is about |
 | D48 | One bucket per running experiment, in its own cookie; the salt is fixed for that experiment's life | One project-wide bucket reused across experiments | A single scalar cannot answer for two salts, and rotating mid-flight re-buckets everyone at once |
 | D49 | On the bucket path an Arm grows from unallocated buckets or is withdrawn to mainline; a bucket never moves between Arms | Reassign buckets freely when the allocation changes | Moving one switches everybody in it mid-experiment, and hands a participant with Tier 2 writes under Arm a to Arm b |
 
@@ -813,39 +882,53 @@ It survives in this document in exactly three places, all of them earned: twice
 in "service mesh", which is the name of the thing, and once inside a quotation
 from §13 that is reproduced verbatim.
 
-**O23 — Does GKE honour a RegularExpression header match at runtime?**
-Renumbered from O14, which
+**O23 — Does GKE honour a RegularExpression header match at runtime? —
+resolved, and the answer is no.** Renumbered from O14, which
 [17_functional_area_matrix.md](17_functional_area_matrix.md) had already taken;
 the two documents were written in parallel and the numbering is global.
 
-The Arm
-cookie is matched with a regex on the `Cookie` header, because that header
-carries every cookie a visitor has and Gateway API's Exact match cannot find one
-value inside a list. `RegularExpression` is an *Extended* feature in the spec,
-which implementations may support or not.
+Gateway API v1 has no cookie matcher — an `HTTPRouteMatch` offers `path`,
+`headers`, `queryParams` and `method` — so a cookie is reached through the
+`Cookie` header, which carries every cookie the visitor holds. Isolating one
+value out of that list needs a `RegularExpression` header match, which the spec
+makes an *Extended* feature that implementations may support or not.
 
-A server-side dry run against a real GKE cluster (Gateway API v1.5.0 CRDs)
-accepts the HTTPRoute, and the GatewayClass advertises no `supportedFeatures`
-list, so acceptance is all that is established. That is exactly the shape of the
-two failures this area has already had: `ingressClassName: gce` named a class
-nothing provided, and `networking.gke.io/certmap` on an Ingress was ignored
-outright -- both accepted, both silent.
+**`gke-l7-global-external-managed` does not support it.** Google's GatewayClass
+capabilities table gives `spec.rules.matches.headers.type` as `Exact` for that
+class, and `Exact, RegularExpression` only for the multi-cluster `-mc` variants
+and the internal `gke-l7-rilb`. `gatewayManifest` names
+`gatewayClassName: gke-l7-global-external-managed`, so this is the class Mendel
+actually deploys.
 
-It is load-bearing. If regex header matching is not honoured, cookie-based
-matching does not work, and the alternatives all give up something the design
-chose deliberately: a hostname per Arm changes the URL the visitor sees and the
-scope of their cookies, and an Envoy filter undoes the portability §6.2 claims.
+What that does to §3's three mechanisms:
 
-Cheap to settle, and worth settling before more is built on it: deploy an
-experiment on a throwaway name under the demo wildcard, which already resolves
-and carries no real traffic, and observe whether a request with a given Arm
-cookie reaches that Arm.
+| Mechanism | On the current class |
+|---|---|
+| `request` (D46), weighted `backendRefs` | **Works.** Core, and matches nothing at all |
+| `device` (D23), the `mendel_arm` cookie | **Broken.** Needs regex on `Cookie` |
+| bucket (D47) | **Broken.** Same header, same reason |
 
-It applies to **every** cookie-carried path, not only the `device` one. §3.6's
-bucket travels in a cookie for the same reason the Arm does — a browser sends
-cookies unasked and sends nothing else — so it is found inside the same
-`Cookie` header by the same kind of match. One experiment settles both. Only
-§3.7 is unaffected, since weighted `backendRefs` match nothing at all.
+The bucket path's own carrier does not rescue it. An `Exact` match on a header
+of its own — `X-Mendel-Bucket: 37` — would work perfectly, and a browser will
+not send a custom header on a top-level navigation, so a page load cannot carry
+one however the application is written. Cookies are unavoidable there, and on
+this class cookies cannot be matched.
+
+**The failure mode is the reason this is written up at length.** A server-side
+dry run against a real cluster *accepts* an HTTPRoute with a
+`RegularExpression` header match: the CRD schema permits it, and the controller
+is what declines to honour it. So it would have shipped looking correct. That is
+the third time this area has produced exactly this shape — `ingressClassName:
+gce` naming a class nothing provided, and `networking.gke.io/certmap` on an
+Ingress ignored outright, both accepted and both silent.
+
+Three failures of one kind is a rule rather than a run of luck: **on this
+platform, acceptance is not evidence of support, and the capabilities table is
+the only thing that is.** Anything Mendel emits that relies on an Extended
+Gateway API feature has to be checked against that table for the class in use,
+and — since the table is a web page that changes — checked at channel validation
+rather than trusted from a document. §2.5 is what to do about the finding;
+this is the practice that should have caught it.
 
 **O12 — One HTTPRoute per experiment, or one per project?** Two experiments on
 different paths of one application both want to attach to the same parent

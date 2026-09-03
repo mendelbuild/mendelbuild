@@ -392,6 +392,7 @@ conditions down the side, functional areas across.
 | The platform can route by Assignment Unit | declared | unavailable | | | | | ● | ● | |
 | A Gateway API controller is installed | probed | **either** | | | | | ● | ● | |
 | A `GatewayClass` is `Accepted` | probed | mendel | | | | | ● | ● | |
+| The `GatewayClass` can match what assignment carries | probed | **either** | | | | | ● | ● | |
 | The Assignment Unit and key are declared | declared | user | | | | | ● | ● | |
 | The key is edge-extractable | declared | user | | | | | ● | ● | |
 | The Variation changes one deployable unit | probed | user | | | | | ● | ● | |
@@ -585,6 +586,33 @@ cannot see into — and it is exactly the case the existing comment calls out as
 the reason every step there is observed rather than asserted. So the shape
 survives, but it survives because one of the two prototypes happened to have
 already met this problem. That is thin evidence, and worth saying so.
+
+**And the controller condition stopped being hypothetical while this was being
+written.** §16 O23 settled: the GatewayClass Mendel deploys,
+`gke-l7-global-external-managed`, matches headers only exactly, and a cookie
+arrives inside a `Cookie` header full of other cookies. Two of the three
+assignment mechanisms cannot run on it, and the remedy under consideration is
+installing Envoy Gateway — which is exactly the `either` condition above, now
+load-bearing for the whole functional area rather than a cluster-side nicety.
+The argument in this section was written before that was known and turns out to
+have been about a real case rather than an anticipated one.
+
+It also produced a condition this document did not have and would not have
+thought of. "A `GatewayClass` is `Accepted`" was the validation step, and it is
+**not sufficient**: a server-side dry run accepts an `HTTPRoute` carrying a
+regular-expression header match, because the CRD schema permits it, and the
+controller then declines to honour it at runtime. Accepted is a fact about the
+schema; capable is a fact about the implementation. Different conditions,
+different evidence, and both are now in §4.2.
+
+That is the sharpest available argument for D38. A matrix reporting `satisfied`
+on the strength of a dry run would have been confidently wrong in the same
+silent way GKE has already been wrong twice — `ingressClassName: gce` naming a
+class nothing provided, and a `certmap` annotation ignored outright, both
+accepted, both silent. Three of one kind is a rule: **on this platform,
+acceptance is not evidence of support.** Any condition whose evaluator asks a
+cluster to validate something has to say which of the two it established, and
+the `Missing` sentence D39 requires is where that distinction has to survive.
 
 **And one thing that would have broken it has already been avoided.** The first
 draft built a general disjunction mechanism into the matrix to carry a single
