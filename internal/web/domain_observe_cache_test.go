@@ -139,3 +139,107 @@ func TestDomainReadinessRouteIsRegistered(t *testing.T) {
 		t.Error("no GET route for the readiness fragment; domain-ladder.js polls nothing")
 	}
 }
+
+// The mechanism by which a transient failure became visible: the cache took
+// whatever the latest observation said, so one failed refresh replaced a
+// known-good ACTIVE and the page simply displayed it. The page only polls while
+// there is no observation at all, so nothing corrected it until a later refresh
+// happened to succeed -- which is the flapping.
+func TestFailedRefreshDoesNotOverwriteAKnownCertificate(t *testing.T) {
+	now := time.Now()
+	prev := domainObservation{
+		obs:    domain.DomainObservation{Known: true, CertificateState: "ACTIVE"},
+		at:     now.Add(-domainObservationTTL),
+		certAt: now.Add(-domainObservationTTL),
+	}
+	failed := domain.DomainObservation{Known: true, CertificateUnknown: true}
+
+	entry := mergeObservation(prev, failed, now)
+
+	if entry.obs.CertificateState != "ACTIVE" {
+		t.Errorf("a failed check dropped a known certificate state: got %q, want ACTIVE",
+			entry.obs.CertificateState)
+	}
+	if entry.obs.CertificateUnknown {
+		t.Error("the certificate state is known -- it was carried forward, not lost")
+	}
+	// The DNS half of a failed observation is still the latest word on it.
+	if !entry.at.Equal(now) {
+		t.Errorf("observation time = %v, want %v", entry.at, now)
+	}
+}
+
+// Carrying forward is bounded. A credential that is broken rather than briefly
+// unavailable must eventually be reported as what it is, because a certificate
+// really can go FAILED and a state held indefinitely would hide that.
+func TestAKnownCertificateIsNotCarriedForwardForever(t *testing.T) {
+	now := time.Now()
+	prev := domainObservation{
+		obs:    domain.DomainObservation{Known: true, CertificateState: "ACTIVE"},
+		at:     now.Add(-2 * certificateStateGrace),
+		certAt: now.Add(-2 * certificateStateGrace),
+	}
+	failed := domain.DomainObservation{Known: true, CertificateUnknown: true}
+
+	entry := mergeObservation(prev, failed, now)
+
+	if !entry.obs.CertificateUnknown {
+		t.Error("a certificate state that has been undeterminable for well past the " +
+			"grace period is still being reported as known")
+	}
+	if entry.obs.CertificateState != "" {
+		t.Errorf("stale state %q survived the grace period", entry.obs.CertificateState)
+	}
+}
+
+// A successful observation is authoritative and replaces what came before,
+// including when the new answer is worse than the old one.
+func TestASuccessfulRefreshReplacesTheCertificateState(t *testing.T) {
+	now := time.Now()
+	prev := domainObservation{
+		obs:    domain.DomainObservation{Known: true, CertificateState: "ACTIVE"},
+		at:     now.Add(-time.Minute),
+		certAt: now.Add(-time.Minute),
+	}
+
+	entry := mergeObservation(prev, domain.DomainObservation{Known: true, CertificateState: "FAILED"}, now)
+
+	if entry.obs.CertificateState != "FAILED" {
+		t.Errorf("state = %q, want FAILED -- an answer must not be held off by an older one",
+			entry.obs.CertificateState)
+	}
+	if !entry.certAt.Equal(now) {
+		t.Errorf("certAt = %v, want %v", entry.certAt, now)
+	}
+}
+
+// The ladder is where this is actually read, so assert the rendering end of it
+// too: an undetermined certificate must not present as an outstanding step.
+func TestUndeterminedCertificateDoesNotRenderAsOutstanding(t *testing.T) {
+	pd := &domain.ProjectDomain{
+		BaseDomain: "example.com", DemoSubdomain: "mendel-demos", StaticIP: "34.1.2.3",
+		Challenges: []domain.ACMEChallenge{{
+			RecordName: "_acme-challenge.example.com", RecordValue: "abc.authorize.certificatemanager.goog.",
+		}},
+	}
+	obs := domain.DomainObservation{
+		Known:            true,
+		WildcardTarget:   "34.1.2.3",
+		ChallengeTargets: map[string]string{"_acme-challenge.example.com": "abc.authorize.certificatemanager.goog."},
+
+		CertificateUnknown: true,
+	}
+
+	_, waitingOnYou := domain.DomainHeadline(pd.DomainReadiness(obs))
+	if waitingOnYou {
+		t.Fatal("a certificate Mendel could not check was presented as the user's move")
+	}
+	for _, step := range pd.DomainReadiness(obs) {
+		if step.Name != "Certificate issued" {
+			continue
+		}
+		if step.State != domain.StepUnknown {
+			t.Errorf("state = %q, want %q", step.State, domain.StepUnknown)
+		}
+	}
+}

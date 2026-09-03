@@ -34,9 +34,20 @@ import (
 // either way, so a short interval never makes the page slower to arrive.
 const domainObservationTTL = 10 * time.Second
 
+// certificateStateGrace is how long a certificate state Mendel did determine
+// keeps standing while later attempts fail to determine it again.
+//
+// Bounded rather than indefinite. Carrying the last answer forever would mean a
+// permanently broken credential showed a certificate as ACTIVE for as long as
+// the process lived, and a certificate really can go FAILED. Bounded at minutes
+// rather than seconds because the thing being ridden over is a gcloud
+// invocation that failed once, and the refresh interval is ten seconds.
+const certificateStateGrace = 5 * time.Minute
+
 type domainObservation struct {
 	obs        domain.DomainObservation
 	at         time.Time // Zero until the first observation completes.
+	certAt     time.Time // When the certificate state was last actually determined.
 	refreshing bool
 }
 
@@ -91,13 +102,39 @@ func (s *Server) refreshObservation(projectID uuid.UUID, pd *domain.ProjectDomai
 	obs := s.observeDomain(ctx, projectID, pd)
 
 	s.domainObsMutex.Lock()
-	s.domainObs[projectID] = domainObservation{obs: obs, at: time.Now(), refreshing: false}
+	entry := mergeObservation(s.domainObs[projectID], obs, time.Now())
+	s.domainObs[projectID] = entry
 	s.domainObsMutex.Unlock()
+	obs = entry.obs
 
 	// The queue is meant to close itself when the records start resolving, rather
 	// than when someone next submits a form. This is the only place that learns
 	// they resolve without a form having been submitted.
 	s.syncDomainRequestWith(ctx, projectID, pd, obs)
+}
+
+// mergeObservation folds a new observation into what was already known.
+//
+// Everything a lookup found is taken as-is; the exception is a certificate state
+// Mendel could not determine, which does not displace one it did. Without this
+// the whole point of distinguishing "unknown" from "not issued" is lost one line
+// later: a single failed refresh overwrites a known-good ACTIVE, and since the
+// page renders whatever is cached and only polls while there is nothing at all,
+// that failure is simply displayed until the next refresh happens to succeed.
+//
+// Held for certificateStateGrace, after which an unknown state is reported as
+// unknown -- the honest answer once the failure has stopped looking transient.
+func mergeObservation(prev domainObservation, obs domain.DomainObservation, now time.Time) domainObservation {
+	entry := domainObservation{obs: obs, at: now, certAt: now}
+	if !obs.CertificateUnknown {
+		return entry
+	}
+	entry.certAt = prev.certAt
+	if prev.obs.CertificateState != "" && now.Sub(prev.certAt) < certificateStateGrace {
+		entry.obs.CertificateState = prev.obs.CertificateState
+		entry.obs.CertificateUnknown = false
+	}
+	return entry
 }
 
 // invalidateObservation drops what was seen, so the next render observes again.

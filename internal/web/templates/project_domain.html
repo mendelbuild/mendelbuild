@@ -211,7 +211,7 @@
     <ol class="ladder">
         {{range .Steps}}
         <li class="ladder-step" data-state="{{.State}}">
-            <span class="ladder-mark" aria-hidden="true">{{if eq (printf "%v" .State) "done"}}&check;{{else}}&bull;{{end}}</span>
+            <span class="ladder-mark" aria-hidden="true">{{if eq (printf "%v" .State) "done"}}&check;{{else if eq (printf "%v" .State) "unknown"}}?{{else}}&bull;{{end}}</span>
             <span class="ladder-body">
                 <span class="ladder-name">{{.Name}}</span>
                 <span class="ladder-detail">{{.Detail}}</span>

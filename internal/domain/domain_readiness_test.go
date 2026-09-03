@@ -152,3 +152,64 @@ func TestUnobservedIsCheckingRatherThanOutstanding(t *testing.T) {
 		t.Error("an unobserved ladder should still say what is going on")
 	}
 }
+
+// A certificate Mendel could not ask about must not be reported as one that has
+// not issued. This is the bug the whole third state exists for: gcloud fails for
+// a second, the observation comes back with nothing to say about the
+// certificate, and a project whose certificate has been ACTIVE for a day is told
+// it has an outstanding step.
+func TestUndeterminedCertificateIsNotReportedAsNotIssued(t *testing.T) {
+	d := &ProjectDomain{
+		BaseDomain: "example.com", DemoSubdomain: "mendel-demos", StaticIP: "34.1.2.3",
+		Challenges: []ACMEChallenge{{
+			RecordName: "_acme-challenge.example.com", RecordValue: "abc.authorize.certificatemanager.goog.",
+		}},
+	}
+	obs := DomainObservation{
+		Known:            true,
+		WildcardTarget:   "34.1.2.3",
+		ChallengeTargets: map[string]string{"_acme-challenge.example.com": "abc.authorize.certificatemanager.goog."},
+		// Everything else resolved; only the certificate could not be determined.
+		CertificateUnknown: true,
+	}
+
+	step := ladder(d, obs)["Certificate issued"]
+	if step.State == StepWaiting || step.State == StepYourMove {
+		t.Errorf("a certificate Mendel could not check is reported as %q, which reads "+
+			"as an outstanding step; want a state of its own", step.State)
+	}
+	if step.State != StepUnknown {
+		t.Errorf("state = %q, want %q", step.State, StepUnknown)
+	}
+	// The detail must not be the one that describes a certificate on its way,
+	// which is what an undetermined state used to fall through to.
+	if step.Detail == certificateComingDetail {
+		t.Error("an undetermined certificate is described as one that has not issued yet")
+	}
+
+	// And it must not send anyone to their DNS provider over it.
+	if _, mine := DomainHeadline(d.DomainReadiness(obs)); mine {
+		t.Error("a failed check was reported as the user's move")
+	}
+}
+
+// The counterpart: an empty certificate state with no failure still means no
+// certificate has been requested, and must keep reading as a step to come.
+func TestNoCertificateRequestedStillReadsAsOutstanding(t *testing.T) {
+	d := &ProjectDomain{
+		BaseDomain: "example.com", DemoSubdomain: "mendel-demos", StaticIP: "34.1.2.3",
+		Challenges: []ACMEChallenge{{
+			RecordName: "_acme-challenge.example.com", RecordValue: "abc.authorize.certificatemanager.goog.",
+		}},
+	}
+	obs := DomainObservation{
+		Known:            true,
+		WildcardTarget:   "34.1.2.3",
+		ChallengeTargets: map[string]string{"_acme-challenge.example.com": "abc.authorize.certificatemanager.goog."},
+	}
+
+	step := ladder(d, obs)["Certificate issued"]
+	if step.State != StepWaiting {
+		t.Errorf("state = %q, want %q when no certificate has been requested", step.State, StepWaiting)
+	}
+}

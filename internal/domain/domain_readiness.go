@@ -33,6 +33,16 @@ type DomainObservation struct {
 	// FAILED, or empty when no certificate has been requested.
 	CertificateState string
 
+	// CertificateUnknown says Mendel asked and could not get an answer -- the
+	// credentials would not load, gcloud would not run, the API said no.
+	//
+	// Distinct from an empty CertificateState, which means no certificate has
+	// been requested. Collapsing the two reads as "not issued yet", which is a
+	// claim about the certificate rather than about Mendel, and it is the wrong
+	// one: a certificate that has been ACTIVE for a day is reported as an
+	// outstanding step because one gcloud invocation failed.
+	CertificateUnknown bool
+
 	// Zone is the DNS zone the records live in -- the closest ancestor of the
 	// base domain that is delegated. Observed rather than assumed, because it is
 	// frequently not the base domain, and the difference decides what goes in a
@@ -55,7 +65,13 @@ const (
 	StepYourMove DomainStepState = "yourmove" // Blocked on the user.
 	StepBlocked  DomainStepState = "blocked"  // Cannot start until an earlier step finishes.
 	StepChecking DomainStepState = "checking" // Mendel has not looked yet.
+	StepUnknown  DomainStepState = "unknown"  // Mendel looked and could not tell.
 )
+
+// certificateComingDetail describes a certificate that has been asked for and
+// has not issued. Named so the ladder's tests can assert that an undetermined
+// certificate is not described this way, without pinning the wording.
+const certificateComingDetail = "Issued once the record above resolves. This can take up to an hour."
 
 // DomainStep is one rung of the ladder.
 type DomainStep struct {
@@ -145,17 +161,28 @@ func (d *ProjectDomain) DomainReadiness(obs DomainObservation) []DomainStep {
 	})
 
 	// 5. The authority's part, which nobody can hurry.
-	certDetail := "Issued once the record above resolves. This can take up to an hour."
+	//
+	// Three outcomes, not two. Mendel either has the authority's answer, has not
+	// asked yet, or asked and could not find out -- and the third is not a fact
+	// about the certificate. Reporting it as one turns a transient gcloud failure
+	// into a step the user is told is outstanding, which is how a certificate
+	// that has been ACTIVE for a day comes and goes from the page.
+	certDetail := certificateComingDetail
 	certDone := obs.CertificateState == "ACTIVE"
-	if obs.CertificateState != "" && !certDone {
-		certDetail = "Certificate state: " + obs.CertificateState
-	}
-	if certDone {
+	certState := observed(obs, gate(challengeRight, certDone, StepWaiting))
+	switch {
+	case obs.CertificateUnknown:
+		certState = StepUnknown
+		certDetail = "Mendel could not reach the certificate authority to check. " +
+			"This says nothing about the certificate; the next check will try again."
+	case certDone:
 		certDetail = "Deployments answer over https, and their URLs can be registered."
+	case obs.CertificateState != "":
+		certDetail = "Certificate state: " + obs.CertificateState
 	}
 	steps = append(steps, DomainStep{
 		Name:   "Certificate issued",
-		State:  observed(obs, gate(challengeRight, certDone, StepWaiting)),
+		State:  certState,
 		Detail: checkingOr(obs, certDetail),
 	})
 
@@ -170,6 +197,11 @@ func DomainHeadline(steps []DomainStep) (headline string, waitingOnYou bool) {
 			// Not "your move" -- nobody should be sent to their DNS provider on
 			// the strength of an answer Mendel has not got yet.
 			return "Checking where this stands", false
+		case StepUnknown:
+			// Also not "your move", and for the same reason: Mendel failing to
+			// look is not work for the user. Phrased as what Mendel could not do
+			// rather than after the step, so it is not read as a verdict on it.
+			return "Could not check where this stands", false
 		case StepYourMove:
 			return s.Name, true
 		case StepWaiting:

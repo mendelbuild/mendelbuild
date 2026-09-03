@@ -1863,6 +1863,15 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
 .ladder-step[data-state="checking"] { opacity: 0.6; }
 .ladder-step[data-state="checking"] .ladder-mark { color: var(--ink-3); }
 
+/* Mendel looked and could not tell. Not dimmed like "checking", because this is
+   not a step in progress and it is not going to resolve itself by being waited
+   on -- it is a gap in what Mendel knows, and it should be legible as one. Not
+   the waiting or your-move colours either: nothing here is anybody's move, and
+   the step it sits on may well be finished. */
+.ladder-step[data-state="unknown"] .ladder-mark { color: var(--ink-3); font-weight: 700; }
+.ladder-step[data-state="unknown"] .ladder-name { color: var(--ink-2); font-weight: 400; }
+.ladder-step[data-state="unknown"] .ladder-detail { font-style: italic; }
+
 /* Channel setup, kept to hand rather than surfaced only when something breaks.
    Collapsed because it is reference, not a task. */
 .setup-details { margin: var(--sp-3) 0; }
