@@ -40,6 +40,10 @@ type Server struct {
 	// page can render without waiting on gcloud. See domain_observe_cache.go.
 	domainObs      map[uuid.UUID]domainObservation
 	domainObsMutex sync.Mutex
+
+	// What Mendel last saw of each project's readiness to run live-traffic
+	// experiments. See experiment_observe.go.
+	experimentObs experimentObservationCache
 }
 
 type contextKey string
@@ -672,6 +676,8 @@ func (s *Server) setupRoutes() {
 
 		// Deployment channel routes
 		r.Get("/domain", s.handleProjectDomain)
+		r.Get("/experiments", s.handleProjectExperiments)
+		r.Post("/experiments/verify-datastore", s.handleSaveVerifyDatastore)
 		r.Get("/domain/readiness", s.handleDomainReadiness)
 		r.Post("/domain", s.handleSaveProjectDomain)
 		r.Post("/domain/named-demos", s.handleSetNamedDemos)

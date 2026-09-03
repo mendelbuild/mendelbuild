@@ -1,0 +1,132 @@
+{{define "page-content"}}
+
+<div class="page-head">
+    <span class="page-kind">Settings</span>
+    <h1 class="page-title">Live-traffic experiments</h1>
+    <p class="page-lede">
+        What this project needs before a Hop's Variations can be served side by side
+        to real visitors. None of it is required for ordinary deployments, and none
+        of it follows from your deployment channel working &mdash; so it is gathered
+        here rather than raised one piece at a time, each time something is already
+        blocked.
+    </p>
+</div>
+
+{{template "settings-tabs" .}}
+
+{{if .Success}}
+<div class="callout callout-success"><p class="callout-body">Saved.</p></div>
+{{end}}
+{{if .Error}}
+<div class="callout callout-failure"><p class="callout-body">{{.Error}}</p></div>
+{{end}}
+
+<div class="card">
+    <div class="card-head">
+        <h2 class="card-title">What has to be true</h2>
+        <span class="badge badge-{{if .Checking}}progress{{else if .Blocked}}waiting{{else}}progress{{end}}">
+            {{if .Checking}}Checking&hellip;{{else}}{{.Headline}}{{end}}
+        </span>
+    </div>
+    <ol class="ladder">
+        {{range .Steps}}
+        <li class="ladder-step" data-state="{{.State}}">
+            <span class="ladder-mark" aria-hidden="true">{{if eq (printf "%v" .State) "done"}}&check;{{else}}&bull;{{end}}</span>
+            <span class="ladder-body">
+                <span class="ladder-name">{{.Name}}</span>
+                <span class="ladder-detail">{{.Detail}}</span>
+            </span>
+        </li>
+        {{end}}
+    </ol>
+    <p class="card-note subtle">
+        Mendel checks these itself rather than asking you to confirm them. A step that
+        says it could not tell is Mendel's problem, not yours &mdash; it is deliberately
+        not shown as something for you to fix.{{if .CheckedLabel}} Last checked {{.CheckedLabel}}.{{end}}
+    </p>
+</div>
+
+<div class="split">
+    <div class="stack">
+
+        {{if eq (printf "%v" .Observation.GatewayAPI) "false"}}
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">Enable Gateway API</h2></div>
+            <p class="card-note">
+                Mendel serves each Arm through its own route on a gateway it owns, and
+                nothing reconciles those routes until the cluster has Gateway API. On
+                GKE this is a cluster setting rather than something installed into the
+                cluster, so it is one command and Mendel does not need any further
+                access to run it.
+            </p>
+            {{if .Observation.EnableGatewayCommand}}
+            <div class="script-block">
+                <div class="script-head">
+                    <span class="script-label">Run this in a terminal</span>
+                    <button type="button" class="btn-copy" data-copy="gateway-command" aria-label="Copy command">
+                        <span class="btn-copy-label">Copy</span>
+                    </button>
+                </div>
+                <pre class="script-body"><code><span class="script-line">{{.Observation.EnableGatewayCommand}}</span></code></pre>
+                <p class="script-note">Safe to run again; it does nothing if Gateway API is already on.</p>
+            </div>
+            <pre id="gateway-command" hidden>{{.Observation.EnableGatewayCommand}}</pre>
+            {{end}}
+        </div>
+        {{end}}
+
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">Verification datastore</h2></div>
+            <p class="card-note">
+                A non-production database Mendel may change and reset. Whether a
+                Variation's migration only <em>adds</em> is settled by running it and
+                comparing the structure before and after &mdash; reading the SQL is not
+                enough &mdash; and doing that against production takes real locks on
+                live tables. Mendel runs it here instead, then checks that the
+                structure of the tables it touches matches production before it will
+                admit anything.
+            </p>
+            <form method="POST" action="/p/{{.ProjectID}}/experiments/verify-datastore">
+                <div class="field">
+                    <label for="connection">Connection string</label>
+                    <span class="hint">
+                        Stored encrypted. Give it a database you would not mind losing:
+                        Mendel applies migrations to it and does not clean up after itself.
+                    </span>
+                    <input type="password" id="connection" name="connection" class="input-mono"
+                           autocomplete="off" spellcheck="false"
+                           placeholder="{{if eq (printf "%v" .Observation.VerifyDatastore) "true"}}Stored &mdash; type to replace, or empty to remove{{else}}postgres://user:pass@host:5432/dbname{{end}}">
+                </div>
+                <div class="actions">
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+
+    </div>
+
+    <div class="stack">
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">Why each of these</h2></div>
+            <dl class="kv">
+                <dt>Gateway API</dt>
+                <dd>Nothing routes per Arm without it. Being on GKE does not imply it &mdash;
+                    Mendel's own cluster serves https and has none.</dd>
+                <dt>A production hostname</dt>
+                <dd>One gateway serves every deployment, and the hostname is what tells
+                    their traffic apart. No hostname means no route to match arms on.</dd>
+                <dt>https</dt>
+                <dd>A warning rather than a blocker. Over plain http the assignment
+                    cookie cannot be Secure, so it can be rewritten in transit and a
+                    visitor could choose their own arm.</dd>
+                <dt>A verification datastore</dt>
+                <dd>So proving a migration additive costs production nothing. It also
+                    lets Mendel support datastores that cannot undo a change, since a
+                    copy can simply be reset.</dd>
+            </dl>
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/copy-button.js"></script>
+{{end}}

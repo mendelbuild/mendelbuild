@@ -283,6 +283,7 @@ document.querySelectorAll('[data-tl-today]').forEach(function (el) {
     <a class="tab{{if eq .SettingsTab "project"}} is-active{{end}}" href="/p/{{.ProjectID}}/settings">Project</a>
     <a class="tab{{if eq .SettingsTab "deployment"}} is-active{{end}}" href="/p/{{.ProjectID}}/deployment">Deployment</a>
     <a class="tab{{if eq .SettingsTab "domain"}} is-active{{end}}" href="/p/{{.ProjectID}}/domain">Domain</a>
+    <a class="tab{{if eq .SettingsTab "experiments"}} is-active{{end}}" href="/p/{{.ProjectID}}/experiments">Live-traffic experiments</a>
 </div>
 {{end}}
 
