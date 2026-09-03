@@ -31,6 +31,26 @@ type ArmDeployment struct {
 	Backend string
 }
 
+// ExperimentGatewayClass is the class of the controller that does Arm matching.
+//
+// Not GKE's. gke-l7-global-external-managed matches headers `Exact` only, and an
+// Exact match on a Cookie header cannot pick one cookie out of the several a
+// visitor carries -- so cookie-based Arm matching is impossible on it, whichever
+// mechanism computes the Arm. Google's GatewayClass capabilities table is
+// explicit about this, and a server-side dry run does not reveal it: the CRD
+// accepts the regex and the controller ignores it.
+const ExperimentGatewayClass = "eg"
+
+// ExperimentGatewayName is the Gateway the Arm routes attach to.
+const ExperimentGatewayName = "mendel-experiments"
+
+// ExperimentEdgeService is a stable name in front of Envoy Gateway's proxy.
+//
+// Envoy Gateway names its own proxy Service after the Gateway plus a hash, which
+// is not a name anything else can reference. This selects the same pods under a
+// name Mendel chooses, so the front door has something fixed to point at.
+const ExperimentEdgeService = "mendel-experiment-edge"
+
 // ExperimentDeployment is everything an experiment puts in the cluster.
 type ExperimentDeployment struct {
 	// Name prefixes every resource, so one experiment's objects can be found and
@@ -222,9 +242,72 @@ spec:
 `, name, arm.Image, hosting.ContainerPort, d.Name, arm.Slug, d.EnvFrom)
 	}
 
-	// The route. An Arm's rule carries a header match, so it outranks the
-	// fallback: Gateway API breaks ties by the number of header matches, and the
-	// fallback has none.
+	// The Gateway that does the matching, and a stable Service in front of the
+	// proxy it provisions.
+	//
+	// Two layers, because each does what the other cannot. GKE's Gateway holds
+	// the reserved address, terminates TLS and carries the Certificate Manager
+	// map -- none of which Envoy Gateway can be given, since it reads
+	// certificates from Kubernetes Secrets and Certificate Manager will not
+	// export a private key. Envoy Gateway can match a cookie, which GKE's class
+	// cannot. So the first stays at the edge and hands the second the traffic.
+	fmt.Fprintf(&b, `apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: %[1]s
+  labels:
+    mendel-experiment: %[4]s
+spec:
+  gatewayClassName: %[2]s
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces:
+        from: Same
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: %[3]s
+  labels:
+    mendel-experiment: %[4]s
+spec:
+  type: ClusterIP
+  selector:
+    gateway.envoyproxy.io/owning-gateway-name: %[1]s
+    gateway.envoyproxy.io/owning-gateway-namespace: %[5]s
+  ports:
+  - port: 80
+    targetPort: 10080
+---
+`, ExperimentGatewayName, ExperimentGatewayClass, ExperimentEdgeService, d.Name, hosting.Namespace)
+
+	// The front door: the existing GKE Gateway keeps the hostname, the address
+	// and the certificate, and sends this host's traffic to Envoy instead of
+	// straight to the app.
+	fmt.Fprintf(&b, `apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: %[1]s-edge
+  labels:
+    mendel-experiment: %[1]s
+spec:
+  parentRefs:
+  - name: %[2]s
+  hostnames:
+  - %[3]s
+  rules:
+  - backendRefs:
+    - name: %[4]s
+      port: 80
+---
+`, d.Name, gatewayName, d.Hostname, ExperimentEdgeService)
+
+	// The Arm routes, on the Gateway that can match them. An Arm's rule carries a
+	// header match, so it outranks the fallback: Gateway API breaks ties by the
+	// number of header matches, and the fallback has none.
 	fmt.Fprintf(&b, `apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -237,7 +320,7 @@ spec:
   hostnames:
   - %s
   rules:
-`, d.Name, d.Name, gatewayName, d.Hostname)
+`, d.Name, d.Name, ExperimentGatewayName, d.Hostname)
 
 	for _, arm := range d.Arms {
 		backend := arm.Backend

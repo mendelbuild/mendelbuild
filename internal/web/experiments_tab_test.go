@@ -103,3 +103,47 @@ func TestGatewayCommandOnlyShownWhenItIsTheRemedy(t *testing.T) {
 		t.Error("the enable command is offered to a cluster that already has Gateway API")
 	}
 }
+
+// The remedy for GKE's Exact-only header matching is a second controller, and
+// the page has to say so — the property is invisible otherwise, since Gateway
+// API being "on" looks like success.
+func TestInstallControllerRemedyIsOfferedWhenNeeded(t *testing.T) {
+	obs := domain.ExperimentObservation{
+		GatewayAPI:            domain.FactTrue, // on, and still not enough
+		CookieMatching:        domain.FactFalse,
+		InstallControllerHint: "helm upgrade --install eg oci://docker.io/envoyproxy/gateway-helm -n envoy-gateway-system --create-namespace",
+		ProdHostname:          domain.FactTrue, ProdHTTPS: domain.FactTrue,
+		SchemaChanges: domain.FactFalse,
+	}
+	html := renderExperimentsPage(t, obs)
+
+	for _, want := range []string{"envoyproxy/gateway-helm", `id="install-controller"`, `data-copy="install-controller"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("page is missing %q", want)
+		}
+	}
+
+	// And it disappears once the controller is there, so nobody runs it looking
+	// for a problem that is not present.
+	obs.CookieMatching = domain.FactTrue
+	if strings.Contains(renderExperimentsPage(t, obs), "envoyproxy/gateway-helm") {
+		t.Error("the install command is offered to a cluster that already has a controller")
+	}
+}
+
+func renderExperimentsPage(t *testing.T, obs domain.ExperimentObservation) string {
+	t.Helper()
+	steps := domain.ExperimentReadiness(obs)
+	headline, blocked := domain.ExperimentHeadline(steps)
+
+	var out strings.Builder
+	if err := parsePageTemplate("project_experiments.html").ExecuteTemplate(&out, "page-content", map[string]interface{}{
+		"SettingsTab": "experiments", "ProjectID": "abc", "Steps": steps,
+		"Headline": headline, "Blocked": blocked, "Checking": false,
+		"CheckedLabel": "just now", "Observation": obs,
+		"DatastoreVar": VerifyDatastoreVar, "Success": false, "Error": "",
+	}); err != nil {
+		t.Fatalf("experiments page does not render: %v", err)
+	}
+	return out.String()
+}

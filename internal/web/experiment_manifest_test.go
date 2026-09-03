@@ -167,3 +167,64 @@ func TestManifestRefusesWhatCannotBeDeployed(t *testing.T) {
 		})
 	}
 }
+
+// The two layers, and which does what.
+//
+// GKE's Gateway matches headers Exact only, so it cannot pick one cookie out of
+// the several a visitor carries -- cookie matching is impossible on it. But it
+// holds the reserved address, terminates TLS and carries the Certificate Manager
+// map, none of which Envoy Gateway can be given, because it reads certificates
+// from Kubernetes Secrets and Certificate Manager will not export a private key.
+//
+// So the Arm routes must attach to the Envoy Gateway and the front door must
+// stay on GKE's. Getting that backwards produces a deployment that looks right
+// and serves every visitor mainline.
+func TestArmRoutesAttachToEnvoyAndTheFrontDoorStaysOnGKE(t *testing.T) {
+	m, err := experimentFixture().Manifest()
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	// The Gateway that does the matching is not GKE's class.
+	if !strings.Contains(m, "gatewayClassName: "+ExperimentGatewayClass) {
+		t.Error("no Gateway of a class that can match cookies")
+	}
+	if strings.Contains(m, "gke-l7-global-external-managed") {
+		t.Error("Arm matching was attached to a class that matches headers Exact only")
+	}
+
+	// The Arm rules hang off the experiment Gateway.
+	armRoute := m[strings.Index(m, "\nkind: HTTPRoute\nmetadata:\n  name: exp-checkout\n"):]
+	if !strings.Contains(armRoute, "name: "+ExperimentGatewayName) {
+		t.Error("the Arm routes do not attach to the experiment Gateway")
+	}
+
+	// The front door stays on the GKE Gateway, which owns the address and the
+	// certificate, and forwards to Envoy.
+	edge := m[strings.Index(m, "name: exp-checkout-edge"):]
+	if !strings.Contains(edge, "name: "+gatewayName) {
+		t.Error("the front door left the GKE Gateway, taking TLS and the address with it")
+	}
+	if !strings.Contains(edge, "name: "+ExperimentEdgeService) {
+		t.Error("the front door does not forward to Envoy")
+	}
+}
+
+// Envoy Gateway names its proxy Service after the Gateway plus a hash, which is
+// not a name anything can reference. Mendel puts a fixed name in front of the
+// same pods so the front door has something stable to point at.
+func TestEdgeServiceSelectsTheEnvoyProxyPods(t *testing.T) {
+	m, err := experimentFixture().Manifest()
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{
+		"name: " + ExperimentEdgeService,
+		"gateway.envoyproxy.io/owning-gateway-name: " + ExperimentGatewayName,
+		"gateway.envoyproxy.io/owning-gateway-namespace: mendel-apps",
+	} {
+		if !strings.Contains(m, want) {
+			t.Errorf("the edge Service is missing %q", want)
+		}
+	}
+}

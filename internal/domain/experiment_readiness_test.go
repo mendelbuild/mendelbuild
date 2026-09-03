@@ -14,7 +14,7 @@ func ladderByName(steps []ReadinessStep) map[string]ReadinessStep {
 // schema, and so needs everything.
 func allTrue() ExperimentObservation {
 	return ExperimentObservation{
-		GatewayAPI: FactTrue, ProdHostname: FactTrue, ProdHost: "app.example.com",
+		GatewayAPI: FactTrue, CookieMatching: FactTrue, ProdHostname: FactTrue, ProdHost: "app.example.com",
 		ProdHTTPS: FactTrue, SchemaChanges: FactTrue,
 		VerifyDatastore: FactTrue, VerifyReachable: FactTrue,
 	}
@@ -88,6 +88,7 @@ func TestOnlyHTTPSIsAWarning(t *testing.T) {
 	// Everything else does block.
 	for name, mutate := range map[string]func(*ExperimentObservation){
 		"gateway":   func(o *ExperimentObservation) { o.GatewayAPI = FactFalse },
+		"cookie matching": func(o *ExperimentObservation) { o.CookieMatching = FactFalse },
 		"hostname":  func(o *ExperimentObservation) { o.ProdHostname = FactFalse },
 		"datastore": func(o *ExperimentObservation) { o.VerifyDatastore = FactFalse },
 	} {

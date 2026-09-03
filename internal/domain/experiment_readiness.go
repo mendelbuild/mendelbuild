@@ -60,6 +60,14 @@ type ExperimentObservation struct {
 	// knows enough to state it.
 	EnableGatewayCommand string
 
+	// CookieMatching is whether a controller is installed that can match a
+	// cookie. Separate from GatewayAPI because it is a separate property with a
+	// separate remedy, and because GKE's own class does not have it: it matches
+	// headers Exact only, and an Exact match on a Cookie header cannot pick one
+	// cookie out of the several a visitor carries.
+	CookieMatching        Fact
+	InstallControllerHint string
+
 	// ProdHostname is whether production answers at a name. Without one there is
 	// no HTTPRoute -- Mendel's Gateway is shared across deployments and the
 	// hostname is what tells one deployment's traffic from another's -- so there
@@ -102,6 +110,15 @@ func ExperimentReadiness(obs ExperimentObservation) []ReadinessStep {
 		"Gateway API is not enabled, so nothing can reconcile the routes an experiment needs. "+
 			"Being on GKE does not imply it; it is off until someone turns it on.",
 		"Mendel could not reach the cluster to check."))
+
+	steps = append(steps, factStep(obs.CookieMatching,
+		"A controller that can match an experiment cookie",
+		"Envoy Gateway is installed and can route by cookie.",
+		"Gateway API is on, but the only controller is GKE's, which matches headers exactly "+
+			"and so cannot pick one cookie out of the several a visitor carries. Mendel keeps "+
+			"GKE's gateway at the edge for TLS and the address, and puts one behind it that can "+
+			"match.",
+		"Mendel could not list the cluster's gateway controllers."))
 
 	steps = append(steps, factStep(obs.ProdHostname,
 		"Production answers at a name",

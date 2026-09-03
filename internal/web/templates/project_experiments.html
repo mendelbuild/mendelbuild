@@ -75,6 +75,33 @@
         </div>
         {{end}}
 
+        {{if eq (printf "%v" .Observation.CookieMatching) "false"}}
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">Install a gateway that can match cookies</h2></div>
+            <p class="card-note">
+                GKE's own gateway matches headers exactly, and a browser sends every
+                cookie it has in one header &mdash; so an exact match cannot pick out
+                the one naming an experiment arm. Mendel keeps GKE's gateway at the
+                edge, where it holds the address and the certificate, and puts one
+                behind it that can match. Nothing about your current deployments
+                changes.
+            </p>
+            {{if .Observation.InstallControllerHint}}
+            <div class="script-block">
+                <div class="script-head">
+                    <span class="script-label">Run this in a terminal</span>
+                    <button type="button" class="btn-copy" data-copy="install-controller" aria-label="Copy command">
+                        <span class="btn-copy-label">Copy</span>
+                    </button>
+                </div>
+                <pre class="script-body"><code><span class="script-line">{{.Observation.InstallControllerHint}}</span></code></pre>
+                <p class="script-note">Safe to run again; it upgrades in place if already installed.</p>
+            </div>
+            <pre id="install-controller" hidden>{{.Observation.InstallControllerHint}}</pre>
+            {{end}}
+        </div>
+        {{end}}
+
         <div class="card">
             <div class="card-head"><h2 class="card-title">Verification datastore</h2></div>
             <p class="card-note">
@@ -112,6 +139,10 @@
                 <dt>Gateway API</dt>
                 <dd>Nothing routes per Arm without it. Being on GKE does not imply it &mdash;
                     Mendel's own cluster serves https and has none.</dd>
+                <dt>A controller that can match cookies</dt>
+                <dd>GKE's matches headers exactly, which cannot pick one cookie out of the
+                    several a browser sends together. GKE's stays at the edge for TLS and
+                    the address; the one behind it does the matching.</dd>
                 <dt>A production hostname</dt>
                 <dd>One gateway serves every deployment, and the hostname is what tells
                     their traffic apart. No hostname means no route to match arms on.</dd>

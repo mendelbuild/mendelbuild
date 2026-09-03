@@ -57,7 +57,8 @@ func (s *Server) observeExperimentReadiness(ctx context.Context, projectID uuid.
 	// demand a database of a project that may never need one.
 	obs.SchemaChanges = domain.FactUnknown
 
-	obs.GatewayAPI, obs.EnableGatewayCommand = s.observeGatewayAPI(ctx, projectID)
+	obs.GatewayAPI, obs.EnableGatewayCommand, obs.CookieMatching, obs.InstallControllerHint =
+		s.observeGatewayControllers(ctx, projectID)
 	obs.VerifyDatastore, obs.VerifyReachable = s.observeVerifyDatastore(ctx, projectID)
 	return obs
 }
@@ -69,26 +70,32 @@ func (s *Server) observeExperimentReadiness(ctx context.Context, projectID uuid.
 // gcloud command and Mendel's job is to name it -- not to probe RBAC and install
 // a controller, which is what a cluster without a managed one would need and
 // which no selectable channel currently is.
-func (s *Server) observeGatewayAPI(ctx context.Context, projectID uuid.UUID) (domain.Fact, string) {
+func (s *Server) observeGatewayControllers(ctx context.Context, projectID uuid.UUID) (
+	api domain.Fact, enable string, cookies domain.Fact, install string) {
 	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
 	if err != nil || channel == nil || channel.HostingPlatform == nil ||
 		channel.ArtifactKind != domain.DeployArtifactKubernetes {
 		// Not a Kubernetes channel, so the question does not arise yet.
-		return domain.FactUnknown, ""
+		return domain.FactUnknown, "", domain.FactUnknown, ""
 	}
 
 	env, err := s.deployCredentialsForChannel(ctx, projectID, channel)
 	if err != nil {
-		return domain.FactUnknown, ""
+		return domain.FactUnknown, "", domain.FactUnknown, ""
 	}
 
 	command := fmt.Sprintf(
 		"gcloud container clusters update %s --location %s --gateway-api=standard --project %s",
 		env["GKE_CLUSTER_NAME"], env["GKE_ZONE"], env["GCP_PROJECT_ID"])
 
+	// Idempotent, because a user re-running it is the normal case rather than
+	// the exception.
+	installEnvoy := "helm upgrade --install eg oci://docker.io/envoyproxy/gateway-helm " +
+		"-n envoy-gateway-system --create-namespace"
+
 	session, err := newGKESession(ctx, env)
 	if err != nil {
-		return domain.FactUnknown, command
+		return domain.FactUnknown, command, domain.FactUnknown, installEnvoy
 	}
 	defer session.cleanup()
 
@@ -103,17 +110,26 @@ func (s *Server) observeGatewayAPI(ctx context.Context, projectID uuid.UUID) (do
 		// means, and it is the answer rather than a failure to get one.
 		if strings.Contains(string(out), "doesn't have a resource type") ||
 			strings.Contains(string(out), "the server could not find the requested resource") {
-			return domain.FactFalse, command
+			// No Gateway API at all, so neither question has a yes.
+			return domain.FactFalse, command, domain.FactFalse, installEnvoy
 		}
-		return domain.FactUnknown, command
+		return domain.FactUnknown, command, domain.FactUnknown, installEnvoy
 	}
 
+	api, cookies = domain.FactFalse, domain.FactFalse
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if fields := strings.Fields(line); len(fields) == 2 && strings.EqualFold(fields[1], "True") {
-			return domain.FactTrue, command
+		fields := strings.Fields(line)
+		if len(fields) != 2 || !strings.EqualFold(fields[1], "True") {
+			continue
+		}
+		api = domain.FactTrue
+		// GKE's own classes match headers Exact only. Any other accepted class
+		// is one somebody installed, which is the only reason to install one.
+		if !strings.HasPrefix(fields[0], "gke-") {
+			cookies = domain.FactTrue
 		}
 	}
-	return domain.FactFalse, command
+	return api, command, cookies, installEnvoy
 }
 
 // observeVerifyDatastore reports whether a non-production datastore has been
