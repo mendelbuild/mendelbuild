@@ -386,8 +386,8 @@ conditions down the side, functional areas across.
 | Every `secret` requirement has a value | declared | user | | ● | ● | | ● | ● | |
 | Every `acknowledgement` is confirmed | declared | user | | ● | ● | | ● | ● | |
 | The deployment's URL is registrable | derived | unavailable | | ● | ● | | | | |
-| A base domain is set | asked | user | | | | ● | ○ | ○ | |
-| The certificate is issued | observed | elsewhere | | | | ● | ○ | ○ | |
+| A base domain is set | asked | user | | | | ● | | | |
+| The certificate is issued | observed | elsewhere | | | | ● | | | |
 | The platform can route by Assignment Unit | declared | unavailable | | | | | ● | ● | |
 | A Gateway API controller is installed | probed | **either** | | | | | ● | ● | |
 | A `GatewayClass` is `Accepted` | probed | mendel | | | | | ● | ● | |
@@ -399,7 +399,7 @@ conditions down the side, functional areas across.
 | An adapter exists for the datastore | probed | unavailable | | | | | | ● | ● |
 | A privileged datastore credential is available | asked | user | | | | | | | ● |
 
-● required ○ required only under some assignment mechanisms, see O21
+● required. The experiment rows carried two `○` cells until O21 resolved them away.
 
 Three things this table says that the prose could not.
 
@@ -415,13 +415,17 @@ appear — which is §13's own conclusion (Tier 1 "falls out of Tier 2 rather th
 preceding it") arrived at independently. Enforce shares one cell with them and
 is otherwise disjoint, which is §3.5's answer.
 
-**The `○` cells are a finding, not a formatting choice.** Nothing in §13 or §16
-says a live experiment requires a domain the user controls, and drawing the
-table made the question unavoidable. Pulling on it turned out to expose
-something about §16 rather than about this document: the requirement is not
-cookies, it is whether the edge has to *validate* what it routes on, and there
-are assignment mechanisms where it does not. O21 has the argument; the
-amendment belongs in §16 D23.
+**The two blank cells where a domain would have gone are a finding.** Nothing
+in §13 or §16 said a live experiment requires a domain the user controls, and
+drawing the table made the question unavoidable — assignment worked by a cookie,
+and a cookie is scoped to a host. Pulling on it exposed something about §16
+rather than about this document, and the answer came back *no*: the requirement
+was never cookies but whether the edge has to **validate** what it routes on,
+and §16 §3.6 now routes on a value that needs no validation. O21 records the
+argument and §16 D45–D49 record the amendment.
+
+This is the second thing the table paid for. Neither finding was available from
+the prose, and both were unavoidable once the cells had to be filled in.
 
 ### 4.3 A functional area may be a condition of another
 
@@ -622,9 +626,10 @@ draft failed" from "no objectives yet" with three different sentences for what i
 arguably one condition. Forcing it into the catalogue may lose something the
 ribbon does well. Listed, not committed.
 
-**O21 — Does a live experiment require a domain the user controls? — restated.**
-The `○` cells in §4.2. The first draft of this question assumed the answer
-followed from cookies: assignment works by a cookie the assigner sets (§16 D23),
+**O21 — Does a live experiment require a domain the user controls? — resolved:
+no.** The argument is kept in full because it is what produced §16 D45–D49, and
+because the route from the question to the answer is more useful than the
+answer. The first draft of this question assumed it followed from cookies: assignment works by a cookie the assigner sets (§16 D23),
 a cookie is scoped to a host, and a bare LoadBalancer IP over http is a poor
 host to scope anything to.
 
@@ -676,18 +681,20 @@ token is fine because assignment is not an authorisation decision. A bucket
 number is the same kind of thing — spoofable, and harmless to spoof beyond
 self-selection into a cohort.
 
-So the answer is conditional, and the condition is worth writing into the matrix
-in place of the `○` cells:
+Which sorts the mechanisms:
 
 | Mechanism | Needs a domain | Works for anonymous traffic |
 |---|---|---|
-| Application-emitted bucket header | no | only if the app mints an anonymous id, which is a cookie again |
+| Application-emitted bucket | no | only if the app mints an anonymous id, which is a cookie again |
 | Mapped identity field, validated at the edge | **yes** | no |
 | Mapped opaque token, unvalidated | no | no |
-| Mendel-set cookie at the edge (§16 D23) | yes, in practice | **yes** |
+| Mendel-set cookie at the edge (§16 D23) | no — see the correction below | **yes** |
 
-Two things still argue for the cookie beyond anonymous traffic, and they are the
-reason this is an open question rather than a decision.
+Only the second needs a domain, and it is the one mechanism §16 did not adopt.
+
+Two things argue against the cheapest version of this — mapping an existing
+field directly — and they are what pushed the answer toward the application
+minting a bucket rather than the edge reading one.
 
 **A mapped field carries no salt.** Assignment is supposed to be a function of
 the key, the allocation *and* a salt, so that successive experiments do not draw
@@ -716,9 +723,20 @@ which is the axis §16 §6.2 used to reject the Lua filter, so it should not be
 adopted without noticing. Matching an enumerated bucket value is exact, and
 stays Core — a hundred match rules is unlovely and Mendel generates them.
 
-**What this does not change.** It is a §16 decision, not this document's, and it
-is being implemented in parallel. Recorded here because it is the condition the
-matrix asked about; the amendment belongs in §16 D23 and is not made here.
+**Where this landed.** §16 §3.6 and §3.7 take the application-emitted bucket for
+`user`, `session` and `tenant`, and weighted `backendRefs` for `request`; D23 is
+narrowed to `device` rather than withdrawn, because minting identity at the edge
+is still the only mechanism that works for a visitor nobody has identified —
+which is Tier 1, the launch surface. D45–D49 record it.
+
+One correction fell out of writing that up, and it is why the answer here is a
+flat no rather than "only for some mechanisms". The `device` cookie was assumed
+to need a domain too; it does not. A host-only cookie on a bare address works,
+and the `mendel_arm` cookie is no more spoofable than a bucket. So the domain
+requirement attaches to **edge-validated identity** and to nothing else in §16 —
+and since every mechanism now computes the Arm somewhere that already has the
+identity, no live experiment requires a domain at all. The base-domain and
+certificate cells in §4.2 are empty for both experiment rows.
 
 ---
 
@@ -786,9 +804,10 @@ implementation without collision. Step 6 is the merge point.
 6. **The experiment rows**, including everything designed and not built as
    `unimplemented`. This is the first time the catalogue carries a functional
    area that is not available, and the first time `either` and `offered` have a
-   real user. Settle O21 before this rather than after: it changes what a user is
-   told when they first ask about experiments, which is a conversation §13 §4.2
-   says must happen early and unprompted.
+   real user. O21 is settled, so *Named* is not a prerequisite here and the
+   experiment rows need no domain — but §16 §3.6's bucket path does need codegen
+   to emit the middleware and the deploy path to inject the salt, which is work
+   in §16's own build order and not in this one.
 
 Steps 1 and 2 are the ones that decide whether any of the rest is worth
 building, for the same reason §13 §16 put migration non-interference first: they

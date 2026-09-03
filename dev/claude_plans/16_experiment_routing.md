@@ -1,6 +1,10 @@
 # Experiment Routing — Implementation Plan
 
-Status: **draft for review.** No code written.
+Status: **draft, amended.** No code written. §§3, 4, 6, 8 were amended after
+review to add the assignment mechanisms in §3.6 and §3.7; D45–D49 record what
+changed and D23 is narrowed rather than withdrawn. Subsection numbers are
+unchanged, because [17_functional_area_matrix.md](17_functional_area_matrix.md)
+cites several of them.
 
 Companion to [13_live_traffic_experiments.md](13_live_traffic_experiments.md),
 which settled *what* to build and why. That document records decisions — Gateway
@@ -111,8 +115,27 @@ filter, or a small assigner service in front", which is two options and a
 contradiction — a Lua filter is an Envoy extension, not Gateway API, so it
 undoes §6.2's portability in the same breath that claims it.
 
-**The resolution: assign once, then route on the cookie with plain Gateway API
-matching.** Assignment is only needed for a request that has no cookie yet.
+**The resolution: compute the Arm wherever the identity already is, and leave
+the edge doing nothing but matching** (D45). The edge is the one place that
+cannot compute, so the answer is never to make it — not by extending it with
+Lua, and not by putting a service in front of it unless there is no alternative.
+
+Where the identity already is depends on what an Assignment Unit is, so there
+are three mechanisms behind the one seam §13 §6.3 established, chosen by the
+declared unit rather than configured:
+
+| Assignment Unit | Where the Arm is computed | What the edge matches |
+|---|---|---|
+| `request` | Nowhere; every request is independent | Nothing — weighted `backendRefs` (§3.7) |
+| `device` | A Mendel-built assigner at the edge | The `mendel_arm` cookie it set (below) |
+| `user`, `session`, `tenant` | The application, which knows who this is | A bucket the client carries (§3.6) |
+
+The rest of this section is the `device` path, which is the one §13 D20 names
+for Tier 1 and the only one that works for a visitor nobody has identified yet.
+It is unchanged. The other two are §3.6 and §3.7, and between them they carry
+every experiment where the participant is a person rather than a browser.
+
+The `device` path, then:
 
 ```
                     ┌─────────────────────────────────────┐
@@ -294,7 +317,10 @@ Two hazards to carry into that:
   be uninteresting, or record the restriction as a stated limit on what the
   result generalises to. Web clients mostly escape this; a cached SPA does not.
 
-### 3.4 What this costs
+### 3.4 What the `device` path costs
+
+Every item here is a cost of minting identity at the edge. §3.6 pays none of
+them, which is most of the argument for it.
 
 - **One extra round trip on a visitor's first request.** Acceptable; it happens
   once per Assignment Unit per experiment.
@@ -307,7 +333,7 @@ Two hazards to carry into that:
   refuses cookies, the assigner marks the redirect (`?_ma=1`) and sends a second
   cookie-less arrival straight to mainline.
 
-### 3.5 Where the weights live
+### 3.5 Where the weights live on the `device` path
 
 In a `ConfigMap` the assigner reads, written by Mendel — **not** fetched from
 Mendel's API at request time. The user's production traffic must not depend on
@@ -316,6 +342,133 @@ Mendel being reachable. If Mendel is down, the last-written allocation stands.
 The weights are deliberately *not* in the HTTPRoute's `backendRefs`. Weighted
 backendRefs pick per request, which would split a visitor across Arms on every
 navigation — the opposite of what an Assignment Unit means (§13 §5.1).
+
+That reasoning holds wherever assignment is sticky, which is everywhere except
+`assignment_unit: request` — where splitting per request is not a hazard but the
+definition. §3.7 takes that carve-out. And on the §3.6 path there is no
+ConfigMap at all, because the allocation is expressible in the match rules
+themselves.
+
+### 3.6 Assignment where the information already is
+
+The `device` path exists because a first-time visitor carries nothing Mendel can
+route on, so Mendel has to mint something. That is the right answer for exactly
+that case and the wrong one for every other, and §13 §14 already concedes the
+cost in the course of accepting it: the effective Assignment Unit becomes **the
+browser, not the person**, and `user` and `tenant` "require reading a key the
+application supplies, which is what drags in the login-transition problem."
+
+This is that reading, and the login-transition problem turns out to dissolve
+rather than need solving.
+
+**The application mints a bucket** (D47). Codegen adds middleware that computes
+`hash(assignment key, salt) mod 100` and sets it on the response; the client
+carries it back on every subsequent request; the edge matches the value exactly
+and routes. The salt is per experiment, injected as an environment variable by
+the same machinery that already injects requirement secrets and the OTLP
+endpoint.
+
+The constraint that shapes this is easy to miss: **the value has to be on the
+inbound request**, because the edge decides routing before anything is reached.
+So the application cannot compute the bucket for the request being routed — it
+computes it for the *next* one. That is not a limitation, it is the mechanism:
+the value is minted once on whatever request first knows who the visitor is, and
+is simply present thereafter.
+
+Which is also what dissolves the login transition. Before a visitor is
+identified there is no bucket, no match, and they are served mainline. At login
+the application knows the key, mints the bucket, and every request after that is
+routed. There is no ambiguous window where two identities disagree, because the
+value only ever comes into existence once there is one identity to compute it
+from. A visitor who saw mainline and then an Arm saw exactly what an experiment
+enrolling on login should show them.
+
+**What it deletes.** The assigner `Deployment` and `Service`, the allocation
+`ConfigMap`, the extra round trip, the `?_ma=1` loop-breaker, and the "a
+first-ever POST cannot be redirected" caveat — all of §3.4 and the middle rows
+of §4's table. What replaces them is a hash and a `Set-Cookie` in the
+application's own middleware, which is the same trade §13 §10.1 made for
+metrics and for the same reason: **Mendel writes the app's code**, so a few
+lines there are nearly free, and what lands in the repository is a hash, a
+cookie and an env var with no Mendel import anywhere in it.
+
+**What it gains beyond deleting things.**
+
+- **A salt, which the `device` path has nowhere to put.** Assignment is meant to
+  be a function of the key, the allocation *and* a salt, so that successive
+  experiments do not draw the same cohort every time. A per-experiment salt
+  makes each experiment's cohort independent of the last, which is a validity
+  property §13 §8 cares about a great deal and which nothing else here provides.
+- **Uniformity by construction.** A hash is uniform whatever it is fed —
+  sequential integer ids, tenant slugs, email addresses. See below for why that
+  matters.
+- **Core conformance.** Matching an enumerated bucket value is an `Exact` header
+  match, which is Core support in Gateway API. Nothing here steps down a
+  conformance level, which is the objection §6.2 raised against Lua and which
+  applies with less force but the same direction to anything implementation-specific.
+- **D28 gets simpler.** That decision propagates the key and recomputes the Arm
+  at each hop, to avoid a lost context producing a *wrong* Arm. A bucket has the
+  same safety property with nothing to recompute: it is stable, it is
+  deterministic, and where it is absent the hop serves mainline.
+
+**One bucket per running experiment** (D48), carried in its own cookie named for
+the experiment, because the salt differs per experiment and a single scalar
+cannot answer for two of them. The salt is fixed for the life of an experiment;
+rotating it mid-flight would re-bucket everyone at once and destroy the
+stickiness the whole arrangement exists to provide.
+
+**The mechanism this rejects, and why it is worth naming.** The obvious cheaper
+version is to skip the application entirely and match an existing field —
+prefix-match a user id header, say, so that `^[0-3]` is a quarter of traffic.
+It needs no app change at all, and it fails on three counts. It has no salt to
+turn, so the same tenth of the population is the guinea pig in every experiment
+forever. It assumes the field is uniformly distributed, which a UUIDv4 is and a
+sequential id emphatically is not, so it would need a new admission check
+establishing uniformity before it could allocate anything. And prefix-matching
+needs a regular-expression match, which Gateway API supports as
+implementation-specific rather than Core. Since experiments only run where
+Mendel deploys production (D21), and Mendel wrote that application, "needs no
+app change" is worth much less here than it would be elsewhere.
+
+The one case where direct mapping is exact, needs no regex and no uniformity
+argument is a **tenant subdomain** with few enough tenants to enumerate in the
+route. That is deferred rather than rejected; it is a narrow special case of an
+`AssignmentKeySubdomain` declaration the domain model already has.
+
+**And a correction to something this document implied.** The `device` path was
+described as needing a domain, on the grounds that a cookie is scoped to a host.
+A host-only cookie on a bare address works, so it does not — the requirement
+comes from somewhere else entirely. Where the edge has to *validate* what it
+routes on, as D29 requires for an identity header, it is reading a credential in
+flight, which needs TLS, which needs a certificate, which needs a domain nobody
+issues for a bare address. Where the routed value is a **bucket**, there is
+nothing to validate: spoofing it selects a cohort and nothing else, which is the
+same line D31 already draws for client-supplied tokens. So the domain
+requirement attaches to edge-validated identity, and to no other mechanism here.
+
+Nor is a spoofable bucket a new exposure. The `mendel_arm` cookie D23 sets is
+equally editable by whoever holds it, so a visitor determined to pick their Arm
+could already do so; what either of them buys an attacker is a seat in a cohort
+of their choosing, for themselves and their own devices, which moves no
+comparison anybody would notice. D29 is untouched by this and remains about the
+internal identity header of §3.2, where the value being carried is an identity
+and consequences follow from it.
+
+### 3.7 `request` assignment routes by weight, and needs none of this
+
+`assignment_unit: request` means every request is independent, so there is
+nothing to keep sticky and nothing to remember between requests. Weighted
+`backendRefs` do exactly that and are Core Gateway API (D46).
+
+D25 rejected weighted backendRefs because they pick per request, splitting one
+visitor across Arms on every navigation. That is a fatal objection for every
+sticky unit and not an objection at all here: splitting per request is not a
+hazard of this unit, it is its definition. §13 §5.1 already establishes that
+`request` admits no per-Assignment-Unit durable writes, which is the thing
+stickiness was protecting.
+
+So the cheapest experiment Mendel can run needs no assigner, no cookie, no
+header, and no application change — only an `HTTPRoute` with weights on it.
 
 ---
 
@@ -328,14 +481,31 @@ Per experiment, in `mendel-apps`:
 | `Deployment` | Arm | The Variation's image, `PORT` from `hosting.ContainerPort` |
 | `Service` | Arm | ClusterIP, selecting that Arm's pods |
 | `Gateway` | project | Provisions the experiment's own Envoy (§2.1) |
-| `Deployment` + `Service` | experiment | The assigner |
-| `ConfigMap` | experiment | Allocation the assigner reads |
-| `HTTPRoute` | experiment | Cookie matches per Arm, fallback to assigner |
+| `Deployment` + `Service` | experiment | The assigner — **`device` path only** |
+| `ConfigMap` | experiment | Allocation the assigner reads — **`device` path only** |
+| `HTTPRoute` | experiment | Match rules per Arm; what is matched depends on the path |
 | `Secret` | Arm | The Arm's own datastore credential (§5) |
 | `NetworkPolicy` | Arm | Egress restriction (§5) |
 
+The two rows marked `device` path only are absent from every other experiment,
+which is most of them: §3.6 needs neither, and §3.7 needs no routing state
+beyond the weights on the `backendRefs` themselves.
+
+What the `HTTPRoute` matches, per path:
+
+| Path | Match rules | Where the allocation lives |
+|---|---|---|
+| `request` | none; weighted `backendRefs` | the weights, in the route |
+| `device` | `mendel_arm=<slug>` per Arm, fallback to the assigner | the assigner's `ConfigMap` |
+| bucket | the bucket values allocated to each Arm, matched exactly | **the match rules themselves** |
+
+The bucket path putting the allocation in the route rather than in a ConfigMap
+still satisfies D24 — production traffic depends on the cluster, not on Mendel
+being reachable — and is one fewer object to keep in step with the route beside it.
+
 Mainline keeps the Deployment and Service it already has; it becomes one more
-`backendRef`, matched by `mendel_arm=0`.
+`backendRef`, matched by `mendel_arm=0` on the `device` path and by the
+unallocated bucket values on the bucket path.
 
 `deployToGKE` grows an Arm-aware sibling rather than being overloaded: it
 currently assumes one Deployment named for one app, and an experiment needs N
@@ -372,10 +542,24 @@ effects" a fact rather than a hope.
 
 ## 6. Changing and stopping
 
-**Reallocation** rewrites the ConfigMap. Existing visitors keep their Arm, since
-their cookie decides; only newly-assigned visitors see the new weights. That is
-the correct behaviour for an experiment in flight and needs no explanation to
-anyone who has run one.
+**Reallocation** rewrites the ConfigMap on the `device` path. Existing visitors
+keep their Arm, since their cookie decides; only newly-assigned visitors see the
+new weights. That is the correct behaviour for an experiment in flight and needs
+no explanation to anyone who has run one.
+
+On the bucket path there is no ConfigMap and the allocation is the match rules,
+so reallocation is editing the route — and it comes with a constraint the
+`device` path does not need (D49). **An Arm may be grown from unallocated
+buckets, or withdrawn to mainline, and a bucket may never move from one Arm to
+another.** Moving one switches everybody in it mid-experiment, which is the one
+thing sticky assignment exists to prevent; it would also mean a participant
+whose durable writes were made under Tier 2 rules for Arm a suddenly being
+served Arm b, which is the interleaving §13 §3 admits Tier 2 on the strength of
+avoiding.
+
+Withdrawal to mainline is safe for the reason O11 already gives: a visitor whose
+Arm stops serving falls through to mainline, which is correct, and is what the
+withdrawal acknowledgement is taken about.
 
 **The kill switch must override cookies**, and this is the detail most easily
 got wrong. Setting the allocation to 100% mainline only changes what *new*
@@ -422,8 +606,14 @@ it "the control changed underneath the comparison" has nowhere to be recorded.
    probe, the install path when permitted, the admin script when not, the
    `GatewayClass` acceptance check, and the experiment-capable distinction on
    the channel.
-4. **The assigner**, with its ConfigMap contract. Testable on its own: given
-   weights and a cookie, which Arm.
+4. **Assignment**, cheapest path first, since each is independently useful and
+   the order is also increasing risk. Weighted `backendRefs` for `request`
+   (§3.7) need nothing but route generation. The bucket path (§3.6) needs the
+   middleware codegen emits, the salt injection, and the bucket-to-Arm match
+   rules — all testable as pure functions: given a key, a salt and an
+   allocation, which Arm. **The assigner** (§3, §3.5) comes last of the three:
+   it is a service to build, deploy and keep alive, and it serves only the
+   `device` path.
 5. **Arm deployment and HTTPRoute generation** (§4), as pure functions first —
    the same shape as `k8sManifestFor`, so the resources can be tested without a
    cluster.
@@ -442,9 +632,9 @@ channel, which §13 §15 records as the remaining staging move.
 | D21 | Experiments only for Mendel-deployed production | Reach into user-configured ingress | Mendel would be editing routing it did not create, with no safe way back |
 | D22 | Mendel owns the `Gateway`; the controller is installed by whoever may | Mendel always installs, or never installs | The two layers have different scopes and different owners |
 | D22a | Detect the right with `SelfSubjectAccessReview`, install if permitted, else emit a script | Infer from the IAM role name | IAM and RBAC combine as a union; asking the cluster is exact |
-| D23 | Assign once by 302 + cookie, then match on the cookie | Envoy Lua/WASM filter | Header matching is core Gateway API; a Lua filter undoes the portability it claims |
-| D24 | Weights in a ConfigMap the assigner reads | Assigner queries Mendel per request | Production traffic must not depend on Mendel being up |
-| D25 | Weights not in `backendRefs` | Weighted backendRefs | They pick per request, splitting one visitor across Arms |
+| D23 | Assign once by 302 + cookie, then match on the cookie | Envoy Lua/WASM filter | Header matching is core Gateway API; a Lua filter undoes the portability it claims. **Narrowed by D45 to `assignment_unit: device`** |
+| D24 | Weights in a ConfigMap the assigner reads | Assigner queries Mendel per request | Production traffic must not depend on Mendel being up. **Applies where there is an assigner; §3.6 keeps the property with no ConfigMap** |
+| D25 | Weights not in `backendRefs` | Weighted backendRefs | They pick per request, splitting one visitor across Arms. **Holds for every sticky unit; D46 takes the `request` carve-out** |
 | D26 | Kill switch removes the match rules | Set allocation to 100% mainline | Allocation only affects new visitors; the already-assigned keep their cookie |
 | D27 | A Variation may change exactly one deployable unit, which must be a single isolated pod behind the Gateway | Admit several that can each extract the key | Extraction makes an Arm knowable, not reachable: the edge cannot see an internal call, so Arm b's A still reaches mainline B. Edge-entered units avoid that but need cookie scoping and non-302 assignment, neither of which exists (§3.1) |
 | D28 | Propagate the Assignment Unit key and recompute the Arm at each hop | Propagate the Arm as trace baggage | Identity is already in flight and needs no correlation; a lost key means mainline, a lost context means a wrong Arm |
@@ -452,12 +642,38 @@ channel, which §13 §15 records as the remaining staging move.
 | D30 | Require the Assignment Unit key to be edge-extractable | Analyse whether extraction precedes divergent code | Reachability in an arbitrary codebase is not decidable from a diff; the structural rule needs no analysis |
 | D31 | A decline names the client change that would lift it | Refuse and stop | Mendel writes the client, so the remedy is often a Hop it can propose — and for native clients it is the only mechanism |
 
+### 9.1 Added by the amendment
+
+Numbered from D45 because D32–D44 are taken by
+[17_functional_area_matrix.md](17_functional_area_matrix.md), which was written
+between this plan and its amendment. Decision numbers are global across these
+documents and are never reused, so an amendment takes the next free ones rather
+than reopening the range this plan started with.
+
+| # | Decision | Rejected alternative | Why |
+|---|---|---|---|
+| D45 | Compute the Arm where the identity already is; the edge only matches. Three mechanisms behind one seam, chosen by the declared Assignment Unit | One mechanism for every unit — the edge-minted cookie | It makes the effective unit the browser for *every* experiment, which §13 §14 accepts only for Tier 1 and calls out as a cost |
+| D46 | `assignment_unit: request` routes by weighted `backendRefs` | An assigner for it too | Splitting per request is not a hazard of this unit, it is its definition; and §13 §5.1 already bars the durable writes stickiness was protecting |
+| D47 | For `user`, `session` and `tenant`, the application mints a bucket from the key and a per-experiment salt Mendel injects; the edge matches it exactly | Prefix-match an existing identity field with a regular expression | No salt to turn, so every experiment draws the same cohort; assumes a uniformity a sequential id does not have; and regex matching is implementation-specific where exact matching is Core |
+| D48 | One bucket per running experiment, in its own cookie; the salt is fixed for that experiment's life | One project-wide bucket reused across experiments | A single scalar cannot answer for two salts, and rotating mid-flight re-buckets everyone at once |
+| D49 | On the bucket path an Arm grows from unallocated buckets or is withdrawn to mainline; a bucket never moves between Arms | Reassign buckets freely when the allocation changes | Moving one switches everybody in it mid-experiment, and hands a participant with Tier 2 writes under Arm a to Arm b |
+
 ## 10. Open questions
 
-**O10 — Does the assigner see enough to assign well?** It sees a cookie-less
-request and nothing else. Excluding a cohort — logged-out users, a region, a
-plan tier — needs an attribute it does not have. Either the app supplies one on
-the request, or targeting is limited to "everyone" in the first cut.
+**O10 — Does the assigner see enough to assign well? — largely resolved by
+§3.6.** The assigner sees a cookie-less request and nothing else, so excluding a
+cohort — logged-out users, a region, a plan tier — needs an attribute it does
+not have.
+
+On the bucket path the question does not arise: the application computes the
+bucket, so it can decline to compute one, and a visitor with no bucket is served
+mainline. Targeting becomes an ordinary predicate in code that already holds
+every attribute anyone would target on, rather than an attribute someone has to
+get onto the request for the edge's benefit.
+
+What remains open is the `device` path, where targeting is still limited to
+"everyone" — which is the right first cut for presentation experiments on
+anonymous traffic, since there is by construction nothing known to target on.
 
 **O11 — What happens to a visitor whose Arm is withdrawn mid-session? —
 resolved.** Their cookie names an Arm that no longer routes, so they fall
@@ -546,3 +762,17 @@ cookie reaches that Arm.
 different paths of one application both want to attach to the same parent
 Gateway and hostname. Gateway API merges routes across resources, but the
 precedence rules are worth pinning down before relying on them.
+
+The amendment raises the stakes: a bucket-path experiment carries one match rule
+per allocated bucket rather than one per Arm, so a route holds tens of rules
+instead of a handful. That is still small in absolute terms, and it is generated
+rather than written, but it makes "one route per experiment" the obvious answer
+and makes any per-implementation limit on rules per route worth checking rather
+than assuming.
+
+**O22 — How many concurrent experiments can one application carry?** D48 gives
+each running experiment its own bucket cookie, so the application sets one per
+experiment and the deployment carries one salt per experiment. Two or three is
+plainly fine and twenty is plainly not; where the line falls, and whether Mendel
+should cap it or merely report it, is not settled. It interacts with §13 §7's
+concurrency work rather than being independent of it.
