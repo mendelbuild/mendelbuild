@@ -399,7 +399,7 @@ conditions down the side, functional areas across.
 | An adapter exists for the datastore | probed | unavailable | | | | | | ● | ● |
 | A privileged datastore credential is available | asked | user | | | | | | | ● |
 
-● required ○ probably required, see O21
+● required ○ required only under some assignment mechanisms, see O21
 
 Three things this table says that the prose could not.
 
@@ -417,8 +417,11 @@ is otherwise disjoint, which is §3.5's answer.
 
 **The `○` cells are a finding, not a formatting choice.** Nothing in §13 or §16
 says a live experiment requires a domain the user controls, and drawing the
-table makes the question unavoidable: assignment works by a cookie set at the
-edge, and a cookie's scope is a host. See O21.
+table made the question unavoidable. Pulling on it turned out to expose
+something about §16 rather than about this document: the requirement is not
+cookies, it is whether the edge has to *validate* what it routes on, and there
+are assignment mechanisms where it does not. O21 has the argument; the
+amendment belongs in §16 D23.
 
 ### 4.3 A functional area may be a condition of another
 
@@ -619,16 +622,103 @@ draft failed" from "no objectives yet" with three different sentences for what i
 arguably one condition. Forcing it into the catalogue may lose something the
 ribbon does well. Listed, not committed.
 
-**O21 — Does a live experiment require a domain the user controls?** The `○`
-cells in §4.2. Assignment works by a cookie the assigner sets (§16 D23), and a
-cookie is scoped to a host; a deployment reached at a bare LoadBalancer IP has a
-host of sorts, but §16 §3.1 already flags cookie scope as an unresolved
-constraint for multi-unit experiments, and `DeployURLLimitation` already
-documents that a bare IP over http is unacceptable to anything that cares about
-origins. If the answer is yes, *Named* becomes a prerequisite of both experiment
-rows and the platform prerequisite in §13 §4.2 grows a second half that should
-be raised in the same early, unprompted conversation. This is the one question
-here that changes what a user is told before they start.
+**O21 — Does a live experiment require a domain the user controls? — restated.**
+The `○` cells in §4.2. The first draft of this question assumed the answer
+followed from cookies: assignment works by a cookie the assigner sets (§16 D23),
+a cookie is scoped to a host, and a bare LoadBalancer IP over http is a poor
+host to scope anything to.
+
+That framing was too narrow, and the review's question — *do we need a cookie at
+all, or could an existing L7 field be mapped declaratively to Arms?* — is what
+exposes it. Three mechanisms are available, and they do not all imply a domain:
+
+- **Map an existing field directly.** Route on a value already in the request:
+  a tenant subdomain, an authenticated user id header, a JWT claim. No cookie,
+  no assigner, no redirect. Bucketing is done by matching the value's shape —
+  a hex prefix, say — rather than by hashing it.
+
+- **Have the application emit a bucket.** Codegen adds a middleware that hashes
+  the Assignment Unit key with a salt Mendel injects as an environment variable
+  and sets a header carrying a number from 0 to 99. The edge matches that value
+  exactly. This is §13 §10.1's argument applied to routing rather than to
+  metrics: the cost is a few lines of the app's own code, which Mendel writes
+  anyway, and what lands in the repository is a middleware and an env var with
+  no Mendel import in sight.
+
+- **Mint identity at the edge**, which is §16 D23 as it stands.
+
+Only the third *requires* a cookie, and it requires one because it is the only
+mechanism that works for a visitor Mendel knows nothing about. That is the
+launch surface: §13 §3 puts presentation experiments on possibly-logged-out
+traffic first, and a landing page has no user id header to map. **So the third
+mechanism cannot be retired**, and the first two cannot serve Tier 1 alone.
+
+But the first two are strictly better wherever they apply, and where they apply
+is exactly Tier 2: a Variation writing per-Assignment-Unit durable state is
+writing rows for someone the application has already identified, so the key is
+in flight by construction. They delete the assigner Deployment, the Service, the
+allocation ConfigMap, the extra round trip, the `?_ma=1` loop-breaker and the
+"a first-ever POST cannot be redirected" caveat — all of §16 §3.4. They also
+make §16 D28 nearly free, since the value propagated to each internal hop is the
+same value the edge matched on.
+
+**Which restates the condition properly.** The requirement was never cookies. It
+is: **does the edge have to validate what it routes on?** §16 D29 says the edge
+must overwrite the identity header from the validated session, because a caller
+that sets its own identity header picks its own Arm. Validating a session at the
+edge means reading a credential in flight, which means TLS, which means a
+certificate, which means a domain — no certificate authority will issue for a
+bare address.
+
+It only escapes that where the routed value is a *bucket* rather than an
+identity. §16 D31 already draws this line for client-supplied values: an opaque
+token is fine because assignment is not an authorisation decision. A bucket
+number is the same kind of thing — spoofable, and harmless to spoof beyond
+self-selection into a cohort.
+
+So the answer is conditional, and the condition is worth writing into the matrix
+in place of the `○` cells:
+
+| Mechanism | Needs a domain | Works for anonymous traffic |
+|---|---|---|
+| Application-emitted bucket header | no | only if the app mints an anonymous id, which is a cookie again |
+| Mapped identity field, validated at the edge | **yes** | no |
+| Mapped opaque token, unvalidated | no | no |
+| Mendel-set cookie at the edge (§16 D23) | yes, in practice | **yes** |
+
+Two things still argue for the cookie beyond anonymous traffic, and they are the
+reason this is an open question rather than a decision.
+
+**A mapped field carries no salt.** Assignment is supposed to be a function of
+the key, the allocation *and* a salt, so that successive experiments do not draw
+the same cohort every time. Prefix-matching a user id has no salt to turn, and
+the same tenth of the population is the guinea pig forever. Partially fixable by
+giving each experiment a disjoint slice of the value space rather than the same
+one — two hex characters give 256 slices to hand out — which is enough for a
+long time and is not the same as independence. The application-emitted bucket
+does not have this problem at all, since Mendel injects the salt.
+
+**A mapped field may not be uniform.** A UUIDv4 prefix is; a sequential integer
+id is emphatically not, and neither is a tenant slug or an email. So direct
+mapping needs Mendel to establish that the field is uniformly distributed before
+trusting a prefix match to allocate anything — which is a new admission check
+with no equivalent today. The application-emitted bucket avoids this too, since
+a hash is uniform whatever it is fed.
+
+Both objections point the same way: **the application-emitted bucket is the
+strong version of the idea**, and direct field mapping is the convenient version
+that needs two guards direct mapping cannot easily provide.
+
+There is one conformance cost to weigh. Gateway API's exact header match is Core
+support; regular-expression matching is implementation-specific. Direct
+prefix-matching therefore needs a regex and steps down a conformance level,
+which is the axis §16 §6.2 used to reject the Lua filter, so it should not be
+adopted without noticing. Matching an enumerated bucket value is exact, and
+stays Core — a hundred match rules is unlovely and Mendel generates them.
+
+**What this does not change.** It is a §16 decision, not this document's, and it
+is being implemented in parallel. Recorded here because it is the condition the
+matrix asked about; the amendment belongs in §16 D23 and is not made here.
 
 ---
 
