@@ -308,6 +308,64 @@ cannot be selected at all. Writing setup guidance nobody can reach, and nobody
 has run, is the failure this area already had once; they get a script when they
 get a combo, and the test exempts them until then.
 
+### Every Gate Is a Functional Area Condition
+
+A **Functional Area** is something Mendel can do for a project: run a demo,
+deploy to production, serve deployments by name over https, run a live
+experiment. A **Functional Area Condition** is something that must be true for
+one to be available. Both terms are written in full; see the naming rule below.
+
+There are more than forty such conditions in the tree, and before they were
+gathered they were enforced through seven unrelated mechanisms — a typed
+`Require` function, an ordered ladder, a `Blocking()` status list, a boolean
+struct, a lifecycle `switch`, an inline `if` in a handler, and a failure inside a
+background job. The last two are the ones that hurt: a gate enforced only by an
+inline check cannot be listed or shown in advance, and one enforced only by a
+background failure costs the user a deploy to discover.
+
+**When you add a gate, add a condition** — do not invent an eighth mechanism.
+The design is `dev/claude_plans/17_functional_area_matrix.md`; the two things to
+know without reading it:
+
+**A condition is a total predicate.** True or false in *every* situation, never
+inapplicable. If you can construct a case where it is neither, it names a
+*mechanism* rather than an *outcome*, and must be restated. "A verification
+datastore exists" is silent about an experiment that changes no schema;
+"schema changes can be proved additive without touching production" is true of
+it, because there is nothing to prove. Likewise "a rate card exists" becomes "a
+generation run is bounded before it starts". There is no conditional cell and no
+severity flag — a cell is required or it is not.
+
+**A thing worth saying that gates nothing is a warning, not a condition.**
+Production answering over http means the assignment cookie cannot be `Secure`,
+which is real, permanent, and a poor reason to refuse to run an experiment.
+Warnings live beside the matrix, never in it, so every cell stays a gate.
+
+Two corollaries that have already cost time:
+
+- **`unknown` is not `false`.** A condition Mendel has not checked, or cannot
+  yet evaluate, is neither satisfied nor failed. `DomainObservation.Known` and
+  `Fact`'s `FactUnknown` exist for this: reporting "looked and found nothing"
+  as "not done" tells a user to redo something they did an hour ago.
+- **Say what would make it true.** Every condition carries one hand-written
+  sentence naming what is missing, and the declining code path and the checklist
+  render *the same string*. `experiment.RequireForExperiments` is the model.
+
+### Name New Concepts in Full
+
+For vocabulary that is not already core to Mendel — Hop, Variation, Arm,
+Assignment Unit — prefer the longer, completely unambiguous term. "Functional
+Area Condition", not "Condition". Core words earned short names by constant use;
+newly coined ones have not, and a short name that collides with an existing one
+costs more than the characters it saves. "Capability" was rejected for exactly
+this: `experiment.Capabilities` and `web/capabilities_test.go` already meant two
+different things by it.
+
+Before coining a name, grep the tree for it. If it collides, or if you cannot
+say how it differs from the term beside it, do not coin it — that second test is
+what removed "Clause" from the matrix design, since nobody could distinguish a
+clause from a condition.
+
 ### No Hardcoded Platform Options
 
 **NEVER hardcode lists of hosting platforms, cloud providers, or deployment options in Go code.** These change frequently and vary by Mendel installation.
