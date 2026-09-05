@@ -304,58 +304,80 @@ limitation, explains why the obvious escape does not work, and points at the
 choice that would lift it (set a domain you control). A checklist row that says
 "impossible" without that third part is a dead end.
 
-### 3.5 The fifth question, from the audit: absence that narrows rather than denies
+### 3.5 The fifth question: every cell is true or false, and never neither
 
-Three conditions in the tree today do not block anything when absent. They make
-the thing that happens worse:
+Three conditions in the tree do not block anything when absent. They make the
+thing that happens worse:
 
-- **No Anthropic API key.** `ProjectReadiness.IsReady()` deliberately excludes
-  `HasAPIKey`, and `MissingSettings()` does not list it.
+- **No Anthropic API key** on the project. `ProjectReadiness.IsReady()`
+  deliberately excludes `HasAPIKey`, and `MissingSettings()` does not list it.
 - **No rate card for the model.** `runBudget.Apply` falls back from a spend
   ceiling to a 50-round cap, and says so in the log.
 - **No privileged datastore credential** (§13 §15). Arms run as the application,
   enforcement is unavailable, and the design is explicit that this is "not a
   silent downgrade."
 
-The first draft proposed a `degrades` severity on the cell for these, and left
-the alternative — that they are separate functional areas — as an open question.
-**Drawing the matrix answered it, and there is no severity field** (D38).
+And a fourth shape turned up later, in `experiment_readiness.go`: a verification
+datastore is required of an experiment that changes the schema and irrelevant to
+one that does not. The obvious readings are a severity on the cell for the first
+three and a conditional cell for the fourth, and **both are wrong** (D33, D38).
 
-§4.2 shows it — or so this document argued, and see O17, which reopened on
-evidence that landed after it was written. *Enforce Arm containment* shares
-almost no conditions with *Run a live experiment with schema changes*. It needs the datastore adapter and the
-privileged credential and nothing else, while the experiment row needs the
-migration column set and the whole routing column set and not the privileged
-credential. Two rows that overlap in one cell out of twenty are not one row with
-an asterisk on it. The same reading applies to the other two: "cost-bounded
-generation" and "round-bounded generation" are different things Mendel does, and
-the rate card is required for one of them.
+**A condition is a total predicate. If a situation exists where it is neither
+true nor false, the condition is stated at the wrong level.**
 
-This is the clearest case in the document of the table paying for itself. The
-question was unanswerable in prose and obvious once the cells were filled in.
+The tell is always the same: a condition that goes undefined names a *mechanism*
+rather than an *outcome*. "A verification datastore exists" is a mechanism, and
+it has nothing to say about an experiment that changes no schema. State the
+outcome instead —
 
-The remaining decision here is the smaller one: **a condition Mendel cannot
-currently evaluate is never reported as satisfied**. `unknown` (there is an
-evaluator and it has not run) and `unimplemented` (there is no evaluator) are
-both distinct from satisfied and from unsatisfied. This is the `Known` flag from
-`DomainObservation`, promoted and given a second sibling, and the comment there
-already argues it better than this paragraph does: the zero value of an
-observation is indistinguishable from "looked, and found nothing", which would
-tell a user to create records they created an hour ago.
+> **Schema changes can be proved additive without touching production.**
 
-The consequence for live experiments today is that the page says, honestly, that
-several of its conditions are designed and not built, and that Mendel will not
-claim the functional area works. That is a better answer than any of the five
-the product currently gives.
+— and it is true of an experiment with no migration, because there is nothing to
+prove; true of one with a migration and somewhere to verify it; false only when
+there is a migration and nowhere. Three states, no fourth, nothing conditional.
 
----
+The code already reaches this on its own for the case it can answer.
+`experiment_readiness.go` returns `StepDone` with *"Not needed: nothing in this
+experiment changes the schema"* when `SchemaChanges` is `FactFalse` — a step
+marked done because the requirement is vacuous, which is exactly the total
+predicate. Its `Advisory` flag fires only in the remaining case,
+`FactUnknown`, where Mendel does not yet know whether a migration is coming. And
+"not known yet" is not a severity and not applicability: it is the `unknown`
+state this design already has, gated on a dependency it already models — *it is
+settled whether this experiment changes the schema*.
+
+Restating the other three the same way disposes of the severity too:
+
+| Mechanism, undefined somewhere | Outcome, total |
+|---|---|
+| A rate card exists for the model | A generation run is bounded before it starts |
+| An adapter exists for the datastore | The datastore supports what this experiment does |
+| A project-level Anthropic key is set | An API key is available to generate with |
+
+Each right-hand form is true or false in every situation, including the ones
+that made the left-hand form go quiet.
+
+**What is left over is a warning, and a warning is not a cell.** One case does
+not restate: production answering over http means the assignment cookie cannot
+be `Secure`, so it can be rewritten in transit and a participant could choose
+their own Arm. That is real, it is permanent, and it is a poor reason to refuse
+to run an experiment — `experiment_readiness.go` marks it `Advisory`
+unconditionally and is right to. It is not a gate, so it does not belong in a
+grid of gates. Warnings are a separate, short list beside the matrix, and the
+matrix stays a conjunction of predicates that are each simply true or false.
+
+This is the same lesson as §3.1, arrived at from the other end. There the fix
+for an apparent disjunction was to state the condition at the level of what is
+wanted rather than how it is supplied. Here the fix for an apparent third truth
+value is the same move. Two of the four questions this section set out to answer
+turn out to have one answer.
 
 ## 4. The matrix
 
 ### 4.1 The rows
 
-Seven functional areas, all of which exist as things a user wants and asks
-about. The last three are not available today.
+Six functional areas, all of which exist as things a user wants and asks about.
+The last two are not available today.
 
 | # | Functional Area | Short name below |
 |---|---|---|
@@ -363,65 +385,70 @@ about. The last three are not available today.
 | 2 | Run a demo of a Variation | Demo |
 | 3 | Deploy to production | Prod |
 | 4 | Serve deployments by name over https | Named |
-| 5 | Run a live experiment, presentation only | Exp1 |
-| 6 | Run a live experiment with schema changes | Exp2 |
-| 7 | Enforce Arm containment | Enforce |
+| 5 | Run a live experiment | Experiment |
+| 6 | Enforce Arm containment | Enforce |
+
+**One experiment row, not two.** An earlier draft had *Exp1* for a
+presentation-only experiment and *Exp2* for one with a migration, which was
+wrong twice over. The numbering implied a pair of comparable things when the
+second is the first plus a schema change, and the split only existed because
+the migration conditions appeared to be inapplicable to Exp1 — which §3.5 shows
+is an artefact of stating them as mechanisms. As totals they are simply true of
+an experiment with no migration, and the two rows are one.
+
+That also puts the matrix back in agreement with §13 §16 — *"Tier 1 falls out of
+Tier 2 rather than preceding it: an experiment that declares no migration is a
+Tier 1 experiment, and needs strictly less"* — and with `experiment_readiness.go`,
+which has always had one ladder. It matters beyond tidiness: two rows implies the
+user picks which kind of experiment they are running, and one row implies Mendel
+derives it from what the Variation declared. §13 is explicit that the tier is
+classified, never chosen.
 
 ### 4.2 The shared conditions
 
 **A condition used by exactly one functional area does not earn a place in the
 table** — it is a list under that row, and §5 has those. What a table is for is
-the sharing, so this is the sharing. Transposed so that seven columns fit:
-conditions down the side, functional areas across.
+the sharing, so this is the sharing. Transposed so the areas fit across:
 
-| Functional Area Condition | Evidence | Remedy | Code | Demo | Prod | Named | Exp1 | Exp2 | Enforce |
-|---|---|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Repository URL is set | asked | user | ● | ● | ● | | ● | ● | |
-| A push token is stored | asked | user | ● | ● | ● | | ● | ● | |
-| The encryption key is configured | observed | user | | ● | ● | | ● | ● | ● |
-| A deployment channel is configured | asked | user | | ● | ● | ● | ● | ● | |
-| The channel's combination is supported | derived | unavailable | | ● | ● | | ● | ● | |
-| The channel's credentials are stored | asked | user | | ● | ● | ● | ● | ● | |
-| The demo path is validated | probed | mendel | | ● | | | | | |
-| The production path is validated | probed | mendel | | | ● | | ● | ● | |
-| Every `secret` requirement has a value | declared | user | | ● | ● | | ● | ● | |
-| Every `acknowledgement` is confirmed | declared | user | | ● | ● | | ● | ● | |
-| The deployment's URL is registrable | derived | unavailable | | ● | ● | | | | |
-| A base domain is set | asked | user | | | | ● | ● | ● | |
-| The certificate is issued | observed | elsewhere | | | | ● | ● | ● | |
-| The platform can route by Assignment Unit | declared | unavailable | | | | | ● | ● | |
-| A Gateway API controller is installed | probed | **either** | | | | | ● | ● | |
-| A `GatewayClass` is `Accepted` | probed | mendel | | | | | ● | ● | |
-| The `GatewayClass` can match what assignment carries | probed | **either** | | | | | ● | ● | |
-| The Assignment Unit and key are declared | declared | user | | | | | ● | ● | |
-| The key is edge-extractable | declared | user | | | | | ● | ● | |
-| The Variation changes one deployable unit | probed | user | | | | | ● | ● | |
-| An effect size, duration and stopping rule are set | asked | user | | | | | ● | ● | |
-| The withdrawal dissonance is acknowledged | asked | user | | | | | ● | ● | |
-| An adapter exists for the datastore | probed | unavailable | | | | | | ● | ● |
-| A privileged datastore credential is available | asked | user | | | | | | | ● |
+| Functional Area Condition | Evidence | Remedy | Code | Demo | Prod | Named | Experiment | Enforce |
+|---|---|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| Repository URL is set | asked | user | ● | ● | ● | | ● | |
+| A push token is stored | asked | user | ● | ● | ● | | ● | |
+| The encryption key is configured | observed | user | | ● | ● | | ● | ● |
+| A deployment channel is configured | asked | user | | ● | ● | ● | ● | |
+| The channel's credentials are stored | asked | user | | ● | ● | ● | ● | |
+| The channel's combination is supported | derived | unavailable | | ● | ● | | ● | |
+| Every `secret` requirement has a value | declared | user | | ● | ● | | ● | |
+| Every `acknowledgement` is confirmed | declared | user | | ● | ● | | ● | |
+| The production path is validated | probed | mendel | | | ● | | ● | |
+| The deployment's URL is registrable | derived | unavailable | | ● | ● | | | |
+| A base domain is set | asked | user | | | | ● | ● | |
+| The certificate is issued | observed | elsewhere | | | | ● | ● | |
+| The datastore supports what this experiment does | probed | unavailable | | | | | ● | ● |
 
-● required
+● required. Every marked cell is required and every one of them is true or
+false; there is no operator in the table beyond *and*, and no third truth value
+in a cell (D33, D51).
 
 Three things this table says that the prose could not.
 
-**The five columns down the left third are the reason to build this at all.**
-Repository, encryption key, channel, credentials, secrets and acknowledgements
-are required by five or six rows each and are today checked in five or six
-unrelated places, in different words, at different moments. Those are the
-duplicate implementations the matrix removes.
+**The top eight rows are the reason to build this at all.** Repository, push
+token, encryption key, channel, credentials, combination, secrets and
+acknowledgements are required by three or four rows each, and are today checked
+in three or four unrelated places, in different words, at different moments.
+Those are the duplicate implementations the matrix removes, and they are the
+only reason a table beats six separate checklists.
 
-**Exp1 and Exp2 differ by one block, and Enforce is not part of either.** The
-first two share every routing condition and diverge only where migrations
-appear — which is §13's own conclusion (Tier 1 "falls out of Tier 2 rather than
-preceding it") arrived at independently. Enforce shares one cell with them and
-is otherwise disjoint, which is §3.5's answer.
+**Enforce is a row, not an asterisk.** It overlaps the experiment row in two
+cells out of thirteen. Two rows sharing two cells are not one row with a
+severity on it — which is how the "absence that narrows" question first got
+answered, before §3.5 found the better reason.
 
-**The two domain cells on the experiment rows are a finding.** Nothing in §13
-or §16 said a live experiment requires a domain the user controls, and drawing
-the table made the question unavoidable. The cells are marked required, but not
-for the reason that first suggested them, and the difference is the whole value
-of having asked.
+**The two domain cells on the experiment row are a finding.** Nothing in §13 or
+§16 said a live experiment requires a domain the user controls, and drawing the
+table made the question unavoidable. The cells are marked required, but not for
+the reason that first suggested them, and the difference is the whole value of
+having asked.
 
 The reason offered first was cookies: assignment worked by a cookie, a cookie is
 scoped to a host. That turned out to be wrong twice over — a host-only cookie on
@@ -429,14 +456,25 @@ a bare address works, and §16 §3.6 now routes on a value needing no validation
 at all. What survives is unrelated to assignment: Mendel runs **one Gateway per
 namespace**, and the hostname is how one deployment's traffic is told from
 another's. Without a hostname there is no `HTTPRoute` emitted, so there is
-nothing to attach Arm matching to, whatever it would have matched on.
+nothing to attach Arm matching to, whatever it would have matched on. O21
+records how the question travelled.
 
-O21 records how the question travelled; §16 D45–D49 record the amendment it
-produced along the way.
+### 4.2.1 Warnings, which are not conditions
 
-This is the second thing the table paid for, and the more instructive of the
-two. The cell was right and every reason given for it was wrong, which no amount
-of prose was going to surface — it took having to defend one cell.
+Not everything worth telling a user gates anything. §3.5 keeps these out of the
+grid so that every cell stays a gate, and lists them beside it:
+
+| Warning | Area | What is lost |
+|---|---|---|
+| Production answers over http, so the assignment cookie cannot be `Secure` | Experiment | It can be rewritten in transit, and a participant could choose their own Arm |
+| No rate card for the model, so the run is bounded at 50 rounds rather than by spend | Code | Rounds are a poor proxy for cost; the bound holds, its relation to money does not |
+| No privileged datastore credential | Enforce | Arms run as the application, so containment is by classification alone |
+
+The third is the one to watch: it is a warning on *Enforce* only because Enforce
+is a row of its own. Were enforcement folded into the experiment row it would be
+a gate, and §13 §15's insistence that this is "not a silent downgrade" would
+have nowhere to live.
+
 
 ### 4.3 A functional area may be a condition of another
 
@@ -492,19 +530,26 @@ and this is the property that keeps it from becoming its own thing to maintain.
 
 ## 5. The single-row conditions
 
-The table above is the shared conditions. These are the rest, listed under the
-one row that needs each. Audited from the tree at `d24ef90`; "Today" is how the
-condition is enforced now, which is the inconsistency this replaces.
+The table above is the sharing. These are the rest, listed under the one row
+that needs each, and stated as totals so that none of them can go undefined.
+Audited from the tree at `d24ef90` and after; "Today" is how the condition is
+enforced now, which is the inconsistency this replaces.
 
 ### Code
 
 | Condition | Evidence | Remedy | Today |
 |---|---|---|---|
-| An Anthropic API key is present | asked | user | Excluded from `IsReady()` on purpose |
-| A rate card exists for the model | observed | user | Falls back to a 50-round cap (own row, §3.5) |
+| An API key is available to generate with | asked | user | Excluded from `IsReady()` on purpose |
+| A generation run is bounded before it starts | observed | user | `runBudget`, which always bounds — see the warning in §4.2.1 |
 | A strategy exists | derived | user | onboarding ribbon `switch` |
 | Objectives are approved | derived | user | onboarding ribbon `switch` |
 | A roadmap is approved | derived | user | onboarding ribbon `switch` |
+
+### Demo
+
+| Condition | Evidence | Remedy | Today |
+|---|---|---|---|
+| The demo path is validated | probed | mendel | `IsDemoValidated`, four inline checks |
 
 ### Named
 
@@ -518,24 +563,40 @@ present.
 | The wildcard A record resolves to it | observed | user | ladder step 3 |
 | The challenge records resolve | observed | user | ladder step 4, **fan-out by count** |
 
-### Exp1 and Exp2
+### Experiment
 
-| Condition | Evidence | Remedy | Row | Source |
-|---|---|---|---|---|
-| The allocation totals 100 with one mainline | derived | user | both | `ValidateAllocation` |
-| No durable writes when the unit is `request` | derived | user | Exp2 | §13 §5.1 — a derivation, not a rule beside it |
-| The migration has both an up and a down | declared | user | Exp2 | "an Arm that cannot be withdrawn cannot be run" |
-| The migration's objects are namespaced | declared | user | Exp2 | `mendel_exp_` |
-| Mendel can learn what the migration does without risking production data | probed | user | Exp2 | §3.1 — the one condition with two routes |
-| The migration passes the deny-list | probed | user | Exp2 | before anything runs |
-| The migration is purely additive | probed | user | Exp2 | the affirmative judgment |
-| The migration adds something | probed | user | Exp2 | |
-| The touched collections exist | probed | user | Exp2 | |
-| The touched collections have an identity | probed | unavailable | Exp2 | else the archive cannot be restored |
-| The migration will run against production, not the throwaway copy | probed | user | Exp2 | §3.1 — the former negation |
-| The verification datastore matches production | probed | user | Exp2 | else the proof is about the wrong schema |
-| No schema drift since admission | probed | elsewhere | Exp2 | re-checked at apply |
-| The projected archive size is under the ceiling | derived | unavailable | Exp2 | §13 §9 |
+The longest list, and the one where §3.5's restatement does the most work: every
+condition below beginning *"any migration"* or *"whatever this experiment"* is
+true of a presentation-only experiment, which is why there is one row and not
+two.
+
+| Condition | Evidence | Remedy | Source |
+|---|---|---|---|
+| The platform can route by Assignment Unit | declared | unavailable | §13 §6.3 — Cloud Run cannot |
+| A Gateway API controller that can match is installed | probed | **either** | §16 §2.3, §2.5, D22a, D50 |
+| Its `GatewayClass` is `Accepted` | probed | mendel | §16 §2.3 |
+| That `GatewayClass` can match what assignment carries | probed | **either** | §16 O23 — `Accepted` is not `capable` |
+| The Assignment Unit and its key are declared | declared | user | `.mendel/experiment.json` |
+| The key is edge-extractable | declared | user | §16 D30 |
+| The Variation changes one deployable unit | probed | user | §16 D27 |
+| An effect size, duration and stopping rule are set | asked | user | `NotReadyToStart` |
+| The withdrawal dissonance is acknowledged | asked | user | typed phrase, `requirement_acknowledgements` shape |
+| The allocation totals 100 with one mainline | derived | user | `ValidateAllocation` |
+| Durable writes agree with the Assignment Unit | derived | user | §13 §5.1 — vacuous unless the unit is `request` |
+| Any migration it declares has both an up and a down | declared | user | "an Arm that cannot be withdrawn cannot be run" |
+| Any migration it declares is namespaced | declared | user | `mendel_exp_` |
+| Schema changes can be proved additive without touching production | probed | user | §3.5 — the worked example |
+| Whatever this experiment changes is purely additive | probed | user | the affirmative judgment |
+| Whatever it touches exists and has an identity | probed | unavailable | else the archive cannot be restored |
+| The verification datastore agrees with production | probed | user | else the proof is about the wrong schema |
+| Nothing has drifted since admission | probed | elsewhere | re-checked at apply |
+| The projected archive size is under the ceiling | derived | unavailable | §13 §9 |
+
+### Enforce
+
+| Condition | Evidence | Remedy | Source |
+|---|---|---|---|
+| A privileged datastore credential is available | asked | user | §13 §15 |
 
 ### Everywhere
 
@@ -543,7 +604,6 @@ One condition applies to every row and is left out of the table because a column
 of solid dots carries no information: **the project exists and the reader may
 see it.** Worth stating once so that nobody adds it as a cell.
 
----
 
 ## 6. What is most likely to break this if it is built too early
 
@@ -642,62 +702,27 @@ for three DNS records. A project with twenty demos and a per-deployment
 acknowledgement produces "3 of 20 confirmed", and the remaining seventeen have
 no obvious presentation. The domain ladder's precedent does not reach this far.
 
-**O17 — reopened, and the code has already answered most of it.** Whether
-"absence that narrows" is a cell severity or a separate functional area. Drawing
-§4.2 appeared to settle it — separate rows, no severity field — and D38 was
-written on that basis.
+**O17 — resolved, and it took two goes.** Whether "absence that narrows" is a
+cell severity or a separate functional area.
 
-`DomainStep` then grew an `Advisory` flag, for a step *"worth doing and does not
-have to be done"*, with the reasoning that *"not every property is
-required-true: some are conditional on what is actually being attempted, and
-some are real concerns that are a poor reason to refuse to proceed."*
+Drawing §4.2 appeared to settle it — separate rows, no severity — and D38 was
+written on that basis. Then `DomainStep` grew an `Advisory` flag for a step
+*"worth doing and does not have to be done"*, which is the severity D38
+declined, arrived at independently in the one prototype §9 step 2 requires
+reproducing exactly.
 
-That sentence names **two** things, and `experiment_readiness.go` does both with
-the one boolean:
+Reading how it is used showed the flag carrying two different things.
+`https.Advisory = true` is unconditional, and is a genuine warning.
+`store.Advisory = !needed` fires only when `obs.SchemaChanges` is `FactUnknown`
+— the `FactFalse` case returns `StepDone` with *"Not needed: nothing in this
+experiment changes the schema"* — so it is not applicability either, but "Mendel
+does not know yet", which is the `unknown` state gated on a dependency.
 
-- **Always advisory.** `https.Advisory = true`, unconditionally. Production
-  answering over http only means the assignment cookie cannot be marked
-  `Secure`, so it can be rewritten in transit and a participant could choose
-  their own Arm. That is a real concern, it never stops being one, and it is a
-  poor reason to refuse to run an experiment. A **severity**.
-- **Advisory only sometimes.** `store.Advisory = !needed` and
-  `reach.Advisory = !needed`, where `needed` is `obs.SchemaChanges == FactTrue`.
-  A verification datastore is required of an experiment that changes the schema
-  and irrelevant to one that does not. The code names this itself — the constant
-  above it says three places "have to agree about which step is *the conditional
-  one*". Not a severity at all: **applicability**.
-
-So the answer is that both exist and the word was doing double duty, which was
-the third of the three readings and the one this document leaned away from.
-Two distinct things are wanted: a cell that **applies only when some fact
-holds**, and a condition that **applies and is not fatal**.
-
-**Which means D38 was over-generalised from one example.** It concluded "no
-severity field" from *Enforce Arm containment* overlapping the experiment rows in
-one cell out of twenty — two nearly disjoint things, correctly two rows. Apply
-the same test to the https case and it gives the opposite answer: "run an
-experiment with a tamper-resistant assignment cookie" shares every condition with
-"run an experiment" bar one. A row that is another row plus one cell is not a
-row.
-
-**The test, then, is overlap, and it is falsifiable:** near-disjoint conditions
-mean two functional areas; near-total overlap means one functional area and a
-severity on the cell. D38 becomes the second half of that rather than a blanket
-refusal.
-
-**And it collapses two rows in §4.2.** Exp1 and Exp2 are the same functional area
-with the datastore conditions conditional on a declared fact, which is what
-`experiment_readiness.go` already implements and what §13 §16 already says —
-*"Tier 1 falls out of Tier 2 rather than preceding it: an experiment that
-declares no migration is a Tier 1 experiment, and needs strictly less."* They are
-two columns here only because this document had no way to mark a cell
-conditional. That is not cosmetic: two rows implies the user picks which
-experiment they are running, and a conditional cell implies Mendel derives it
-from what the Variation declared — and §13 is explicit that the tier is
-classified, never chosen.
-
-Held rather than applied, since it restructures the table this document is
-mostly about, and §4.2 is what a reader looks at first.
+Neither reading survived review. D51 supersedes both: a condition that can go
+undefined names a mechanism, and restating it as an outcome makes it total. That
+disposes of the conditional case, disposes of two of the three narrowing cases,
+collapses Exp1 and Exp2 into one row (§4.1), and leaves exactly one warning
+(D52) — which is not a cell at all.
 
 **O18 — How stale may an observation be before it is `unknown` again?** The
 existing domain cache has an answer for DNS. A cluster access probe, a channel
@@ -862,7 +887,9 @@ Continuing the numbering from §13 (D1–D20) and §16 (D21–D31).
 | D35 | Conditions form one global DAG; `blocked` is computed, not authored | Per-row ordering; declaration order | Two rows could disagree about reality, silently; authored order is right when written and wrong three commits later |
 | D36 | Every condition carries a Declaration Scope and a Satisfaction Scope | One scope | `requirements.json` is declared per-Variation and satisfied per-project or per-deployment; one field asks project questions about a Variation |
 | D37 | A coarser question aggregates fan-out into one counted row | A row per instance | Already the rule for certificate challenge records: a ladder that grows a rung per zone says the task changed shape when it did not |
-| D38 | `unknown` and `unimplemented` are states, never satisfied; there is no `degrades` severity | Treat absent evidence as passing; mark narrowing conditions as degrading | The `Known` flag exists for exactly this reason; and §4.2 shows narrowing conditions belong to rows of their own |
+| D38 | `unknown` and `unimplemented` are states, never satisfied | Treat absent evidence as passing | The `Known` flag exists for exactly this reason: "looked and found nothing" would send a user to create records they created an hour ago |
+| D51 | A condition is a **total predicate** — true or false in every situation. A cell has no third value, conditional or otherwise; a condition that goes undefined names a mechanism and must be restated as an outcome | A `degrades` severity for the narrowing cases; a conditional cell for the schema case | Both encode in the grid something belonging in the condition's own definition. "A verification datastore exists" is silent about an experiment with no migration; "schema changes can be proved additive without touching production" is true of it. The same move as D33 |
+| D52 | A thing worth saying that gates nothing is a **warning**, listed beside the matrix and never in it | A non-blocking cell state | A grid of gates whose cells are sometimes not gates cannot be read at a glance, and exactly one warning does not restate as a total |
 | D39 | One sentence per condition, rendered by both the decline and the checklist | Separate error strings per call site | If the two can differ they will, and the page stops being the answer to "why can't I" |
 | D40 | Closed remedy vocabulary including `either` | A static actor field | "Install the controller" is Mendel's move or an administrator's depending on a runtime probe (§16 D22a) |
 | D41 | A functional area may itself be a condition of another | Define the same fact once as a row and again as a column | "Production is validated" is a row users ask about and a condition three rows depend on |
@@ -911,13 +938,18 @@ implementation without collision. Step 6 is the merge point.
    Input Needed like everything else. The developer grid (D43) goes behind the
    existing debug route.
 
-6. **The experiment rows**, including everything designed and not built as
-   `unimplemented`. This is the first time the catalogue carries a functional
-   area that is not available, and the first time `either` and `offered` have a
-   real user. O21 is settled, so *Named* is not a prerequisite here and the
-   experiment rows need no domain — but §16 §3.6's bucket path does need codegen
-   to emit the middleware and the deploy path to inject the salt, which is work
-   in §16's own build order and not in this one.
+6. **The Experiment and Enforce rows**, including everything designed and not
+   built as `unimplemented`. This is the first time the catalogue carries a
+   functional area that is not available, and the first time `either` and
+   `offered` have a real user — §16 D50's controller install being both. O21 is
+   settled the other way from how it was first answered: *Named* **is** a
+   prerequisite, because one Gateway serves the namespace and the hostname is how
+   deployments are told apart on it.
+
+   Two pieces of §16's own build order gate this rather than the reverse: Envoy
+   Gateway has to be installed for anything cookie-carried to run at all, and the
+   bucket path needs codegen to emit the middleware and the deploy path to inject
+   the salt.
 
 Steps 1 and 2 are the ones that decide whether any of the rest is worth
 building, for the same reason §13 §16 put migration non-interference first: they
