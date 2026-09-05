@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/bhs/mendelbuild/internal/crypto"
@@ -38,11 +40,18 @@ func (s *Server) observeExperimentReadiness(ctx context.Context, projectID uuid.
 		obs.ProdHost = pd.ProdHost()
 		obs.ProdHostname = domain.FactTrue
 
+		// Observed here rather than read from the domain page's cache. That cache
+		// is served for ten seconds, so by the time anyone opens this page it is
+		// almost always cold -- and a cold entry is reported as "could not tell",
+		// which would make the certificate step permanently undetermined however
+		// healthy the certificate was. This path already runs in the background
+		// with a minute to spend, so it can afford to look.
+		//
 		// The certificate has to cover this name, not merely exist: the demo
 		// wildcard does not reach the production host.
-		domainObs, at := s.observationFor(projectID, pd)
+		domainObs := s.observeDomain(ctx, projectID, pd)
 		switch {
-		case at.IsZero() || domainObs.CertificateState == "":
+		case domainObs.CertificateState == "":
 			obs.ProdHTTPS = domain.FactUnknown
 		case domainObs.CertificateState == "ACTIVE" && pd.CertificateCovers(obs.ProdHost):
 			obs.ProdHTTPS = domain.FactTrue
@@ -142,11 +151,15 @@ func (s *Server) observeGatewayControllers(ctx context.Context, projectID uuid.U
 // given and whether Mendel can reach it.
 func (s *Server) observeVerifyDatastore(ctx context.Context, projectID uuid.UUID) (set, reachable domain.Fact) {
 	stored, err := s.db.GetProjectEnvVar(ctx, projectID, VerifyDatastoreVar)
-	if err != nil {
-		return domain.FactUnknown, domain.FactUnknown
-	}
-	if stored == nil {
+	switch {
+	case errors.Is(err, pgx.ErrNoRows), err == nil && stored == nil:
+		// Not set is an answer, not a failure to look. The query reports a
+		// missing row as an error, and reading that as "could not tell" told the
+		// user Mendel had a problem when the truth was that they had not set one
+		// yet -- which is the exact confusion Fact exists to prevent.
 		return domain.FactFalse, domain.FactFalse
+	case err != nil:
+		return domain.FactUnknown, domain.FactUnknown
 	}
 
 	key, err := crypto.GetKey()

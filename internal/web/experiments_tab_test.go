@@ -233,3 +233,30 @@ func TestCanIVerdictIsReadFromStdoutAlone(t *testing.T) {
 		})
 	}
 }
+
+// "Not set" and "could not tell" are different answers to different questions,
+// and the page shows them differently on purpose.
+//
+// GetProjectEnvVar reports a missing row as an error, so reading any error as
+// unknown told the user Mendel had a problem when the truth was that they had
+// not set one yet — the exact confusion Fact exists to prevent, reintroduced one
+// layer above it.
+func TestMissingDatastoreReadsAsMissingNotAsAFailure(t *testing.T) {
+	absent := domain.ExperimentObservation{
+		GatewayAPI: domain.FactTrue, CookieMatching: domain.FactTrue,
+		ProdHostname: domain.FactTrue, ProdHTTPS: domain.FactTrue,
+		SchemaChanges: domain.FactTrue, VerifyDatastore: domain.FactFalse,
+	}
+	steps := domain.ExperimentReadiness(absent)
+	for _, s := range steps {
+		if !strings.Contains(s.Name, "non-production datastore") {
+			continue
+		}
+		if s.State != domain.StepYourMove {
+			t.Errorf("an unset datastore should be the user's move, got %q", s.State)
+		}
+		if strings.Contains(s.Detail, "could not") {
+			t.Errorf("an unset datastore was reported as a failure to look: %q", s.Detail)
+		}
+	}
+}
