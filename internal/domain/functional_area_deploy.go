@@ -7,12 +7,13 @@ import (
 
 // The conditions behind running a demo and deploying to production.
 //
-// Most of them were, until now, an inline `if` in a handler or a failure inside
-// a background job. Neither can be listed, shown in advance, or linked to, and
-// the second costs the user a deploy to discover -- `runChannelDemoDeployment`
-// gets as far as decrypting credentials before finding out one is absent.
-// Nothing here changes those call sites yet; that is the next step. This is the
-// conditions said once, so there is something for them to call.
+// Most of them were, until step 4 of the design, an inline `if` in a handler or
+// a failure inside a background job. Neither can be listed, shown in advance, or
+// linked to, and the second costs the user a deploy to discover --
+// `runChannelDemoDeployment` got as far as decrypting credentials before finding
+// out one was absent. Those call sites now assess the area and render the
+// sentences below, so a refusal and the checklist a reader is sent to say the
+// same thing.
 
 // Areas.
 const (

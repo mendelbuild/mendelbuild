@@ -441,13 +441,17 @@ func (s *Server) handleRedeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Assessed here as well as inside the deploy, because the deploy runs in the
+	// background: without this the reader is redirected to a deployment page
+	// and left to work out from a log line why nothing happened.
+	if a := s.assessDeployArea(ctx, domain.AreaProd, projectID, uuid.Nil); !a.Available {
+		http.Error(w, declineWithChecklist(a, projectID), http.StatusBadRequest)
+		return
+	}
+
 	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
 	if err != nil {
 		http.Error(w, "no deployment channel configured", http.StatusBadRequest)
-		return
-	}
-	if !channel.IsProdValidated() {
-		http.Error(w, "production deployment path is not validated", http.StatusBadRequest)
 		return
 	}
 

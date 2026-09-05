@@ -99,8 +99,15 @@ func (s *Server) runChannelProdDeployment(
 	if channel.HostingPlatform == nil {
 		return nil, fmt.Errorf("channel has no hosting platform")
 	}
-	if !channel.IsProdValidated() {
-		return nil, fmt.Errorf("production deployment path is not validated")
+
+	// Everything production needs, judged before a deployment row exists.
+	// Before this it was two checks either side of the record: an unvalidated
+	// channel refused without one, unmet requirements recorded a failed
+	// deployment that had never begun. Neither is an attempt worth keeping, and
+	// both now say the same thing the checklist says.
+	a, obs := s.assessDeployAreaWith(ctx, domain.AreaProd, projectID, uuid.Nil)
+	if !a.Available {
+		return nil, fmt.Errorf("%s", declineWithChecklist(a, projectID))
 	}
 
 	project, err := s.db.GetProject(ctx, projectID)
@@ -140,18 +147,9 @@ func (s *Server) runChannelProdDeployment(
 		return fail(err)
 	}
 
-	// Production runs the merged code, so it needs whatever the merged
-	// variations needed. Checking before the clone keeps a doomed deploy from
-	// consuming a build.
-	statuses, err := s.prodRequirementStatus(ctx, projectID,
-		predictedDeployURL(channel.HostingPlatform.Slug, appName))
-	if err != nil {
-		return fail(err)
-	}
-	if blocking := domain.BlockingRequirements(statuses); len(blocking) > 0 {
-		return fail(fmt.Errorf("production cannot run yet: %s", domain.UnmetSummary(statuses)))
-	}
-	appSecrets, err := s.appSecretsFor(ctx, projectID, statuses)
+	// The requirements the assessment judged, not a fresh read: a second lookup
+	// could disagree with the gate that has just allowed this.
+	appSecrets, err := s.appSecretsFor(ctx, projectID, obs.Requirements)
 	if err != nil {
 		return fail(err)
 	}

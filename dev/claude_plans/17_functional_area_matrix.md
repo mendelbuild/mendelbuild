@@ -984,19 +984,40 @@ implementation without collision. Step 6 is the merge point.
    for: a condition that cannot answer about some situation is not merely
    inelegant, it is a crash waiting for that situation.
 
-4. **Replace the inline handler checks.** — **deferred, and the reason is
-   scheduling rather than design.** `handleStartDemo`,
-   `runChannelDemoDeployment`, `runChannelProdDeployment` and the settings
-   handler should evaluate the functional area and render its missing sentences
-   instead of writing their own. Nothing user-visible changes except that the
-   sentences get better and a missing channel credential is reported before a
-   deploy starts rather than partway through.
+4. **Replace the inline handler checks.** — **done.** Seven hand-written gates
+   across `handlers_demo.go`, `handlers_prod_deploy.go` and
+   `handlers_settings.go` now evaluate the functional area and render
+   `Assessment.Missing`. `TestARefusalAndTheChecklistQuoteTheSameSentences`
+   holds a refusal and the page together, which is D39 asserted rather than
+   documented.
 
-   Held because the three files it lands in were being actively edited by the
-   routing work, and rebasing a handler refactor against live edits to the same
-   functions is a poor trade for a change with no user-visible urgency. Step 5
-   went first instead, which needed only new files. Pick this up once those
-   files are quiet.
+   It turned out to be less a refactor of the checks than of where the *facts*
+   come from. `gatherObservations` was project-scoped and the page's alone;
+   giving it a variation makes it the single place a project, a variation and a
+   deployment are observed together, and the deploy paths now read their
+   requirements back out of it rather than looking them up again — a second
+   lookup can disagree with the gate that just allowed the deploy. The predicted
+   deploy URL, which decides what an acknowledgement resolves to, had been
+   computed at three call sites and had to agree with a fourth copy inside the
+   deploy; it is derived once now, from `deployAppName`.
+
+   Two things changed beyond the wording, both deliberate:
+
+   **Seven gates became four, because most of them were duplicates of a check
+   further down.** `runDemoStartup` and the retry-with-fix path now judge only
+   whether a channel exists, which is what stops them calling the deploy at all;
+   `runChannelDemoDeployment` is the choke point all three demo paths pass
+   through, so the gate belongs there and not at each of them.
+
+   **Production is assessed before its `hosting_deployments` row exists.** The
+   two old checks sat either side of that row: an unvalidated channel refused
+   without one, unmet requirements recorded a *failed deployment that had never
+   begun*. Neither is an attempt worth keeping, and `handleRedeploy` assesses
+   too, so the reader still gets the reason synchronously rather than from a log
+   line.
+
+   Held until now because the three files it lands in were being actively edited
+   by the routing work; step 5 went first instead, needing only new files.
 
 5. **The page.** — **done**, `/p/{id}/available` and
    `/p/{id}/available/{areaID}`, a tab beside Deployment and Domain. It lists

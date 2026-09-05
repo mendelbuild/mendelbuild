@@ -54,6 +54,17 @@ func prodAppName(projectName string) string {
 	return fmt.Sprintf("%s-prod", projectName)
 }
 
+// deployAppName is the name a deployment gets on the platform: production's
+// where variationID is uuid.Nil, and that variation's demo otherwise. It is the
+// same convention gatherObservations predicts a URL from, so that an
+// acknowledgement is judged against the address the code will really answer on.
+func deployAppName(projectName string, variationID uuid.UUID) string {
+	if variationID == uuid.Nil {
+		return prodAppName(projectName)
+	}
+	return demoAppName(projectName, variationID)
+}
+
 // teardownCommandFor returns the shell command that tears down a deployment of
 // appName on the given platform. Stored with the deployment so teardown works
 // even if Mendel restarts.
@@ -119,39 +130,20 @@ func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if project has a deployment channel that requires validation
 	projectUUID, err := uuid.Parse(projectID)
-	if err == nil {
-		channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectUUID)
-		if err == nil && channel != nil {
-			// Channel exists - require demo validation
-			if !channel.IsDemoValidated() {
-				http.Error(w, "Demo deployment channel not validated. Go to Deployment settings to validate.", http.StatusBadRequest)
-				return
-			}
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
 
-			// The variation's own requirements gate the deploy. Starting a
-			// demo that cannot possibly work burns a deploy and produces a
-			// failure whose cause is a missing value, not the code.
-			deployURL := ""
-			if channel.HostingPlatform != nil {
-				project, err := s.db.GetProject(ctx, projectUUID)
-				if err == nil {
-					appName := demoAppName(sanitizeAppName(project.Name), variationID)
-					deployURL = predictedDeployURL(channel.HostingPlatform.Slug, appName)
-				}
-			}
-			statuses, err := s.variationRequirementStatus(ctx, projectUUID, variationID, deployURL)
-			if err != nil {
-				http.Error(w, "failed to check requirements: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			if blocking := domain.BlockingRequirements(statuses); len(blocking) > 0 {
-				http.Error(w, "This variation cannot run yet: "+domain.UnmetSummary(statuses)+
-					". Provide them on the variation page.", http.StatusBadRequest)
-				return
-			}
-		}
+	// Everything a demo needs, asked once and answered in the same words the
+	// checklist uses. Starting a demo that cannot possibly work burns a deploy
+	// and produces a failure whose cause is a missing value rather than the
+	// code -- and before this was a functional area, the reader learned those
+	// causes one deploy at a time.
+	if a := s.assessDeployArea(ctx, domain.AreaDemo, projectUUID, variationID); !a.Available {
+		http.Error(w, declineWithChecklist(a, projectUUID), http.StatusBadRequest)
+		return
 	}
 
 	_, err = s.db.GetVariation(ctx, variationID)
@@ -284,22 +276,15 @@ func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uu
 		logMilestone("Branch cloned successfully")
 	}
 
-	// Get deployment channel
+	// Get deployment channel. Only its absence is judged here, because a nil
+	// channel is what stops the deploy from being attempted at all; everything
+	// else this demo needs is assessed inside runChannelDemoDeployment, which
+	// restart and retry-with-fix also pass through and this function does not.
 	projID, _ := uuid.Parse(projectID)
 	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projID)
 	if err != nil || channel == nil {
-		failDemoWithFix(
-			"No deployment channel configured.",
-			"Go to Deployment settings to configure how this project deploys.",
-		)
-		return
-	}
-
-	if !channel.IsDemoValidated() {
-		failDemoWithFix(
-			"Deployment channel not validated for demos.",
-			"Go to Deployment settings and validate the demo deployment path.",
-		)
+		a := s.assessDeployArea(ctx, domain.AreaDemo, projID, variationID)
+		failDemoWithFix(declineReason(a), "The full list is at "+areaPath(projID, domain.AreaDemo)+".")
 		return
 	}
 
@@ -328,6 +313,21 @@ func (s *Server) runChannelDemoDeployment(
 		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, "")
 	}
 
+	// Everything this demo needs, judged before anything is spent on it. This is
+	// the choke point every path into a demo deploy passes through -- a first
+	// start, a restart, and a retry with a generated fix -- so it is where the
+	// gate belongs rather than at each of them.
+	//
+	// It also puts a missing channel credential where the reader can see it. The
+	// loop below decrypts them one at a time, so before this the first absent
+	// one surfaced partway through a deploy, naming itself and saying nothing
+	// about the two after it.
+	a, obs := s.assessDeployAreaWith(ctx, domain.AreaDemo, projectID, variationID)
+	if !a.Available {
+		failDemo(declineWithChecklist(a, projectID))
+		return
+	}
+
 	// Get project name for app naming
 	project, err := s.db.GetProject(ctx, projectID)
 	if err != nil {
@@ -343,10 +343,9 @@ func (s *Server) runChannelDemoDeployment(
 		return
 	}
 
-	// Get required credentials
-	required := hosting.RequiredCredentialsForCombo(channel.ArtifactKind, channel.HostingPlatform.Slug)
+	// Decrypt the credentials the assessment has just confirmed are stored.
 	env := make(map[string]string)
-	for _, name := range required {
+	for _, name := range hosting.RequiredCredentialsForCombo(channel.ArtifactKind, channel.HostingPlatform.Slug) {
 		cred, err := s.db.GetProjectCredential(ctx, projectID, name)
 		if err != nil {
 			failDemo(fmt.Sprintf("Missing credential %s: %v", name, err))
@@ -363,21 +362,9 @@ func (s *Server) runChannelDemoDeployment(
 	// Dispatch to platform-specific deployment
 	appName := demoAppName(projectName, variationID)
 
-	// The variation's requirements, checked here rather than only in
-	// handleStartDemo so that restart and retry-with-fix are gated by the same
-	// rule as a first start.
-	statuses, err := s.variationRequirementStatus(ctx, projectID, variationID,
-		predictedDeployURL(channel.HostingPlatform.Slug, appName))
-	if err != nil {
-		failDemo("Failed to read requirements: " + err.Error())
-		return
-	}
-	if blocking := domain.BlockingRequirements(statuses); len(blocking) > 0 {
-		failDemo("This variation cannot run yet: " + domain.UnmetSummary(statuses) +
-			". Provide them on the variation page.")
-		return
-	}
-	appSecrets, err := s.appSecretsFor(ctx, projectID, statuses)
+	// The requirements the assessment judged, not a fresh read: a second lookup
+	// could disagree with the gate that has just allowed this.
+	appSecrets, err := s.appSecretsFor(ctx, projectID, obs.Requirements)
 	if err != nil {
 		failDemo("Failed to read requirement values: " + err.Error())
 		return
@@ -1493,15 +1480,11 @@ func (s *Server) runFixAndDemo(projectID string, variationID, demoInstanceID uui
 
 	logMilestone("Fix applied, starting demo...")
 
-	// Get deployment channel
+	// Get deployment channel. As in runDemoStartup, only its absence is judged
+	// here; runChannelDemoDeployment assesses the rest.
 	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projID)
 	if err != nil || channel == nil {
-		failDemo("No deployment channel configured. Go to Deployment settings.")
-		return
-	}
-
-	if !channel.IsDemoValidated() {
-		failDemo("Deployment channel not validated for demos. Go to Deployment settings.")
+		failDemo(declineWithChecklist(s.assessDeployArea(ctx, domain.AreaDemo, projID, variationID), projID))
 		return
 	}
 
@@ -1526,14 +1509,9 @@ func (s *Server) handleRestartDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if project has a deployment channel that requires validation
-	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectUUID)
-	if err != nil || channel == nil {
-		http.Error(w, "No deployment channel configured. Go to Deployment settings.", http.StatusBadRequest)
-		return
-	}
-	if !channel.IsDemoValidated() {
-		http.Error(w, "Demo deployment channel not validated. Go to Deployment settings to validate.", http.StatusBadRequest)
+	// A restart is a demo start, and is gated by the same rule as one.
+	if a := s.assessDeployArea(ctx, domain.AreaDemo, projectUUID, variationID); !a.Available {
+		http.Error(w, declineWithChecklist(a, projectUUID), http.StatusBadRequest)
 		return
 	}
 

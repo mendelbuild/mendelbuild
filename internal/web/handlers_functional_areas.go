@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -20,10 +21,11 @@ import (
 // job that only says so after burning a deploy. There was no page, no list, and
 // no way to learn the second reason without first fixing the first.
 //
-// What this renders is the same assessment the gates will consult once step 4
-// of dev/claude_plans/17_functional_area_matrix.md lands, which is the point: a
-// checklist assembled separately from the gate would drift from it, and drift
-// here means telling someone to fix something that is not what is stopping them.
+// What this renders is the same assessment the gates consult, which is the
+// point: a checklist assembled separately from the gate would drift from it,
+// and drift here means telling someone to fix something that is not what is
+// stopping them. The gates themselves are below, in assessDeployArea and
+// declineReason.
 
 // FunctionalAreaView is one row of the index.
 type FunctionalAreaView struct {
@@ -58,18 +60,40 @@ type FunctionalAreaDetailView struct {
 	Steps     []StepView
 }
 
+// projectObservations judges the project and the code merged to main, which is
+// what production deploys and what the "why can't I do X" page is about.
+func (s *Server) projectObservations(ctx context.Context, projectID uuid.UUID) domain.Observations {
+	return s.gatherObservations(ctx, projectID, uuid.Nil)
+}
+
+// variationObservations judges one variation's branch, which is what a demo
+// deploys.
+func (s *Server) variationObservations(ctx context.Context, projectID, variationID uuid.UUID) domain.Observations {
+	return s.gatherObservations(ctx, projectID, variationID)
+}
+
 // gatherObservations collects what every condition is judged against.
 //
 // One place, because the conditions are shared between areas and gathering per
 // area would mean asking the same questions several times and, worse, being
-// able to get different answers to them within one page.
+// able to get different answers to them within one page. Since step 4 of
+// dev/claude_plans/17_functional_area_matrix.md it is also the one place the
+// deploy paths gather from, so a gate and the checklist it links to are looking
+// at the same facts as well as rendering the same sentences.
+//
+// variationID names the code being asked about: uuid.Nil is everything merged
+// to main, and a variation is that variation's branch. It decides which
+// requirements exist and, through the app name, what the deployment's URL will
+// be -- and those two have to be decided together, since judging a variation's
+// acknowledgements against production's URL would vouch for a redirect URI
+// nobody registered.
 //
 // Failures are deliberately not fatal. A lookup that does not come back leaves
 // its field zero, and the condition it feeds reports that it could not tell
 // rather than that the answer is no -- which is the whole reason unchecked is a
 // state. A page that refused to render because one query timed out would be
 // less useful than one that says which part it could not see.
-func (s *Server) gatherObservations(ctx context.Context, projectID uuid.UUID) domain.Observations {
+func (s *Server) gatherObservations(ctx context.Context, projectID, variationID uuid.UUID) domain.Observations {
 	obs := domain.Observations{}
 
 	if pd, err := s.db.GetProjectDomain(ctx, projectID); err == nil && pd != nil {
@@ -97,14 +121,96 @@ func (s *Server) gatherObservations(ctx context.Context, projectID uuid.UUID) do
 		obs.MissingChannelCredentials = s.missingChannelCredentials(ctx, projectID, channel)
 	}
 
-	// Requirements are judged against the code merged to main, which is what a
-	// production deploy actually runs. A per-Variation view answers a different
-	// question and belongs on that Variation's page.
-	if statuses, err := s.prodRequirementStatus(ctx, projectID, ""); err == nil {
+	// Requirements are judged against a particular deployment, because it is the
+	// deploy URL that decides what an acknowledgement resolves to -- and on the
+	// platforms that assign a hostname at deploy time there is no URL yet, which
+	// defers such a requirement rather than blocking on a string nobody can
+	// produce.
+	deployURL := s.predictedURLFor(ctx, projectID, variationID, obs.Channel)
+	statuses, err := s.prodRequirementStatus(ctx, projectID, deployURL)
+	if variationID != uuid.Nil {
+		statuses, err = s.variationRequirementStatus(ctx, projectID, variationID, deployURL)
+	}
+	if err == nil {
 		obs.Requirements = statuses
 	}
 
 	return obs
+}
+
+// predictedURLFor is where this deployment will answer, when that is knowable
+// before it exists.
+//
+// It lives beside the gathering rather than at each call site because it was
+// duplicated at three of them, and two of those had to agree with a fourth
+// copy inside the deploy itself for an acknowledgement to be judged against the
+// URL the code would actually run on.
+func (s *Server) predictedURLFor(ctx context.Context, projectID, variationID uuid.UUID, channel *domain.ProjectDeploymentChannel) string {
+	if channel == nil || channel.HostingPlatform == nil {
+		return ""
+	}
+	project, err := s.db.GetProject(ctx, projectID)
+	if err != nil {
+		return ""
+	}
+	return predictedDeployURL(channel.HostingPlatform.Slug, deployAppName(sanitizeAppName(project.Name), variationID))
+}
+
+// assessDeployArea judges one functional area for a project, and for the
+// variation being demoed where there is one.
+//
+// This and the page call the same catalogue over the same observations, which
+// is decision D39 of dev/claude_plans/17_functional_area_matrix.md: a gate that
+// composed its own sentence would drift from the checklist that tells the
+// reader how to clear it, and a reader who fixes what the refusal named and is
+// refused again has been sent on a walk for nothing.
+func (s *Server) assessDeployArea(ctx context.Context, area domain.AreaID, projectID, variationID uuid.UUID) domain.Assessment {
+	a, _ := s.assessDeployAreaWith(ctx, area, projectID, variationID)
+	return a
+}
+
+// assessDeployAreaWith also hands back what it judged, for a caller that needs
+// the observations as well as the verdict.
+//
+// The demo deploy is that caller: it reads the requirements back out to decrypt
+// the values behind them, and gathering them a second time could disagree with
+// what the gate had just allowed.
+func (s *Server) assessDeployAreaWith(ctx context.Context, area domain.AreaID, projectID, variationID uuid.UUID) (domain.Assessment, domain.Observations) {
+	obs := s.projectObservations(ctx, projectID)
+	if variationID != uuid.Nil {
+		obs = s.variationObservations(ctx, projectID, variationID)
+	}
+	return domain.FunctionalAreas().Assess(area, obs), obs
+}
+
+// declineReason is what a refusal says: the assessment's own sentences, in the
+// order they can be worked through.
+//
+// All of them rather than the first, because a reader told one thing at a time
+// learns how far off they are only by fixing something and being refused again.
+func declineReason(a domain.Assessment) string {
+	if len(a.Missing) > 0 {
+		return strings.Join(a.Missing, " ")
+	}
+	// Unavailable with nothing to say is the in-progress case: a channel
+	// validation that is running is not satisfied and names no remedy, because
+	// the remedy is to wait. The headline is what that case has.
+	if a.Headline != "" {
+		return a.Headline
+	}
+	return "Mendel cannot do this yet."
+}
+
+// declineWithChecklist is declineReason plus where to see the rest, which is
+// the one thing a refusal can offer that the sentences cannot: the steps that
+// are fine, so the reader knows the list ends.
+func declineWithChecklist(a domain.Assessment, projectID uuid.UUID) string {
+	return declineReason(a) + " The full list is at " + areaPath(projectID, a.Area) + "."
+}
+
+// areaPath is one functional area's checklist page.
+func areaPath(projectID uuid.UUID, area domain.AreaID) string {
+	return "/p/" + projectID.String() + "/available/" + string(area)
 }
 
 // comboIsSupported reports whether Mendel has a deployment path for the
@@ -150,7 +256,7 @@ func (s *Server) handleFunctionalAreas(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	obs := s.gatherObservations(ctx, projectID)
+	obs := s.projectObservations(ctx, projectID)
 	cat := domain.FunctionalAreas()
 
 	var areas []FunctionalAreaView
@@ -199,7 +305,7 @@ func (s *Server) handleFunctionalArea(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a := cat.Assess(areaID, s.gatherObservations(ctx, projectID))
+	a := cat.Assess(areaID, s.projectObservations(ctx, projectID))
 
 	steps := make([]StepView, 0, len(a.Steps))
 	for _, step := range a.Steps {
