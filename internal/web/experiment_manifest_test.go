@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/bhs/mendelbuild/internal/assigner"
+	"github.com/bhs/mendelbuild/internal/hosting"
 )
 
 func experimentFixture() ExperimentDeployment {
@@ -229,5 +230,48 @@ func TestProductionReachesTheProxyByGrantNotBySelector(t *testing.T) {
 	}
 	if !strings.Contains(m, "kind: ReferenceGrant") {
 		t.Error("nothing permits the production route to reach the proxy")
+	}
+}
+
+// A manifest that crosses a namespace boundary must name its namespaces.
+//
+// kubectl refuses an object whose namespace differs from the -n flag, so the
+// apply died on the ReferenceGrant -- after the arms, the gateway and the route
+// had all applied. The experiment was left half-built with production still on
+// mainline, and the only clue was one line at the end of a wall of Autopilot
+// warnings.
+func TestEveryObjectNamesItsOwnNamespace(t *testing.T) {
+	m, err := experimentFixture().Manifest()
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	// Split into documents and check each one that has a name also has a
+	// namespace. A namespace inherited from a flag cannot be right for both.
+	for i, doc := range strings.Split(m, "\n---") {
+		if strings.TrimSpace(doc) == "" {
+			continue
+		}
+		kind := ""
+		for _, line := range strings.Split(doc, "\n") {
+			if strings.HasPrefix(line, "kind: ") {
+				kind = strings.TrimPrefix(line, "kind: ")
+				break
+			}
+		}
+		if kind == "" {
+			continue
+		}
+		if !strings.Contains(doc, "\n  namespace: ") {
+			t.Errorf("document %d (%s) has no namespace, so it depends on a flag that cannot suit every object", i, kind)
+		}
+	}
+
+	// And the two namespaces it spans are both present, which is the reason the
+	// flag could never have worked.
+	for _, ns := range []string{hosting.Namespace, ExperimentProxyNamespace} {
+		if !strings.Contains(m, "namespace: "+ns) {
+			t.Errorf("nothing is placed in %s", ns)
+		}
 	}
 }

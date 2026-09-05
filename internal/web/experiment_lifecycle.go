@@ -254,7 +254,11 @@ func (s *Server) buildArmImage(ctx context.Context, exp *domain.Experiment,
 
 // applyManifest sends a rendered manifest to the cluster.
 func (g *gkeSession) applyManifest(ctx context.Context, manifest string) error {
-	cmd := exec.CommandContext(ctx, "kubectl", "apply", "--server-side", "-n", hosting.Namespace, "-f", "-")
+	// No -n. The manifest spans two namespaces -- the experiment's objects and
+	// the grant that lets the production route reach the proxy -- and kubectl
+	// refuses an object whose namespace differs from the flag. Every object names
+	// its own instead, which is what a manifest crossing a boundary has to do.
+	cmd := exec.CommandContext(ctx, "kubectl", "apply", "--server-side", "-f", "-")
 	cmd.Env = g.env
 	cmd.Stdin = strings.NewReader(manifest)
 	if out, err := cmd.CombinedOutput(); err != nil {

@@ -141,6 +141,7 @@ func (d ExperimentDeployment) Manifest() (string, error) {
 kind: Deployment
 metadata:
   name: %[1]s
+  namespace: %[7]s
   labels:
     mendel-experiment: %[4]s
     mendel-arm: %[5]s
@@ -169,6 +170,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: %[1]s
+  namespace: %[7]s
   labels:
     mendel-experiment: %[4]s
 spec:
@@ -179,7 +181,7 @@ spec:
   - port: 80
     targetPort: %[3]d
 ---
-`, name, arm.Image, hosting.ContainerPort, d.Name, arm.Slug, d.EnvFrom)
+`, name, arm.Image, hosting.ContainerPort, d.Name, arm.Slug, d.EnvFrom, hosting.Namespace)
 	}
 
 	// The Gateway that does the matching, and a stable Service in front of the
@@ -195,6 +197,7 @@ spec:
 kind: Gateway
 metadata:
   name: %[1]s
+  namespace: %[4]s
   labels:
     mendel-experiment: %[3]s
 spec:
@@ -207,7 +210,7 @@ spec:
       namespaces:
         from: Same
 ---
-`, ExperimentGatewayName, ExperimentGatewayClass, d.Name)
+`, ExperimentGatewayName, ExperimentGatewayClass, d.Name, hosting.Namespace)
 
 	// Permission for the production route to reach the proxy across the
 	// namespace boundary. Gateway API refuses a cross-namespace backend without
@@ -243,6 +246,7 @@ spec:
 kind: HTTPRoute
 metadata:
   name: %s
+  namespace: %s
   labels:
     mendel-experiment: %s
 spec:
@@ -251,7 +255,7 @@ spec:
   hostnames:
   - %s
   rules:
-`, d.Name, d.Name, ExperimentGatewayName, d.Hostname)
+`, d.Name, hosting.Namespace, d.Name, ExperimentGatewayName, d.Hostname)
 
 	for _, arm := range d.Arms {
 		backend := arm.Backend
