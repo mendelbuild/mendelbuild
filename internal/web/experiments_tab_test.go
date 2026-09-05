@@ -259,8 +259,17 @@ func TestFallbackCommandEstablishesItsOwnTarget(t *testing.T) {
 	if !strings.Contains(cmd, "--context gke_mendelpong_us-central1_pong-autopilot") {
 		t.Errorf("the apply does not name the cluster it means: %s", cmd)
 	}
-	if lines := strings.Split(strings.TrimSpace(cmd), "\n"); len(lines) != 2 {
-		t.Errorf("expected exactly the two lines to paste, got %d:\n%s", len(lines), cmd)
+	// The manifest creates no GatewayClass, so a command that stops after the
+	// apply leaves a controller running and claiming nothing -- an install that
+	// looks complete and does nothing.
+	if !strings.Contains(cmd, "kind: GatewayClass") {
+		t.Errorf("the command never creates the gateway class:\n%s", cmd)
+	}
+	// And the Gateway API CRD errors are unavoidable when pasting the manifest
+	// whole. Saying so is the difference between "expected noise" and "it
+	// failed" for whoever reads the output.
+	if !strings.Contains(cmd, "Expect errors") {
+		t.Errorf("the command does not warn about the errors it will print:\n%s", cmd)
 	}
 
 	// With nothing to name it degrades rather than inventing a cluster.

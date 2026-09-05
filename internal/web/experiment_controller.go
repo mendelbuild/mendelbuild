@@ -45,17 +45,35 @@ func envoyGatewayManifestURL() string {
 // the right thing on the author's machine and the wrong thing on the reader's is
 // worse than no command.
 func installControllerCommand(env map[string]string) string {
-	apply := "kubectl apply --server-side -f " + envoyGatewayManifestURL()
-
 	project, cluster, zone := env["GCP_PROJECT_ID"], env["GKE_CLUSTER_NAME"], env["GKE_ZONE"]
 	if project == "" || cluster == "" || zone == "" {
-		return apply
+		return "kubectl apply --server-side -f " + envoyGatewayManifestURL()
 	}
+	context := fmt.Sprintf("gke_%s_%s_%s", project, zone, cluster)
+
+	// Two applies, and the note between them is not decoration.
+	//
+	// The manifest bundles its own copy of the Gateway API definitions, which
+	// GKE installs and manages. Applying them over the top always fails --
+	// field-manager conflicts, and Autopilot refusing the experimental-channel
+	// ones -- and always harmlessly, because the cluster's own are the ones that
+	// should win. Mendel filters them out when it applies this itself; a person
+	// pasting the manifest cannot, so they are told which errors to expect
+	// rather than left reading a page of red and concluding it failed.
+	//
+	// The GatewayClass is the second apply because the manifest contains none:
+	// Envoy Gateway leaves it to whoever installs it, and without it the
+	// controller runs and claims nothing.
 	return fmt.Sprintf(
-		"gcloud container clusters get-credentials %s --location %s --project %s\n"+
-			"kubectl --context gke_%s_%s_%s apply --server-side -f %s",
+		"gcloud container clusters get-credentials %s --location %s --project %s\n\n"+
+			"# Expect errors for *.gateway.networking.k8s.io CRDs. GKE owns those and its\n"+
+			"# copies are the correct ones; everything else applies.\n"+
+			"kubectl --context %s apply --server-side -f %s\n\n"+
+			"# The manifest creates no GatewayClass, so nothing yet points at the controller.\n"+
+			"kubectl --context %s apply -f - <<'EOF'\n%sEOF",
 		cluster, zone, project,
-		project, zone, cluster, envoyGatewayManifestURL())
+		context, envoyGatewayManifestURL(),
+		context, gatewayClassManifest())
 }
 
 // cloudShellURL opens a terminal in the browser, signed in as whoever follows
