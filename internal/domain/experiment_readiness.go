@@ -258,3 +258,15 @@ func ExperimentBlockers(steps []ReadinessStep) []string {
 	}
 	return out
 }
+
+// Fingerprint is a short string that changes when anything on this page would
+// look different.
+//
+// Cheaper than diffing rendered HTML and more reliable than a timestamp: a
+// background refresh that finds nothing new leaves it identical, so a watching
+// page reloads exactly when there is something to see and not on a timer.
+func (o ExperimentObservation) Fingerprint() string {
+	return fmt.Sprintf("%v/%v/%v/%v/%v/%v/%s",
+		o.GatewayAPI, o.CookieMatching, o.CanInstallController,
+		o.ProdHostname, o.ProdHTTPS, o.VerifyDatastore, o.ProdHost)
+}

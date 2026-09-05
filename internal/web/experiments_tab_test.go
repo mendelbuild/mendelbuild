@@ -331,3 +331,72 @@ func TestFallbackCommandEstablishesItsOwnTarget(t *testing.T) {
 		t.Errorf("a cluster was invented from nothing: %s", bare)
 	}
 }
+
+// The readiness checks run behind the render, so a cold page says "Checking".
+// Without a way to notice the answer arriving, it sits there until a person
+// reloads — and an install started from this page takes a minute or two to
+// change anything, which is exactly when someone is watching it.
+func TestPageNoticesWhenTheAnswerArrives(t *testing.T) {
+	html := renderExperimentsPage(t, domain.ExperimentObservation{
+		GatewayAPI: domain.FactTrue, CookieMatching: domain.FactFalse,
+		CanInstallController: domain.FactFalse, ProdHostname: domain.FactTrue,
+	})
+
+	for _, want := range []string{
+		`id="experiment-readiness"`,
+		`data-status="/p/abc/experiments/status"`,
+		"data-fingerprint=",
+		"/static/js/experiment-status.js",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("the page cannot watch for changes: missing %q", want)
+		}
+	}
+
+	var registered bool
+	s := &Server{}
+	s.setupRoutes()
+	chi.Walk(s.router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		if method == http.MethodGet && strings.HasSuffix(route, "/experiments/status") {
+			registered = true
+		}
+		return nil
+	})
+	if !registered {
+		t.Error("nothing serves the status the page polls, so it would poll a 404 forever")
+	}
+}
+
+// A fingerprint that ignored a field would leave the page stale on exactly the
+// change the user is waiting for; one that included a timestamp would reload on
+// a refresh that found nothing.
+func TestFingerprintTracksEveryDisplayedFact(t *testing.T) {
+	base := domain.ExperimentObservation{
+		GatewayAPI: domain.FactTrue, CookieMatching: domain.FactFalse,
+		CanInstallController: domain.FactFalse, ProdHostname: domain.FactTrue,
+		ProdHTTPS: domain.FactTrue, VerifyDatastore: domain.FactFalse,
+		ProdHost: "app.example.com",
+	}
+
+	if base.Fingerprint() != base.Fingerprint() {
+		t.Fatal("the fingerprint is not stable, so the page would reload continuously")
+	}
+
+	for name, mutate := range map[string]func(*domain.ExperimentObservation){
+		"gateway api":  func(o *domain.ExperimentObservation) { o.GatewayAPI = domain.FactFalse },
+		"cookie match": func(o *domain.ExperimentObservation) { o.CookieMatching = domain.FactTrue },
+		"may install":  func(o *domain.ExperimentObservation) { o.CanInstallController = domain.FactTrue },
+		"hostname":     func(o *domain.ExperimentObservation) { o.ProdHostname = domain.FactFalse },
+		"https":        func(o *domain.ExperimentObservation) { o.ProdHTTPS = domain.FactFalse },
+		"datastore":    func(o *domain.ExperimentObservation) { o.VerifyDatastore = domain.FactTrue },
+		"host name":    func(o *domain.ExperimentObservation) { o.ProdHost = "other.example.com" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := base
+			mutate(&changed)
+			if changed.Fingerprint() == base.Fingerprint() {
+				t.Errorf("a change to %s does not change the fingerprint, so the page stays stale", name)
+			}
+		})
+	}
+}

@@ -21,8 +21,8 @@
 <div class="callout callout-waiting">
     <p class="callout-body">
         Installing the gateway controller. It takes a minute or two, and Mendel waits
-        for the controller to claim its class rather than for the manifest to apply
-        &mdash; reload to see where it got to.
+        for the controller to claim its class rather than for the manifest to apply.
+        This page updates itself when it finishes.
     </p>
 </div>
 {{end}}
@@ -30,7 +30,8 @@
 <div class="callout callout-failure"><p class="callout-body">{{.Error}}</p></div>
 {{end}}
 
-<div class="card">
+<div class="card" id="experiment-readiness"
+     data-fingerprint="{{.Fingerprint}}" data-status="/p/{{.ProjectID}}/experiments/status">
     <div class="card-head">
         <h2 class="card-title">What has to be true</h2>
         <span class="badge badge-{{if .Checking}}progress{{else if .Blocked}}waiting{{else}}progress{{end}}">
@@ -202,4 +203,5 @@
 </div>
 
 <script src="/static/js/copy-button.js"></script>
+<script src="/static/js/experiment-status.js"></script>
 {{end}}
