@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -33,10 +34,28 @@ func envoyGatewayManifestURL() string {
 }
 
 // installControllerCommand is what an administrator runs when Mendel may not.
-func installControllerCommand() string {
+//
+// Carries --context, because a bare kubectl installs into whatever cluster the
+// reader's terminal is pointed at -- which for anyone running Mendel is quite
+// likely Mendel's own. A command that silently does the right thing on the
+// author's machine and the wrong thing on the reader's is worse than no command.
+func installControllerCommand(env map[string]string) string {
 	// --server-side so re-running is an apply rather than a conflict, which
 	// matters because re-running is the normal case.
-	return "kubectl apply --server-side -f " + envoyGatewayManifestURL()
+	apply := "kubectl apply --server-side -f " + envoyGatewayManifestURL()
+
+	project, cluster, zone := env["GCP_PROJECT_ID"], env["GKE_CLUSTER_NAME"], env["GKE_ZONE"]
+	if project == "" || cluster == "" || zone == "" {
+		return apply
+	}
+	// The context kubectl gives a GKE cluster. If the reader has not fetched
+	// credentials for it, kubectl says so plainly rather than doing something
+	// else quietly.
+	context := fmt.Sprintf("gke_%s_%s_%s", project, zone, cluster)
+	return fmt.Sprintf("kubectl --context %s apply --server-side -f %s\n\n"+
+		"# If that context does not exist yet:\n"+
+		"# gcloud container clusters get-credentials %s --location %s --project %s",
+		context, envoyGatewayManifestURL(), cluster, zone, project)
 }
 
 // canInstallController asks the cluster whether Mendel's credentials may do it.
@@ -48,6 +67,13 @@ func installControllerCommand() string {
 // permitted the rest follows, and if they are not the install fails partway,
 // which is worse than not starting.
 func canInstallController(ctx context.Context, session *gkeSession) domain.Fact {
+	verdict, _ := canInstallControllerWhy(ctx, session)
+	return verdict
+}
+
+// canInstallControllerWhy also returns what went wrong when the answer is
+// unknown, so an inconclusive probe leaves a trail instead of a shrug.
+func canInstallControllerWhy(ctx context.Context, session *gkeSession) (domain.Fact, string) {
 	for _, resource := range []string{"customresourcedefinitions", "clusterroles"} {
 		cmd := exec.CommandContext(ctx, "kubectl", "auth", "can-i", "create", resource)
 		cmd.Env = session.env
@@ -61,12 +87,19 @@ func canInstallController(ctx context.Context, session *gkeSession) domain.Fact 
 		case domain.FactTrue:
 			continue
 		case domain.FactFalse:
-			return domain.FactFalse
+			return domain.FactFalse, ""
 		default:
-			return domain.FactUnknown
+			why := fmt.Sprintf("asking whether %s may be created gave %q", resource, strings.TrimSpace(string(out)))
+			var exit *exec.ExitError
+			if errors.As(err, &exit) {
+				why += ": " + strings.TrimSpace(string(exit.Stderr))
+			} else if err != nil {
+				why += ": " + err.Error()
+			}
+			return domain.FactUnknown, why
 		}
 	}
-	return domain.FactTrue
+	return domain.FactTrue, ""
 }
 
 // interpretCanI reads kubectl's verdict.
@@ -116,10 +149,14 @@ func (s *Server) installExperimentController(ctx context.Context, projectID uuid
 	}
 	defer session.cleanup()
 
-	if allowed := canInstallController(ctx, session); allowed == domain.FactFalse {
+	// Only a definite no stops this. If Mendel cannot tell whether it is
+	// allowed, the informative thing is to try: the API server's refusal names
+	// the exact permission that is missing, where "could not tell" names
+	// nothing and leaves the user to run a command Mendel could have run.
+	if canInstallController(ctx, session) == domain.FactFalse {
 		return fmt.Errorf("these credentials may not create custom resource definitions or "+
 			"cluster roles, so Mendel cannot install the controller. An administrator can run:\n  %s",
-			installControllerCommand())
+			installControllerCommand(env))
 	}
 
 	logInfo("Installing Envoy Gateway " + EnvoyGatewayVersion)

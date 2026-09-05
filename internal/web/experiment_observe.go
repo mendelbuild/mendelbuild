@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os/exec"
 	"strings"
 	"sync"
@@ -99,7 +100,7 @@ func (s *Server) observeGatewayControllers(ctx context.Context, projectID uuid.U
 
 	// Idempotent, because a user re-running it is the normal case rather than
 	// the exception.
-	installEnvoy := installControllerCommand()
+	installEnvoy := installControllerCommand(env)
 
 	session, err := newGKESession(ctx, env)
 	if err != nil {
@@ -142,7 +143,13 @@ func (s *Server) observeGatewayControllers(ctx context.Context, projectID uuid.U
 	// round trips to the cluster.
 	mayInstall = domain.FactUnknown
 	if cookies == domain.FactFalse {
-		mayInstall = canInstallController(ctx, session)
+		var why string
+		mayInstall, why = canInstallControllerWhy(ctx, session)
+		if why != "" {
+			// An inconclusive probe used to be silent, which made "Mendel could
+			// not establish whether it may install this" impossible to act on.
+			log.Printf("experiments[%s]: permission probe inconclusive: %s", projectID, why)
+		}
 	}
 	return api, command, cookies, mayInstall, installEnvoy
 }

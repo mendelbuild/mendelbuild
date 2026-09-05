@@ -105,30 +105,9 @@ func TestGatewayCommandOnlyShownWhenItIsTheRemedy(t *testing.T) {
 	}
 }
 
-// The remedy for GKE's Exact-only header matching is a second controller, and
-// the page has to say so — the property is invisible otherwise, since Gateway
-// API being "on" looks like success.
-func TestInstallControllerRemedyIsOfferedWhenNeeded(t *testing.T) {
-	obs := domain.ExperimentObservation{
-		GatewayAPI:            domain.FactTrue, // on, and still not enough
-		CookieMatching:        domain.FactFalse,
-		InstallControllerHint: "helm upgrade --install eg oci://docker.io/envoyproxy/gateway-helm -n envoy-gateway-system --create-namespace",
-		ProdHostname:          domain.FactTrue, ProdHTTPS: domain.FactTrue,
-		SchemaChanges: domain.FactFalse,
-	}
-	html := renderExperimentsPage(t, obs)
-
-	for _, want := range []string{"envoyproxy/gateway-helm", `id="install-controller"`, `data-copy="install-controller"`} {
-		if !strings.Contains(html, want) {
-			t.Errorf("page is missing %q", want)
-		}
-	}
-
-	// And it disappears once the controller is there, so nobody runs it looking
-	// for a problem that is not present.
-	obs.CookieMatching = domain.FactTrue
-	if strings.Contains(renderExperimentsPage(t, obs), "envoyproxy/gateway-helm") {
-		t.Error("the install command is offered to a cluster that already has a controller")
+func testClusterEnv() map[string]string {
+	return map[string]string{
+		"GCP_PROJECT_ID": "mendelpong", "GKE_CLUSTER_NAME": "pong-autopilot", "GKE_ZONE": "us-central1",
 	}
 }
 
@@ -159,7 +138,7 @@ func TestInstallIsOfferedAsAnActionWhenMendelCanDoIt(t *testing.T) {
 	obs := domain.ExperimentObservation{
 		GatewayAPI: domain.FactTrue, CookieMatching: domain.FactFalse,
 		CanInstallController:  domain.FactTrue,
-		InstallControllerHint: installControllerCommand(),
+		InstallControllerHint: installControllerCommand(testClusterEnv()),
 		ProdHostname:          domain.FactTrue, ProdHTTPS: domain.FactTrue,
 		SchemaChanges: domain.FactFalse,
 	}
@@ -177,18 +156,46 @@ func TestInstallIsOfferedAsAnActionWhenMendelCanDoIt(t *testing.T) {
 	if strings.Contains(refused, `action="/p/abc/experiments/install-controller"`) {
 		t.Error("an install button was offered that Mendel's credentials would refuse")
 	}
-	for _, want := range []string{"kubectl apply --server-side", "cluster-admin can"} {
+	for _, want := range []string{
+		"apply --server-side", "--context gke_", "cluster-admin",
+		`id="install-controller"`, `data-copy="install-controller"`, "/static/js/copy-button.js",
+	} {
 		if !strings.Contains(refused, want) {
 			t.Errorf("a refused install does not show %q", want)
 		}
 	}
 
-	// Unknown is its own state: Mendel has not tried, and says so rather than
-	// claiming its credentials were refused.
+	// Unknown attempts rather than refuses. Mendel not being able to predict
+	// the answer is a poor reason to hand the user a command Mendel could run:
+	// the API server's refusal names the missing permission exactly, where
+	// "could not tell" names nothing.
 	obs.CanInstallController = domain.FactUnknown
 	unknown := renderExperimentsPage(t, obs)
-	if !strings.Contains(unknown, "could not establish whether") {
+	if !strings.Contains(unknown, "/experiments/install-controller") {
+		t.Error("an undetermined permission stopped Mendel from even trying")
+	}
+	if strings.Contains(unknown, "cluster-admin") {
 		t.Error("an undetermined permission was reported as a refusal")
+	}
+}
+
+// A bare kubectl installs into whatever cluster the reader's terminal points
+// at, which for anyone running Mendel is quite likely Mendel's own. The command
+// has to name the cluster it means.
+func TestInstallCommandNamesTheClusterItMeans(t *testing.T) {
+	cmd := installControllerCommand(testClusterEnv())
+
+	if !strings.Contains(cmd, "--context gke_mendelpong_us-central1_pong-autopilot") {
+		t.Errorf("the command does not aim at the project's cluster: %s", cmd)
+	}
+	if !strings.Contains(cmd, "get-credentials pong-autopilot") {
+		t.Error("the command does not say how to get that context if it is missing")
+	}
+
+	// With nothing to name, it degrades to the bare form rather than inventing a
+	// context that does not exist.
+	if bare := installControllerCommand(nil); strings.Contains(bare, "--context") {
+		t.Errorf("a context was invented from nothing: %s", bare)
 	}
 }
 
@@ -203,7 +210,7 @@ func TestControllerVersionIsPinned(t *testing.T) {
 	if strings.Contains(url, "latest") {
 		t.Error("the install follows 'latest', so a release could change routing mid-experiment")
 	}
-	if !strings.Contains(installControllerCommand(), "--server-side") {
+	if !strings.Contains(installControllerCommand(testClusterEnv()), "--server-side") {
 		t.Error("the command is not a server-side apply, so re-running it conflicts")
 	}
 }

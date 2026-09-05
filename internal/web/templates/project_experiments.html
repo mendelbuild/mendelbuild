@@ -94,22 +94,25 @@
                 behind it that can match. Nothing about your current deployments
                 changes.
             </p>
-            {{if eq (printf "%v" .Observation.CanInstallController) "true"}}
+            {{if ne (printf "%v" .Observation.CanInstallController) "false"}}
             <p class="card-note">
+                {{if eq (printf "%v" .Observation.CanInstallController) "true"}}
                 Mendel's credentials can do this, so it does not need to be your job.
+                {{else}}
+                Mendel could not tell in advance whether its credentials allow this, so it
+                will try. If the cluster refuses, it will say exactly which permission is
+                missing &mdash; which is more useful than not attempting.
+                {{end}}
             </p>
             <form method="POST" action="/p/{{.ProjectID}}/experiments/install-controller" class="actions">
                 <button type="submit" class="btn btn-primary">Install it</button>
             </form>
             {{else}}
             <p class="card-note">
-                {{if eq (printf "%v" .Observation.CanInstallController) "false"}}
                 Mendel's credentials may not create custom resource definitions or cluster
-                roles, so it cannot install this itself. Someone with cluster-admin can:
-                {{else}}
-                Mendel could not establish whether its credentials may install this, so it
-                has not tried. Someone with cluster-admin can:
-                {{end}}
+                roles, so it cannot install this itself. Someone with cluster-admin can
+                run this &mdash; note the <code>--context</code>, which aims it at your
+                project's cluster rather than wherever your terminal is pointed:
             </p>
             {{if .Observation.InstallControllerHint}}
             <div class="script-block">
