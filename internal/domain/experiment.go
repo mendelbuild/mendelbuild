@@ -44,6 +44,16 @@ const (
 	ExperimentRunning  ExperimentStatus = "running"
 	ExperimentStopped  ExperimentStatus = "stopped"
 	ExperimentPromoted ExperimentStatus = "promoted"
+
+	// Starting and Stopping are real states, not decoration.
+	//
+	// Both take minutes -- one builds an image per Arm, the other waits on a
+	// load balancer -- and without a state to be in, a page could only show what
+	// the experiment was before the work began. Pressing Stop and being returned
+	// to a page still offering Stop is indistinguishable from the button not
+	// working, which is how it was read.
+	ExperimentStarting ExperimentStatus = "starting"
+	ExperimentStopping ExperimentStatus = "stopping"
 )
 
 // StoppingRule is how the experiment decides it is over.
@@ -177,6 +187,12 @@ type ExperimentEvent struct {
 	Detail       string              `json:"detail"`
 	Data         []byte              `json:"data,omitempty"`
 	OccurredAt   time.Time           `json:"occurred_at"`
+}
+
+// InProgress reports whether Mendel is part-way through changing this
+// experiment, and so whether anything on screen is about to be out of date.
+func (e *Experiment) InProgress() bool {
+	return e != nil && (e.Status == ExperimentStarting || e.Status == ExperimentStopping)
 }
 
 // PermitsDurableWrites reports whether Arms may write per-Assignment-Unit state.

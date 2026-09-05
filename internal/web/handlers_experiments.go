@@ -71,7 +71,7 @@ func (s *Server) handleProjectExperiments(w http.ResponseWriter, r *http.Request
 		"Candidates":   candidates,
 		"Experiments":  running,
 		"Ready":        len(domain.ExperimentBlockers(domain.ExperimentReadiness(obs))) == 0,
-		"Fingerprint":  obs.Fingerprint(),
+		"Fingerprint":  obs.Fingerprint() + "|" + s.experimentFingerprint(ctx, projectID),
 		"Success":      r.URL.Query().Get("success") == "1",
 		"Installing":   r.URL.Query().Get("installing") == "1",
 		"Starting":     r.URL.Query().Get("starting") == "1",
@@ -179,9 +179,16 @@ func (s *Server) handleExperimentStatus(w http.ResponseWriter, r *http.Request) 
 	}
 
 	obs, observedAt := s.experimentObservationFor(projectID)
+
+	// Readiness and the experiments together. The first version sent only
+	// readiness, so an experiment moving from running to stopped changed
+	// nothing the page was watching -- it sat there still offering Stop, which
+	// reads as a button that did not work.
+	fingerprint := obs.Fingerprint() + "|" + s.experimentFingerprint(r.Context(), projectID)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	fmt.Fprintf(w, `{"fingerprint":%q,"checking":%t}`, obs.Fingerprint(), observedAt.IsZero())
+	fmt.Fprintf(w, `{"fingerprint":%q,"checking":%t}`, fingerprint, observedAt.IsZero())
 }
 
 // handleCreateExperiment turns a Hop's Variations into Arms.
@@ -329,4 +336,29 @@ func armSlugFor(v domain.Variation) string {
 	// The id's prefix because Variation names are not unique, and two Arms
 	// sharing a slug would share a cookie value and a route.
 	return sanitizeAppName(name) + "-" + v.ID.String()[:6]
+}
+
+
+// experimentFingerprint changes whenever an experiment's state does.
+//
+// Separate from the readiness observation because the two move for different
+// reasons and on different clocks: readiness is polled from the cluster, while
+// an experiment changes when somebody presses a button and again when the work
+// behind it finishes. A page watching only the first misses the second entirely.
+func (s *Server) experimentFingerprint(ctx context.Context, projectID uuid.UUID) string {
+	candidates, err := s.db.ListExperimentCandidates(ctx, projectID)
+	if err != nil {
+		return "unknown"
+	}
+	var b strings.Builder
+	for _, c := range candidates {
+		if c.ExperimentID == nil {
+			// A hop with no experiment is still worth tracking: creating one is
+			// a change the page should notice.
+			fmt.Fprintf(&b, "%s=none;", c.HopID)
+			continue
+		}
+		fmt.Fprintf(&b, "%s=%s;", c.ExperimentID, c.Status)
+	}
+	return b.String()
 }

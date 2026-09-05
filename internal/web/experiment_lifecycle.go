@@ -43,6 +43,13 @@ func (s *Server) StartExperiment(ctx context.Context, experimentID uuid.UUID,
 		return fmt.Errorf("%s", msg)
 	}
 
+	// Recorded before the work begins, because the work takes minutes and a page
+	// that cannot say so can only show what was true before the button was
+	// pressed.
+	if err := s.db.SetExperimentStatus(ctx, exp.ID, domain.ExperimentStarting); err != nil {
+		return err
+	}
+
 	pd, err := s.db.GetProjectDomain(ctx, exp.ProjectID)
 	if err != nil || pd == nil || pd.ProdHost() == "" {
 		return fmt.Errorf("production has no hostname, so there is no route to attach arms to")
@@ -158,6 +165,10 @@ func (s *Server) StopExperiment(ctx context.Context, experimentID uuid.UUID,
 	exp, err := s.db.GetExperiment(ctx, experimentID)
 	if err != nil || exp == nil {
 		return fmt.Errorf("no such experiment")
+	}
+
+	if err := s.db.SetExperimentStatus(ctx, exp.ID, domain.ExperimentStopping); err != nil {
+		return err
 	}
 
 	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, exp.ProjectID)

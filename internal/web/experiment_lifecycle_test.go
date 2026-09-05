@@ -5,6 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
+	"github.com/bhs/mendelbuild/internal/domain"
+
 	"github.com/bhs/mendelbuild/internal/assigner"
 )
 
@@ -138,4 +142,64 @@ func TestStopDoesNotDependOnAnErrorMessage(t *testing.T) {
 	if strings.Index(body, "routeBackendNamespace(ctx, route)") > strings.Index(body, `"op":"remove"`) {
 		t.Error("the route is read after the remove is decided, which is not a decision")
 	}
+}
+
+// Pressing Stop and being returned to a page still offering Stop is
+// indistinguishable from the button not working — which is how it was read.
+//
+// Two things were wrong. The work takes minutes and there was no state for
+// "part way through", so the page could only show what was true before the
+// button was pressed. And the page polls a fingerprint that covered readiness
+// only, so an experiment moving from running to stopped changed nothing it was
+// watching, and it never reloaded.
+func TestInProgressExperimentOffersNoButtonAndSaysWhy(t *testing.T) {
+	for status, expect := range map[domain.ExperimentStatus]string{
+		domain.ExperimentStarting: "Building an image for each arm",
+		domain.ExperimentStopping: "Returning traffic to mainline",
+	} {
+		html := renderExperimentsPageWithStatus(t, status)
+
+		if strings.Contains(html, "/start\"") || strings.Contains(html, "/stop\"") {
+			t.Errorf("%s: an action was offered while the last one is still running", status)
+		}
+		if !strings.Contains(html, expect) {
+			t.Errorf("%s: the page does not say what is happening", status)
+		}
+		if !strings.Contains(html, "updates itself when it finishes") {
+			t.Errorf("%s: the page does not say it will update", status)
+		}
+	}
+
+	// A settled experiment gets its button back.
+	settled := renderExperimentsPageWithStatus(t, domain.ExperimentRunning)
+	if !strings.Contains(settled, "/stop\"") {
+		t.Error("a running experiment offers no way to stop it")
+	}
+}
+
+func renderExperimentsPageWithStatus(t *testing.T, status domain.ExperimentStatus) string {
+	t.Helper()
+	obs := domain.ExperimentObservation{
+		GatewayAPI: domain.FactTrue, CookieMatching: domain.FactTrue,
+		ProdHostname: domain.FactTrue, ProdHTTPS: domain.FactTrue,
+		SchemaChanges: domain.FactFalse,
+	}
+	steps := domain.ExperimentReadiness(obs)
+	headline, blocked := domain.ExperimentHeadline(steps)
+
+	var out strings.Builder
+	if err := parsePageTemplate("project_experiments.html").ExecuteTemplate(&out, "page-content", map[string]interface{}{
+		"SettingsTab": "experiments", "ProjectID": "abc", "Steps": steps,
+		"Headline": headline, "Blocked": blocked, "Checking": false,
+		"CheckedLabel": "just now", "Observation": obs, "Ready": true,
+		"DatastoreVar": VerifyDatastoreVar, "Success": false, "Error": "",
+		"Fingerprint": "x", "Candidates": nil,
+		"Experiments": []*domain.Experiment{{
+			ID: uuid.New(), Status: status,
+			Arms: []domain.ExperimentArm{{Slug: "0", AllocationWeight: 50}},
+		}},
+	}); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	return out.String()
 }

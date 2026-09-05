@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"os"
 	"net/http/httptest"
 	"fmt"
 	"context"
@@ -541,5 +542,25 @@ func TestHopPageLinksToLiveTrafficExperiments(t *testing.T) {
 	hop := readTemplateFile(t, "hop_detail.html")
 	if !strings.Contains(hop, "/experiments") {
 		t.Error("the hop page offers no way to reach live-traffic experiments")
+	}
+}
+
+// The page reloads on a fingerprint, so anything the page shows that can change
+// must be in it. Readiness alone left an experiment transition invisible.
+func TestFingerprintCoversExperimentState(t *testing.T) {
+	src, err := os.ReadFile("handlers_experiments.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+
+	if !strings.Contains(body, "experimentFingerprint") {
+		t.Fatal("the page watches readiness only, so an experiment transition never reloads it")
+	}
+	// Both the rendered page and the endpoint it polls must derive it the same
+	// way, or the first comparison is against a value the endpoint never emits
+	// and the page reloads immediately and forever.
+	if n := strings.Count(body, `obs.Fingerprint() + "|" + s.experimentFingerprint(`); n != 2 {
+		t.Errorf("the page and its status endpoint build the fingerprint differently (%d matching sites)", n)
 	}
 }

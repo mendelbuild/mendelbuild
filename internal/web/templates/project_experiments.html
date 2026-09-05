@@ -198,7 +198,7 @@
             {{end}}
 
             {{range .Experiments}}
-            <div class="ladder-step" data-state="{{if eq (printf "%v" .Status) "running"}}done{{else}}waiting{{end}}">
+            <div class="ladder-step" data-state="{{if .InProgress}}checking{{else if eq (printf "%v" .Status) "running"}}done{{else}}waiting{{end}}">
                 <span class="ladder-body">
                     <span class="ladder-name">{{.Status}} &mdash; {{len .Arms}} arms</span>
                     <span class="ladder-detail">
@@ -206,12 +206,27 @@
                     </span>
                 </span>
             </div>
+            {{if .InProgress}}
+            {{/* Neither button, because neither is true yet. An action offered
+                 while the last one is still running is an action that will be
+                 pressed twice. */}}
+            <p class="card-note">
+                {{if eq (printf "%v" .Status) "starting"}}
+                Building an image for each arm and applying the routing. A few
+                minutes; production keeps serving mainline until the last step.
+                {{else}}
+                Returning traffic to mainline, then removing the arms.
+                {{end}}
+                This page updates itself when it finishes.
+            </p>
+            {{else}}
             <form method="POST" class="actions"
                   action="/p/{{$.ProjectID}}/experiments/{{.ID}}/{{if eq (printf "%v" .Status) "running"}}stop{{else}}start{{end}}">
                 <button type="submit" class="btn {{if eq (printf "%v" .Status) "running"}}btn-danger{{else}}btn-primary{{end}}"{{if not $.Ready}} disabled{{end}}>
                     {{if eq (printf "%v" .Status) "running"}}Stop and return everyone to mainline{{else}}Start taking live traffic{{end}}
                 </button>
             </form>
+            {{end}}
             {{end}}
 
             {{if .Candidates}}
