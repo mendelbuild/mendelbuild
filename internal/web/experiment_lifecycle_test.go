@@ -112,3 +112,30 @@ func TestProxyIsHealthCheckedOnItsReadinessPort(t *testing.T) {
 		t.Error("the health check is configured after the repoint, so production would 503 first")
 	}
 }
+
+// Stopping must work whatever state the route is in.
+//
+// The first version always emitted a remove for the backend's namespace and
+// tolerated the failure by matching kubectl's error text. The text was guessed
+// and wrong -- kubectl says only "The request is invalid: the server rejected
+// our request due to an error in our request" -- so stopping failed on its first
+// step and left the experiment running with no way out of it from the page.
+func TestStopDoesNotDependOnAnErrorMessage(t *testing.T) {
+	src, err := os.ReadFile("experiment_lifecycle.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+
+	if strings.Contains(body, "remove operation does not apply") {
+		t.Error("stopping still depends on matching kubectl's error text")
+	}
+	// It reads the route before patching it, so the patch describes a change
+	// from what is actually there rather than from what was assumed.
+	if !strings.Contains(body, "routeBackendNamespace") {
+		t.Error("the patch is built without looking at the route it patches")
+	}
+	if strings.Index(body, "routeBackendNamespace(ctx, route)") > strings.Index(body, `"op":"remove"`) {
+		t.Error("the route is read after the remove is decided, which is not a decision")
+	}
+}

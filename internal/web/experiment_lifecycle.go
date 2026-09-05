@@ -258,31 +258,55 @@ func (g *gkeSession) applyManifest(ctx context.Context, manifest string) error {
 // deployment path and everything else about it must survive untouched -- the
 // hostname, the parent gateway, whatever a later deploy adds to it.
 func (g *gkeSession) repointProdRoute(ctx context.Context, route, backend, namespace string) error {
-	// The namespace is set when pointing at the proxy and removed when pointing
-	// back. Leaving a stale namespace on the restored backend would send
-	// production at a Service of that name in somebody else's namespace, or at
-	// nothing.
-	ops := fmt.Sprintf(`{"op":"replace","path":"/spec/rules/0/backendRefs/0/name","value":%q}`, backend)
-	if namespace != "" {
-		ops += fmt.Sprintf(`,{"op":"add","path":"/spec/rules/0/backendRefs/0/namespace","value":%q}`, namespace)
-	} else {
-		ops += `,{"op":"remove","path":"/spec/rules/0/backendRefs/0/namespace"}`
+	// Read first, so the patch describes a change from what is actually there.
+	//
+	// The previous version always emitted a remove for the namespace field and
+	// tolerated the failure by matching the error text. The text was guessed and
+	// was wrong -- kubectl says "The request is invalid: the server rejected our
+	// request due to an error in our request", which names nothing -- so stopping
+	// an experiment failed on its first step and left it running. An operation
+	// that is only correct when a string comparison holds is not correct.
+	current, err := g.routeBackendNamespace(ctx, route)
+	if err != nil {
+		return err
 	}
-	patch := "[" + ops + "]"
+
+	ops := []string{
+		fmt.Sprintf(`{"op":"replace","path":"/spec/rules/0/backendRefs/0/name","value":%q}`, backend),
+	}
+	switch {
+	case namespace != "":
+		// add replaces an existing value and creates a missing one, so it is
+		// right whether or not the field is there.
+		ops = append(ops, fmt.Sprintf(
+			`{"op":"add","path":"/spec/rules/0/backendRefs/0/namespace","value":%q}`, namespace))
+	case current != "":
+		// Only remove what exists. Leaving a stale namespace would send
+		// production at a Service of that name in somebody else's namespace.
+		ops = append(ops, `{"op":"remove","path":"/spec/rules/0/backendRefs/0/namespace"}`)
+	}
+
 	cmd := exec.CommandContext(ctx, "kubectl", "patch", "httproute", route,
-		"-n", hosting.Namespace, "--type=json", "-p", patch)
+		"-n", hosting.Namespace, "--type=json", "-p", "["+strings.Join(ops, ",")+"]")
 	cmd.Env = g.env
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		return nil
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("could not point %s at %s: %s: %w",
+			route, backend, strings.TrimSpace(string(out)), err)
 	}
-	// Removing a namespace that was never there is not a failure; it is the
-	// ordinary case when stopping an experiment that never fully started.
-	if namespace == "" && strings.Contains(string(out), "remove operation does not apply") {
-		return nil
+	return nil
+}
+
+// routeBackendNamespace reports the namespace the route's backend is in, empty
+// when it names none.
+func (g *gkeSession) routeBackendNamespace(ctx context.Context, route string) (string, error) {
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "httproute", route,
+		"-n", hosting.Namespace, "-o", "jsonpath={.spec.rules[0].backendRefs[0].namespace}")
+	cmd.Env = g.env
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("could not read the production route %s: %w", route, err)
 	}
-	return fmt.Errorf("could not point %s at %s: %s: %w",
-		route, backend, strings.TrimSpace(string(out)), err)
+	return strings.TrimSpace(string(out)), nil
 }
 
 // healthCheckProxy tells the edge gateway how to tell whether the proxy is up.
