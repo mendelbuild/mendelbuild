@@ -3,6 +3,7 @@ package web
 import (
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 
@@ -264,6 +265,43 @@ func TestMissingDatastoreReadsAsMissingNotAsAFailure(t *testing.T) {
 		}
 		if strings.Contains(s.Detail, "could not") {
 			t.Errorf("an unset datastore was reported as a failure to look: %q", s.Detail)
+		}
+	}
+}
+
+// The probe must ask about the verb the install actually uses.
+//
+// `kubectl apply --server-side` is a PATCH whatever the object's current state,
+// so an account permitted to create but not to patch fails on the very first
+// apply. GKE's container.developer is exactly such an account: asking about
+// create returned yes and the install then failed on every RBAC object in the
+// manifest.
+func TestPermissionProbeAsksAboutPatch(t *testing.T) {
+	src, err := os.ReadFile("experiment_controller.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), `"auth", "can-i", "patch"`) {
+		t.Error("the probe does not ask about patch, which is what apply --server-side does")
+	}
+	if strings.Contains(string(src), `"auth", "can-i", "create"`) {
+		t.Error("the probe still asks about create, which the install never performs")
+	}
+
+	// And it has to cover what the manifest actually contains. Asking about two
+	// of six is how a partial install gets attempted.
+	for _, needed := range []string{
+		"clusterroles", "clusterrolebindings", "roles", "rolebindings",
+		"customresourcedefinitions", "mutatingwebhookconfigurations",
+	} {
+		found := false
+		for _, r := range installNeeds {
+			if r == needed {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("the probe does not ask about %s, which the manifest patches", needed)
 		}
 	}
 }

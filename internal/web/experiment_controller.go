@@ -71,11 +71,27 @@ func canInstallController(ctx context.Context, session *gkeSession) domain.Fact 
 	return verdict
 }
 
+// installNeeds are the privileged resources the manifest touches, with the verb
+// it touches them with.
+//
+// patch, not create. `apply --server-side` is a PATCH whatever the object's
+// current state, so an account permitted to create and not to patch fails on the
+// very first apply -- which is exactly what GKE's container.developer allows,
+// and exactly what this probe missed when it asked about create.
+var installNeeds = []string{
+	"customresourcedefinitions",
+	"clusterroles",
+	"clusterrolebindings",
+	"roles",
+	"rolebindings",
+	"mutatingwebhookconfigurations",
+}
+
 // canInstallControllerWhy also returns what went wrong when the answer is
 // unknown, so an inconclusive probe leaves a trail instead of a shrug.
 func canInstallControllerWhy(ctx context.Context, session *gkeSession) (domain.Fact, string) {
-	for _, resource := range []string{"customresourcedefinitions", "clusterroles"} {
-		cmd := exec.CommandContext(ctx, "kubectl", "auth", "can-i", "create", resource)
+	for _, resource := range installNeeds {
+		cmd := exec.CommandContext(ctx, "kubectl", "auth", "can-i", "patch", resource)
 		cmd.Env = session.env
 		// Output rather than CombinedOutput: for a cluster-scoped resource
 		// kubectl writes "Warning: resource ... is not namespace scoped" to
@@ -89,7 +105,7 @@ func canInstallControllerWhy(ctx context.Context, session *gkeSession) (domain.F
 		case domain.FactFalse:
 			return domain.FactFalse, ""
 		default:
-			why := fmt.Sprintf("asking whether %s may be created gave %q", resource, strings.TrimSpace(string(out)))
+			why := fmt.Sprintf("asking whether %s may be patched gave %q", resource, strings.TrimSpace(string(out)))
 			var exit *exec.ExitError
 			if errors.As(err, &exit) {
 				why += ": " + strings.TrimSpace(string(exit.Stderr))
@@ -154,8 +170,8 @@ func (s *Server) installExperimentController(ctx context.Context, projectID uuid
 	// the exact permission that is missing, where "could not tell" names
 	// nothing and leaves the user to run a command Mendel could have run.
 	if canInstallController(ctx, session) == domain.FactFalse {
-		return fmt.Errorf("these credentials may not create custom resource definitions or "+
-			"cluster roles, so Mendel cannot install the controller. An administrator can run:\n  %s",
+		return fmt.Errorf("these credentials may not modify cluster roles and webhooks, so "+
+			"Mendel cannot install the controller. An administrator can run:\n  %s",
 			installControllerCommand(env))
 	}
 
