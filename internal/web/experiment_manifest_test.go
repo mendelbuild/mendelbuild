@@ -195,14 +195,15 @@ func TestArmRoutesAttachToEnvoyAndTheFrontDoorStaysOnGKE(t *testing.T) {
 		t.Error("the Arm routes do not attach to the experiment Gateway")
 	}
 
-	// The front door stays on the GKE Gateway, which owns the address and the
-	// certificate, and forwards to Envoy.
-	edge := m[strings.Index(m, "name: exp-checkout-edge"):]
-	if !strings.Contains(edge, "name: "+gatewayName) {
-		t.Error("the front door left the GKE Gateway, taking TLS and the address with it")
+	// The front door is not rendered here at all: the production route already
+	// exists and is repointed, because a second route for that host would lose
+	// the age tie-break and never serve anything.
+	if strings.Contains(m, "hostnames:\n  - app.example.com\nspec") {
+		t.Error("rendered a competing route for the production hostname")
 	}
-	if !strings.Contains(edge, "name: "+ExperimentEdgeService) {
-		t.Error("the front door does not forward to Envoy")
+	// And the edge Service still exists for that repoint to aim at.
+	if !strings.Contains(m, "name: "+ExperimentEdgeService) {
+		t.Error("nothing for the production route to be pointed at")
 	}
 }
 

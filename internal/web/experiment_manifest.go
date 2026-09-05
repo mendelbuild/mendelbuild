@@ -221,26 +221,11 @@ spec:
 ---
 `, ExperimentGatewayName, ExperimentGatewayClass, ExperimentEdgeService, d.Name, hosting.Namespace)
 
-	// The front door: the existing GKE Gateway keeps the hostname, the address
-	// and the certificate, and sends this host's traffic to Envoy instead of
-	// straight to the app.
-	fmt.Fprintf(&b, `apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: %[1]s-edge
-  labels:
-    mendel-experiment: %[1]s
-spec:
-  parentRefs:
-  - name: %[2]s
-  hostnames:
-  - %[3]s
-  rules:
-  - backendRefs:
-    - name: %[4]s
-      port: 80
----
-`, d.Name, gatewayName, d.Hostname, ExperimentEdgeService)
+	// No route is rendered for the production hostname. One already serves it,
+	// created by the ordinary deployment, and a second would never take effect:
+	// Gateway API ranks matches by path specificity, then method, then header
+	// count, and breaks the remaining tie with the older route. The experiment
+	// repoints the existing one instead -- see repointProdRoute.
 
 	// The Arm routes, on the Gateway that can match them. An Arm's rule carries a
 	// header match, so it outranks the fallback: Gateway API breaks ties by the
