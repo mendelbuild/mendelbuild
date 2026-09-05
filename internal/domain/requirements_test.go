@@ -102,20 +102,6 @@ func TestAcknowledgementWithoutURLIsJudgedImmediately(t *testing.T) {
 	}
 }
 
-func TestUnmetSummaryNamesWhatIsMissing(t *testing.T) {
-	statuses := EvaluateRequirements([]VariationRequirement{
-		{Kind: RequirementKindSecret, Name: "GOOGLE_CLIENT_SECRET"},
-		ackRequirement("google-redirect-uri"),
-	}, RequirementEvidence{}, "https://app.fly.dev")
-
-	summary := UnmetSummary(statuses)
-	for _, want := range []string{"GOOGLE_CLIENT_SECRET", "google-redirect-uri"} {
-		if !strings.Contains(summary, want) {
-			t.Errorf("summary %q should name %q", summary, want)
-		}
-	}
-}
-
 func TestResolvedInstructionsKeepsPlaceholderWithoutURL(t *testing.T) {
 	req := ackRequirement("google-redirect-uri")
 	if got := req.ResolvedInstructions(""); !strings.Contains(got, DeployURLPlaceholder) {

@@ -249,29 +249,6 @@ func BlockingRequirements(statuses []RequirementStatus) []RequirementStatus {
 	return blocking
 }
 
-// UnmetSummary describes what is missing, for an error message the user can
-// act on without opening another page.
-func UnmetSummary(statuses []RequirementStatus) string {
-	var secrets, acks []string
-	for _, st := range BlockingRequirements(statuses) {
-		switch st.Requirement.Kind {
-		case RequirementKindSecret:
-			secrets = append(secrets, st.Requirement.Name)
-		case RequirementKindAcknowledgement:
-			acks = append(acks, st.Requirement.Name)
-		}
-	}
-
-	var parts []string
-	if len(secrets) > 0 {
-		parts = append(parts, "missing values for "+strings.Join(secrets, ", "))
-	}
-	if len(acks) > 0 {
-		parts = append(parts, "unconfirmed setup steps: "+strings.Join(acks, ", "))
-	}
-	return strings.Join(parts, "; ")
-}
-
 // DeploymentHostname is the name a deployment answers to under a base domain.
 //
 // One label, because a wildcard DNS record covers exactly one: *.demos.example.com
