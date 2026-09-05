@@ -226,6 +226,40 @@ Deployment is deterministic (no AI-generated scripts). Platform-specific deploym
 
 Before demos can run, the deployment channel must be **validated** via a hello-world deploy → health check → teardown test. This ensures credentials are correct.
 
+### Check What the Platform Supports Before Building On It
+
+GKE accepts configuration it does not implement. Three times now, a manifest has
+been applied without error and then quietly ignored:
+
+- `ingressClassName: gce` named a class GKE ships no `IngressClass` for. No
+  address, no events, nothing to read that would explain it.
+- `networking.gke.io/certmap` on an `Ingress` was accepted and never acted on.
+  Port 80 only, no HTTPS listener, no event, over a full fifteen-minute window.
+- `matches.headers.type: RegularExpression` on an `HTTPRoute` passes a
+  **server-side dry run** against a real cluster, and
+  `gke-l7-global-external-managed` matches headers `Exact` only. The CRD schema
+  permits the field; the controller ignores it.
+
+The common shape is that **schema validation is not capability validation**.
+`kubectl apply --dry-run=server` proves the API server will store the object,
+which is worth doing and proves nothing about whether anything acts on it.
+
+So for anything touching GKE networking, read the capability table *before*
+writing the code that depends on it:
+
+- [GatewayClass capabilities](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/gatewayclass-capabilities)
+  — per-class tables for `HTTPRoute`, `Gateway` and the rest. Support varies
+  between classes: the multi-cluster `-mc` variants support regex header
+  matching where the single-cluster ones do not.
+- Gateway API marks features **Core** or **Extended**. Extended means an
+  implementation may support it, and GKE's single-cluster classes frequently do
+  not. Preferring a Core feature is worth real design effort.
+
+Two web fetches settled the third case. The same two fetches, made before the
+matching was written, would have saved building it twice. When a design rests on
+a platform feature, the cost of confirming it is a search; the cost of assuming
+it is discovering the gap after everything downstream assumes it works.
+
 ### Channel Setup Must Be Idempotent
 
 A platform's `SetupScript` is a script the user pastes into a terminal to mint
