@@ -73,6 +73,10 @@ type ExperimentObservation struct {
 	CanInstallController  Fact
 	InstallControllerHint string
 
+	// CloudShellURL is a browser terminal, signed in as whoever follows it, for
+	// the case a person has to run the command themselves. Nothing to install.
+	CloudShellURL string
+
 	// ProdHostname is whether production answers at a name. Without one there is
 	// no HTTPRoute -- Mendel's Gateway is shared across deployments and the
 	// hostname is what tells one deployment's traffic from another's -- so there

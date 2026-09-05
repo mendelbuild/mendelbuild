@@ -109,11 +109,26 @@
             </form>
             {{else}}
             <p class="card-note">
-                Mendel's credentials may not create custom resource definitions or cluster
-                roles, so it cannot install this itself. Someone with cluster-admin can
-                run this &mdash; note the <code>--context</code>, which aims it at your
-                project's cluster rather than wherever your terminal is pointed:
+                Mendel's credentials may not modify this cluster's roles, so it cannot
+                install this itself. Someone with administrator access on the cluster
+                runs it once &mdash; after that Mendel needs nothing further, and no
+                experiment asks again.
             </p>
+            {{if .Observation.CloudShellURL}}
+            <p class="card-note">
+                <strong>Nothing to install.</strong> Cloud Shell is a terminal in your
+                browser, signed in as you, with the tools already on it.
+            </p>
+            <div class="actions">
+                <a class="btn btn-primary" href="{{.Observation.CloudShellURL}}"
+                   target="_blank" rel="noopener noreferrer">Open Cloud Shell</a>
+            </div>
+            <p class="card-note subtle">
+                Then paste the two lines below. The first points the terminal at your
+                cluster &mdash; a fresh Cloud Shell has no cluster configured, and without
+                it the second line would go somewhere else or nowhere.
+            </p>
+            {{end}}
             {{if .Observation.InstallControllerHint}}
             <div class="script-block">
                 <div class="script-head">

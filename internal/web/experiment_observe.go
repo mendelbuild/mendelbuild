@@ -68,7 +68,8 @@ func (s *Server) observeExperimentReadiness(ctx context.Context, projectID uuid.
 	obs.SchemaChanges = domain.FactUnknown
 
 	obs.GatewayAPI, obs.EnableGatewayCommand, obs.CookieMatching,
-		obs.CanInstallController, obs.InstallControllerHint = s.observeGatewayControllers(ctx, projectID)
+		obs.CanInstallController, obs.InstallControllerHint, obs.CloudShellURL =
+		s.observeGatewayControllers(ctx, projectID)
 	obs.VerifyDatastore, obs.VerifyReachable = s.observeVerifyDatastore(ctx, projectID)
 	return obs
 }
@@ -81,17 +82,17 @@ func (s *Server) observeExperimentReadiness(ctx context.Context, projectID uuid.
 // a controller, which is what a cluster without a managed one would need and
 // which no selectable channel currently is.
 func (s *Server) observeGatewayControllers(ctx context.Context, projectID uuid.UUID) (
-	api domain.Fact, enable string, cookies domain.Fact, mayInstall domain.Fact, install string) {
+	api domain.Fact, enable string, cookies domain.Fact, mayInstall domain.Fact, install, shell string) {
 	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
 	if err != nil || channel == nil || channel.HostingPlatform == nil ||
 		channel.ArtifactKind != domain.DeployArtifactKubernetes {
 		// Not a Kubernetes channel, so the question does not arise yet.
-		return domain.FactUnknown, "", domain.FactUnknown, domain.FactUnknown, ""
+		return domain.FactUnknown, "", domain.FactUnknown, domain.FactUnknown, "", ""
 	}
 
 	env, err := s.deployCredentialsForChannel(ctx, projectID, channel)
 	if err != nil {
-		return domain.FactUnknown, "", domain.FactUnknown, domain.FactUnknown, ""
+		return domain.FactUnknown, "", domain.FactUnknown, domain.FactUnknown, "", ""
 	}
 
 	command := fmt.Sprintf(
@@ -101,10 +102,11 @@ func (s *Server) observeGatewayControllers(ctx context.Context, projectID uuid.U
 	// Idempotent, because a user re-running it is the normal case rather than
 	// the exception.
 	installEnvoy := installControllerCommand(env)
+	shellURL := cloudShellURL(env)
 
 	session, err := newGKESession(ctx, env)
 	if err != nil {
-		return domain.FactUnknown, command, domain.FactUnknown, domain.FactUnknown, installEnvoy
+		return domain.FactUnknown, command, domain.FactUnknown, domain.FactUnknown, installEnvoy, shellURL
 	}
 	defer session.cleanup()
 
@@ -121,9 +123,9 @@ func (s *Server) observeGatewayControllers(ctx context.Context, projectID uuid.U
 			strings.Contains(string(out), "the server could not find the requested resource") {
 			// No Gateway API at all, so neither question has a yes.
 			return domain.FactFalse, command, domain.FactFalse,
-				canInstallController(ctx, session), installEnvoy
+				canInstallController(ctx, session), installEnvoy, shellURL
 		}
-		return domain.FactUnknown, command, domain.FactUnknown, domain.FactUnknown, installEnvoy
+		return domain.FactUnknown, command, domain.FactUnknown, domain.FactUnknown, installEnvoy, shellURL
 	}
 
 	api, cookies = domain.FactFalse, domain.FactFalse
@@ -151,7 +153,7 @@ func (s *Server) observeGatewayControllers(ctx context.Context, projectID uuid.U
 			log.Printf("experiments[%s]: permission probe inconclusive: %s", projectID, why)
 		}
 	}
-	return api, command, cookies, mayInstall, installEnvoy
+	return api, command, cookies, mayInstall, installEnvoy, shellURL
 }
 
 // observeVerifyDatastore reports whether a non-production datastore has been

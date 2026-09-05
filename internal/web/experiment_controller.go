@@ -35,27 +35,45 @@ func envoyGatewayManifestURL() string {
 
 // installControllerCommand is what an administrator runs when Mendel may not.
 //
-// Carries --context, because a bare kubectl installs into whatever cluster the
-// reader's terminal is pointed at -- which for anyone running Mendel is quite
-// likely Mendel's own. A command that silently does the right thing on the
-// author's machine and the wrong thing on the reader's is worse than no command.
+// Two lines rather than one, and both matter. The first fetches credentials,
+// because the place this is most likely to be run is a fresh Cloud Shell with no
+// kubeconfig at all. The second carries --context, because a bare kubectl
+// installs into whatever cluster the reader's terminal points at -- which for
+// anyone running Mendel is quite likely Mendel's own, and a command that does
+// the right thing on the author's machine and the wrong thing on the reader's is
+// worse than no command.
 func installControllerCommand(env map[string]string) string {
-	// --server-side so re-running is an apply rather than a conflict, which
-	// matters because re-running is the normal case.
 	apply := "kubectl apply --server-side -f " + envoyGatewayManifestURL()
 
 	project, cluster, zone := env["GCP_PROJECT_ID"], env["GKE_CLUSTER_NAME"], env["GKE_ZONE"]
 	if project == "" || cluster == "" || zone == "" {
 		return apply
 	}
-	// The context kubectl gives a GKE cluster. If the reader has not fetched
-	// credentials for it, kubectl says so plainly rather than doing something
-	// else quietly.
-	context := fmt.Sprintf("gke_%s_%s_%s", project, zone, cluster)
-	return fmt.Sprintf("kubectl --context %s apply --server-side -f %s\n\n"+
-		"# If that context does not exist yet:\n"+
-		"# gcloud container clusters get-credentials %s --location %s --project %s",
-		context, envoyGatewayManifestURL(), cluster, zone, project)
+	return fmt.Sprintf(
+		"gcloud container clusters get-credentials %s --location %s --project %s\n"+
+			"kubectl --context gke_%s_%s_%s apply --server-side -f %s",
+		cluster, zone, project,
+		project, zone, cluster, envoyGatewayManifestURL())
+}
+
+// cloudShellURL opens a terminal in the browser, signed in as whoever follows
+// the link, with gcloud and kubectl already installed.
+//
+// The point is that this step requires no software on anybody's laptop. A person
+// who has to learn about Homebrew before their first experiment will not have a
+// first experiment, and asking someone non-technical to install a Kubernetes CLI
+// is a good way to lose them at exactly the wrong moment.
+//
+// Deliberately not an "Open in Cloud Shell" deep link. That form requires
+// cloudshell_git_repo, and a repository Google has not allow-listed opens a
+// temporary environment *without the user's credentials* -- so the one thing the
+// link exists to make easy is the thing it would break. The command is copied
+// instead, which is why it carries its own get-credentials line.
+func cloudShellURL(env map[string]string) string {
+	if project := env["GCP_PROJECT_ID"]; project != "" {
+		return "https://shell.cloud.google.com/?show=terminal&project=" + project
+	}
+	return "https://shell.cloud.google.com/?show=terminal"
 }
 
 // canInstallController asks the cluster whether Mendel's credentials may do it.

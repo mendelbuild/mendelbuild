@@ -158,7 +158,7 @@ func TestInstallIsOfferedAsAnActionWhenMendelCanDoIt(t *testing.T) {
 		t.Error("an install button was offered that Mendel's credentials would refuse")
 	}
 	for _, want := range []string{
-		"apply --server-side", "--context gke_", "cluster-admin",
+		"apply --server-side", "--context gke_", "administrator access",
 		`id="install-controller"`, `data-copy="install-controller"`, "/static/js/copy-button.js",
 	} {
 		if !strings.Contains(refused, want) {
@@ -180,25 +180,6 @@ func TestInstallIsOfferedAsAnActionWhenMendelCanDoIt(t *testing.T) {
 	}
 }
 
-// A bare kubectl installs into whatever cluster the reader's terminal points
-// at, which for anyone running Mendel is quite likely Mendel's own. The command
-// has to name the cluster it means.
-func TestInstallCommandNamesTheClusterItMeans(t *testing.T) {
-	cmd := installControllerCommand(testClusterEnv())
-
-	if !strings.Contains(cmd, "--context gke_mendelpong_us-central1_pong-autopilot") {
-		t.Errorf("the command does not aim at the project's cluster: %s", cmd)
-	}
-	if !strings.Contains(cmd, "get-credentials pong-autopilot") {
-		t.Error("the command does not say how to get that context if it is missing")
-	}
-
-	// With nothing to name, it degrades to the bare form rather than inventing a
-	// context that does not exist.
-	if bare := installControllerCommand(nil); strings.Contains(bare, "--context") {
-		t.Errorf("a context was invented from nothing: %s", bare)
-	}
-}
 
 // The controller version is pinned, and the pin is what the install applies. A
 // controller that changed under a running experiment could change how traffic is
@@ -303,5 +284,50 @@ func TestPermissionProbeAsksAboutPatch(t *testing.T) {
 		if !found {
 			t.Errorf("the probe does not ask about %s, which the manifest patches", needed)
 		}
+	}
+}
+
+// A person who has to learn about Homebrew before their first experiment will
+// not have a first experiment. When Mendel cannot install the controller, the
+// fallback must not assume a Kubernetes CLI on anyone's laptop.
+func TestFallbackNeedsNothingInstalledLocally(t *testing.T) {
+	obs := domain.ExperimentObservation{
+		GatewayAPI: domain.FactTrue, CookieMatching: domain.FactFalse,
+		CanInstallController:  domain.FactFalse,
+		InstallControllerHint: installControllerCommand(testClusterEnv()),
+		CloudShellURL:         cloudShellURL(testClusterEnv()),
+		ProdHostname:          domain.FactTrue, ProdHTTPS: domain.FactTrue,
+		SchemaChanges: domain.FactFalse,
+	}
+	html := renderExperimentsPage(t, obs)
+
+	if !strings.Contains(html, "shell.cloud.google.com") {
+		t.Error("no browser terminal offered; the fallback assumes a local kubectl")
+	}
+	if !strings.Contains(html, `rel="noopener noreferrer"`) {
+		t.Error("the external link does not disclaim the opener")
+	}
+}
+
+// A fresh Cloud Shell has no cluster configured, so a bare kubectl there reaches
+// nothing. And on a laptop it reaches whatever the terminal was already pointed
+// at, which for a Mendel operator is quite likely Mendel's own cluster. The
+// command has to establish its own target either way.
+func TestFallbackCommandEstablishesItsOwnTarget(t *testing.T) {
+	cmd := installControllerCommand(testClusterEnv())
+
+	if !strings.Contains(cmd, "get-credentials pong-autopilot --location us-central1 --project mendelpong") {
+		t.Errorf("the command does not fetch credentials for the cluster: %s", cmd)
+	}
+	if !strings.Contains(cmd, "--context gke_mendelpong_us-central1_pong-autopilot") {
+		t.Errorf("the apply does not name the cluster it means: %s", cmd)
+	}
+	if lines := strings.Split(strings.TrimSpace(cmd), "\n"); len(lines) != 2 {
+		t.Errorf("expected exactly the two lines to paste, got %d:\n%s", len(lines), cmd)
+	}
+
+	// With nothing to name it degrades rather than inventing a cluster.
+	if bare := installControllerCommand(nil); strings.Contains(bare, "get-credentials") {
+		t.Errorf("a cluster was invented from nothing: %s", bare)
 	}
 }
