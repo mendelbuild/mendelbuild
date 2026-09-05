@@ -117,8 +117,26 @@ func (s *Server) StartExperiment(ctx context.Context, experimentID uuid.UUID,
 
 	// Last, because until this happens nothing an experiment applied is serving
 	// anybody -- which makes every step before it safely repeatable.
+	// Envoy names the proxy it provisions after the Gateway plus a hash, so the
+	// name cannot be written in advance -- it is discovered from the cluster that
+	// just created it.
+	proxy, err := session.experimentProxyService(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Without this the edge gateway marks the proxy unhealthy and serves 503.
+	// Its default health check probes the backend on the traffic port with no
+	// Host header, and Envoy answers 404 to a request matching no route -- which
+	// is correct of Envoy and fatal here. Envoy has a readiness endpoint on a
+	// port of its own; the check is pointed at that instead.
+	logMilestone("Teaching the edge gateway how to health check the proxy")
+	if err := session.healthCheckProxy(ctx, proxy); err != nil {
+		return err
+	}
+
 	logMilestone("Pointing production traffic at the experiment")
-	if err := session.repointProdRoute(ctx, prodRouteName, ExperimentEdgeService); err != nil {
+	if err := session.repointProdRoute(ctx, prodRouteName, proxy, ExperimentProxyNamespace); err != nil {
 		return err
 	}
 
@@ -161,7 +179,7 @@ func (s *Server) StopExperiment(ctx context.Context, experimentID uuid.UUID,
 		return err
 	}
 	logInfo("Returning production traffic to mainline")
-	if err := session.repointProdRoute(ctx, prod, prod); err != nil {
+	if err := session.repointProdRoute(ctx, prod, prod, ""); err != nil {
 		return err
 	}
 
@@ -239,16 +257,90 @@ func (g *gkeSession) applyManifest(ctx context.Context, manifest string) error {
 // A patch rather than a re-apply, because the route belongs to the ordinary
 // deployment path and everything else about it must survive untouched -- the
 // hostname, the parent gateway, whatever a later deploy adds to it.
-func (g *gkeSession) repointProdRoute(ctx context.Context, route, backend string) error {
-	patch := fmt.Sprintf(`[{"op":"replace","path":"/spec/rules/0/backendRefs/0/name","value":%q}]`, backend)
+func (g *gkeSession) repointProdRoute(ctx context.Context, route, backend, namespace string) error {
+	// The namespace is set when pointing at the proxy and removed when pointing
+	// back. Leaving a stale namespace on the restored backend would send
+	// production at a Service of that name in somebody else's namespace, or at
+	// nothing.
+	ops := fmt.Sprintf(`{"op":"replace","path":"/spec/rules/0/backendRefs/0/name","value":%q}`, backend)
+	if namespace != "" {
+		ops += fmt.Sprintf(`,{"op":"add","path":"/spec/rules/0/backendRefs/0/namespace","value":%q}`, namespace)
+	} else {
+		ops += `,{"op":"remove","path":"/spec/rules/0/backendRefs/0/namespace"}`
+	}
+	patch := "[" + ops + "]"
 	cmd := exec.CommandContext(ctx, "kubectl", "patch", "httproute", route,
 		"-n", hosting.Namespace, "--type=json", "-p", patch)
 	cmd.Env = g.env
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	// Removing a namespace that was never there is not a failure; it is the
+	// ordinary case when stopping an experiment that never fully started.
+	if namespace == "" && strings.Contains(string(out), "remove operation does not apply") {
+		return nil
+	}
+	return fmt.Errorf("could not point %s at %s: %s: %w",
+		route, backend, strings.TrimSpace(string(out)), err)
+}
+
+// healthCheckProxy tells the edge gateway how to tell whether the proxy is up.
+//
+// A GKE-specific object, and unavoidably so: the health check belongs to the
+// load balancer GKE provisions, and Gateway API has no portable way to describe
+// one. It is applied here rather than rendered with the rest because it names
+// the proxy Service, whose name Envoy chooses.
+func (g *gkeSession) healthCheckProxy(ctx context.Context, proxyService string) error {
+	manifest := fmt.Sprintf(`apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: %[1]s
+  namespace: %[2]s
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        port: %[3]d
+        requestPath: /ready
+  targetRef:
+    group: ""
+    kind: Service
+    name: %[1]s
+`, proxyService, ExperimentProxyNamespace, envoyReadinessPort)
+
+	cmd := exec.CommandContext(ctx, "kubectl", "apply", "--server-side", "-f", "-")
+	cmd.Env = g.env
+	cmd.Stdin = strings.NewReader(manifest)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("could not point %s at %s: %s: %w",
-			route, backend, strings.TrimSpace(string(out)), err)
+		return fmt.Errorf("could not configure the proxy health check: %s: %w",
+			strings.TrimSpace(string(out)), err)
 	}
 	return nil
+}
+
+// envoyReadinessPort is where the proxy answers /ready, separate from the port
+// it serves traffic on.
+const envoyReadinessPort = 19003
+
+// experimentProxyService finds the Service Envoy created for the experiment
+// gateway.
+//
+// Discovered rather than derived: Envoy names it after the Gateway plus a hash
+// of its own choosing, which nothing outside Envoy can predict.
+func (g *gkeSession) experimentProxyService(ctx context.Context) (string, error) {
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "svc",
+		"-n", ExperimentProxyNamespace,
+		"-l", "gateway.envoyproxy.io/owning-gateway-name="+ExperimentGatewayName,
+		"-o", "jsonpath={.items[0].metadata.name}")
+	cmd.Env = g.env
+	out, err := cmd.Output()
+	name := strings.TrimSpace(string(out))
+	if err != nil || name == "" {
+		return "", fmt.Errorf("the experiment gateway has no proxy yet, so there is nothing to route to")
+	}
+	return name, nil
 }
 
 func (s *Server) recordExperimentEvent(ctx context.Context, experimentID uuid.UUID,

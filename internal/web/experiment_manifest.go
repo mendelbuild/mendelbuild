@@ -47,12 +47,15 @@ const ExperimentGatewayClass = "eg"
 // ExperimentGatewayName is the Gateway the Arm routes attach to.
 const ExperimentGatewayName = "mendel-experiments"
 
-// ExperimentEdgeService is a stable name in front of Envoy Gateway's proxy.
+// ExperimentProxyNamespace is where Envoy Gateway runs the proxies it
+// provisions -- its own namespace, not the Gateway's.
 //
-// Envoy Gateway names its own proxy Service after the Gateway plus a hash, which
-// is not a name anything else can reference. This selects the same pods under a
-// name Mendel chooses, so the front door has something fixed to point at.
-const ExperimentEdgeService = "mendel-experiment-edge"
+// That is why the production route reaches it across a namespace boundary. The
+// first version of this put a Service in mendel-apps selecting the proxy pods by
+// label, which can never have endpoints: a Service selects pods in its own
+// namespace only. It applied cleanly, reported ResolvedRefs=True because the
+// Service existed, and pointed production traffic at nothing.
+const ExperimentProxyNamespace = "envoy-gateway-system"
 
 // ExperimentDeployment is everything an experiment puts in the cluster.
 type ExperimentDeployment struct {
@@ -193,7 +196,7 @@ kind: Gateway
 metadata:
   name: %[1]s
   labels:
-    mendel-experiment: %[4]s
+    mendel-experiment: %[3]s
 spec:
   gatewayClassName: %[2]s
   listeners:
@@ -204,22 +207,28 @@ spec:
       namespaces:
         from: Same
 ---
-apiVersion: v1
-kind: Service
+`, ExperimentGatewayName, ExperimentGatewayClass, d.Name)
+
+	// Permission for the production route to reach the proxy across the
+	// namespace boundary. Gateway API refuses a cross-namespace backend without
+	// one, so this is what makes the repoint legal rather than merely intended.
+	fmt.Fprintf(&b, `apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
 metadata:
-  name: %[3]s
+  name: %[1]s
+  namespace: %[2]s
   labels:
-    mendel-experiment: %[4]s
+    mendel-experiment: %[1]s
 spec:
-  type: ClusterIP
-  selector:
-    gateway.envoyproxy.io/owning-gateway-name: %[1]s
-    gateway.envoyproxy.io/owning-gateway-namespace: %[5]s
-  ports:
-  - port: 80
-    targetPort: 10080
+  from:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    namespace: %[3]s
+  to:
+  - group: ""
+    kind: Service
 ---
-`, ExperimentGatewayName, ExperimentGatewayClass, ExperimentEdgeService, d.Name, hosting.Namespace)
+`, d.Name, ExperimentProxyNamespace, hosting.Namespace)
 
 	// No route is rendered for the production hostname. One already serves it,
 	// created by the ordinary deployment, and a second would never take effect:

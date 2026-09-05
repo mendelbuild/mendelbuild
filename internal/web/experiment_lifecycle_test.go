@@ -1,6 +1,7 @@
 package web
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -20,8 +21,16 @@ func TestExperimentAddsNoSecondRouteForTheProductionHost(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 
-	// Exactly one HTTPRoute, and it belongs to the experiment gateway.
-	if n := strings.Count(m, "kind: HTTPRoute"); n != 1 {
+	// Exactly one HTTPRoute object. Counted at the start of a line, because
+	// "kind: HTTPRoute" also appears indented inside the ReferenceGrant's from
+	// clause, where it names what is being permitted rather than declaring one.
+	n := 0
+	for _, line := range strings.Split(m, "\n") {
+		if line == "kind: HTTPRoute" {
+			n++
+		}
+	}
+	if n != 1 {
 		t.Errorf("rendered %d HTTPRoutes; a second one for the same host would never take effect", n)
 	}
 	route := m[strings.Index(m, "kind: HTTPRoute"):]
@@ -69,5 +78,37 @@ func TestMainlineTakesItsShareOfNewVisitors(t *testing.T) {
 		if !strings.Contains(fallback, want) {
 			t.Errorf("the allocation did not reach the route: missing %q", want)
 		}
+	}
+}
+
+// The edge gateway must be told how to health check the proxy, or it decides the
+// proxy is down and serves 503 to everybody.
+//
+// Its default check probes the traffic port with no Host header, and Envoy
+// answers 404 to a request matching no route -- correct of Envoy, fatal here.
+// Observed on a real cluster: the backend sat UNHEALTHY and every request got
+// 503 until the check was pointed at Envoy's own readiness port, after which
+// twenty-four visitors split 9/9/6 across three arms.
+func TestProxyIsHealthCheckedOnItsReadinessPort(t *testing.T) {
+	src, err := os.ReadFile("experiment_lifecycle.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+
+	if !strings.Contains(body, "HealthCheckPolicy") {
+		t.Error("nothing configures the edge gateway's health check, so it will serve 503")
+	}
+	if !strings.Contains(body, "requestPath: /ready") {
+		t.Error("the health check does not target Envoy's readiness endpoint")
+	}
+	if envoyReadinessPort == 80 || envoyReadinessPort == 10080 {
+		t.Errorf("the health check port %d is a traffic port; Envoy answers 404 there",
+			envoyReadinessPort)
+	}
+	// And it has to happen before traffic is repointed, or production is sent to
+	// a backend the load balancer already believes is down.
+	if strings.Index(body, "healthCheckProxy") > strings.Index(body, "Pointing production traffic") {
+		t.Error("the health check is configured after the repoint, so production would 503 first")
 	}
 }

@@ -201,27 +201,33 @@ func TestArmRoutesAttachToEnvoyAndTheFrontDoorStaysOnGKE(t *testing.T) {
 	if strings.Contains(m, "hostnames:\n  - app.example.com\nspec") {
 		t.Error("rendered a competing route for the production hostname")
 	}
-	// And the edge Service still exists for that repoint to aim at.
-	if !strings.Contains(m, "name: "+ExperimentEdgeService) {
-		t.Error("nothing for the production route to be pointed at")
+	// The route reaches Envoy across a namespace boundary, which Gateway API
+	// refuses without a grant.
+	if !strings.Contains(m, "kind: ReferenceGrant") {
+		t.Error("no grant, so the production route may not reference the proxy")
+	}
+	if !strings.Contains(m, "namespace: "+ExperimentProxyNamespace) {
+		t.Error("the grant is not in the namespace the proxy runs in")
 	}
 }
 
 // Envoy Gateway names its proxy Service after the Gateway plus a hash, which is
 // not a name anything can reference. Mendel puts a fixed name in front of the
 // same pods so the front door has something stable to point at.
-func TestEdgeServiceSelectsTheEnvoyProxyPods(t *testing.T) {
+func TestProductionReachesTheProxyByGrantNotBySelector(t *testing.T) {
 	m, err := experimentFixture().Manifest()
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	for _, want := range []string{
-		"name: " + ExperimentEdgeService,
-		"gateway.envoyproxy.io/owning-gateway-name: " + ExperimentGatewayName,
-		"gateway.envoyproxy.io/owning-gateway-namespace: mendel-apps",
-	} {
-		if !strings.Contains(m, want) {
-			t.Errorf("the edge Service is missing %q", want)
-		}
+	// A Service selects pods in its own namespace only, and Envoy runs its
+	// proxies in its own. The first version of this created one in mendel-apps
+	// selecting those pods: it applied cleanly, reported ResolvedRefs=True
+	// because the Service existed, had no endpoints, and pointed production
+	// traffic at nothing.
+	if strings.Contains(m, "mendel-experiment-edge") {
+		t.Error("rendered a Service that can never have endpoints")
+	}
+	if !strings.Contains(m, "kind: ReferenceGrant") {
+		t.Error("nothing permits the production route to reach the proxy")
 	}
 }
