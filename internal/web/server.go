@@ -682,6 +682,9 @@ func (s *Server) setupRoutes() {
 		r.Get("/domain/readiness", s.handleDomainReadiness)
 		r.Post("/domain", s.handleSaveProjectDomain)
 		r.Post("/domain/named-demos", s.handleSetNamedDemos)
+		// What Mendel can do for this project, and what each of those needs.
+		r.Get("/available", s.handleFunctionalAreas)
+		r.Get("/available/{areaID}", s.handleFunctionalArea)
 		r.Get("/deployment", s.handleDeploymentChannel)
 		r.Post("/deployment/channel", s.handleSetDeploymentChannel)
 		r.Post("/deployment/validate-demo", s.handleValidateDemoPath)

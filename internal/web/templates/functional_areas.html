@@ -1,0 +1,31 @@
+{{define "page-content"}}
+<div class="page-head">
+    <h1 class="page-title">What Mendel can do for this project</h1>
+    <p class="page-lede">
+        Each of these needs a set of things to be true. Where one is not available,
+        the checklist says which of them are outstanding and whose move each is —
+        rather than the first reason only, discovered when you try.
+    </p>
+</div>
+
+{{template "settings-tabs" .}}
+
+<div class="stack">
+    {{range .Areas}}
+    <a class="card" href="/p/{{$.ProjectID}}/available/{{.ID}}">
+        <div class="card-head">
+            <h2 class="card-title">{{.Name}}</h2>
+            <span class="badge badge-{{if .Available}}success{{else if eq .WaitingOn "you"}}waiting{{else}}progress{{end}}">
+                {{if .Available}}Ready{{else if eq .WaitingOn "you"}}Your move{{else}}Not yet{{end}}
+            </span>
+        </div>
+        <p class="card-note">{{.Headline}}</p>
+        {{if .Outstanding}}
+        <p class="card-note subtle">{{.Outstanding}} outstanding</p>
+        {{else}}
+        <p class="card-note subtle">Everything this needs is in place.</p>
+        {{end}}
+    </a>
+    {{end}}
+</div>
+{{end}}

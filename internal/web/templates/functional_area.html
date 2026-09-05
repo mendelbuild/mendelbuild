@@ -1,0 +1,42 @@
+{{define "page-content"}}
+<div class="page-head">
+    <a class="eyebrow" href="/p/{{.ProjectID}}/available">&larr; What Mendel can do</a>
+    <h1 class="page-title">{{.Area.Name}}</h1>
+</div>
+
+<div class="card">
+    <div class="card-head">
+        <h2 class="card-title">{{.Area.Headline}}</h2>
+        <span class="badge badge-{{if .Area.Available}}success{{else if eq .Area.WaitingOn "you"}}waiting{{else}}progress{{end}}">
+            {{if .Area.Available}}Ready{{else if eq .Area.WaitingOn "you"}}Your move{{else}}Not yet{{end}}
+        </span>
+    </div>
+    <ol class="ladder">
+        {{range .Area.Steps}}
+        <li class="ladder-step" data-state="{{.State}}">
+            <span class="ladder-mark" aria-hidden="true">{{if eq .State "done"}}&check;{{else if eq .State "unknown"}}?{{else}}&bull;{{end}}</span>
+            <span class="ladder-body">
+                <span class="ladder-name">{{.Name}}{{if .Count}} <span class="subtle">&mdash; {{.Count}}</span>{{end}}</span>
+                <span class="ladder-detail">{{.Detail}}</span>
+                {{/* The sentence the deploy path would decline with, shown here
+                     when it says more than the detail does. This is the whole
+                     anti-drift claim made visible: one string, rendered in both
+                     places, so the page cannot tell you one thing and the
+                     refusal another. */}}
+                {{if and .Missing (ne .Missing .Detail)}}
+                <span class="ladder-detail subtle">{{.Missing}}</span>
+                {{end}}
+                {{if eq .Remedy "unavailable"}}
+                <span class="ladder-detail subtle">Nothing you supply changes this; the remedy is to revisit an earlier choice.</span>
+                {{end}}
+            </span>
+        </li>
+        {{end}}
+    </ol>
+    <p class="card-note subtle">
+        Every one of these has to be true. Mendel checks them itself where it can,
+        and this is the same list the deploy path consults, so it cannot tell you
+        one thing and refuse you for another.
+    </p>
+</div>
+{{end}}

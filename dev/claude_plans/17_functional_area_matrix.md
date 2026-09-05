@@ -1,6 +1,6 @@
 # The Functional Area Matrix — Design
 
-Status: **steps 1 to 3 built; the rest is design.** §9 records what is done and
+Status: **steps 1, 2, 3 and 5 built; step 4 deferred.** §9 records what is done and
 what building it corrected. The machinery is
 `internal/domain/functional_area.go`, the first area is
 `functional_area_domain.go`, and `DomainReadiness` is now one assessment of it.
@@ -743,6 +743,14 @@ draft failed" from "no objectives yet" with three different sentences for what i
 arguably one condition. Forcing it into the catalogue may lose something the
 ribbon does well. Listed, not committed.
 
+**O24 — What happens to an input request when its condition is satisfied some
+other way?** Step 5 stopped short of filing input requests for `yourmove` steps
+because of this. A request asking for a base domain, answered by someone setting
+one in project settings instead, leaves a request that is no longer about
+anything — and the existing `syncDomainRequest` resolves that by reconciling on
+every render, which works for one condition and wants thinking about before it
+is the rule for forty.
+
 **O21 — Does a live experiment require a domain the user controls? — resolved:
 yes, and every reason first given for it was wrong.** The argument is kept in
 full because the route is more useful than the answer: it produced §16 D45–D49
@@ -976,19 +984,37 @@ implementation without collision. Step 6 is the merge point.
    for: a condition that cannot answer about some situation is not merely
    inelegant, it is a crash waiting for that situation.
 
-4. **Replace the inline handler checks.** `handleStartDemo`,
+4. **Replace the inline handler checks.** — **deferred, and the reason is
+   scheduling rather than design.** `handleStartDemo`,
    `runChannelDemoDeployment`, `runChannelProdDeployment` and the settings
-   handler evaluate the functional area and render its missing sentences instead
-   of writing their own. Nothing user-visible should change except that the
-   sentences get better; the point is that after this there is one source for
-   them.
+   handler should evaluate the functional area and render its missing sentences
+   instead of writing their own. Nothing user-visible changes except that the
+   sentences get better and a missing channel credential is reported before a
+   deploy starts rather than partway through.
 
-5. **The page, and input-request filing.** `/p/{id}/functional-areas` listing
-   each row with a one-line verdict, and `/p/{id}/functional-areas/{slug}`
-   rendering the ladder. `yourmove` steps with remedy `user` file an input
-   request through the generalised `syncDomainRequest`, so they appear under
-   Input Needed like everything else. The developer grid (D43) goes behind the
-   existing debug route.
+   Held because the three files it lands in were being actively edited by the
+   routing work, and rebasing a handler refactor against live edits to the same
+   functions is a poor trade for a change with no user-visible urgency. Step 5
+   went first instead, which needed only new files. Pick this up once those
+   files are quiet.
+
+5. **The page.** — **done**, `/p/{id}/available` and
+   `/p/{id}/available/{areaID}`, a tab beside Deployment and Domain. It lists
+   every area with a one-line verdict and renders each one's checklist through
+   the same `ladder` markup the Domain tab uses, so it reads as part of the app
+   rather than beside it.
+
+   Two things it does that the design asked for and one it does not.
+   `TestTheChecklistShowsEveryStepTheAssessmentFound` fails if the page drops a
+   step the assessment reports — a checklist a reader can work through and still
+   not proceed is worse than none. `TestThePageQuotesTheSentenceARefusalWouldUse`
+   fails if a `Missing` sentence does not reach the page, which is D39 asserted
+   rather than asserted-about.
+
+   **Input-request filing is not built.** Generalising `syncDomainRequest` means
+   deciding what happens to a request when its condition becomes satisfied by
+   something other than the request being answered, and that question is worth
+   its own pass rather than a paragraph here (O24).
 
 6. **The Experiment and Enforce rows**, including everything designed and not
    built as `unimplemented`. This is the first time the catalogue carries a
