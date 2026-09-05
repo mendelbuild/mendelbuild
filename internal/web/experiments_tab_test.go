@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
+	"github.com/bhs/mendelbuild/internal/db"
 	"github.com/bhs/mendelbuild/internal/domain"
 )
 
@@ -456,4 +458,77 @@ func TestManifestIsFetchedOnce(t *testing.T) {
 	if hits != 1 {
 		t.Errorf("downloaded the pinned manifest %d times; it cannot change", hits)
 	}
+}
+
+// Every control the page offers must have a route behind it, or a button does
+// nothing and says nothing.
+func TestExperimentControlsAreWiredUp(t *testing.T) {
+	s := &Server{}
+	s.setupRoutes()
+
+	want := map[string]bool{
+		"/experiments/create": false, "/start": false, "/stop": false,
+	}
+	chi.Walk(s.router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		if method != http.MethodPost || !strings.Contains(route, "/experiments") {
+			return nil
+		}
+		for suffix := range want {
+			if strings.HasSuffix(route, suffix) {
+				want[suffix] = true
+			}
+		}
+		return nil
+	})
+	for suffix, found := range want {
+		if !found {
+			t.Errorf("no POST route ends in %q", suffix)
+		}
+	}
+}
+
+// An experiment started before the cluster can route it would deploy arms
+// nothing reaches — a running experiment serving one arm to everybody, which
+// looks like a result rather than a fault.
+func TestStartIsRefusedUntilTheClusterCanRoute(t *testing.T) {
+	notReady := renderExperimentsPageWith(t, domain.ExperimentObservation{
+		GatewayAPI: domain.FactTrue, CookieMatching: domain.FactFalse,
+		ProdHostname: domain.FactTrue, SchemaChanges: domain.FactFalse,
+	}, false)
+	if !strings.Contains(notReady, "disabled") {
+		t.Error("start was offered on a cluster that cannot route arms")
+	}
+
+	ready := renderExperimentsPageWith(t, domain.ExperimentObservation{
+		GatewayAPI: domain.FactTrue, CookieMatching: domain.FactTrue,
+		ProdHostname: domain.FactTrue, ProdHTTPS: domain.FactTrue,
+		SchemaChanges: domain.FactFalse,
+	}, true)
+	if strings.Contains(ready, `class="btn btn-primary" disabled`) {
+		t.Error("start was disabled on a cluster that is ready")
+	}
+}
+
+func renderExperimentsPageWith(t *testing.T, obs domain.ExperimentObservation, ready bool) string {
+	t.Helper()
+	steps := domain.ExperimentReadiness(obs)
+	headline, blocked := domain.ExperimentHeadline(steps)
+	id := uuid.New()
+
+	var out strings.Builder
+	if err := parsePageTemplate("project_experiments.html").ExecuteTemplate(&out, "page-content", map[string]interface{}{
+		"SettingsTab": "experiments", "ProjectID": "abc", "Steps": steps,
+		"Headline": headline, "Blocked": blocked, "Checking": false,
+		"CheckedLabel": "just now", "Observation": obs, "Ready": ready,
+		"DatastoreVar": VerifyDatastoreVar, "Success": false, "Error": "",
+		"Fingerprint": obs.Fingerprint(),
+		"Candidates": []db.ExperimentCandidate{{HopID: id, HopName: "scoreboard", Variations: make([]domain.Variation, 2)}},
+		"Experiments": []*domain.Experiment{{
+			ID: id, Status: domain.ExperimentDraft,
+			Arms: []domain.ExperimentArm{{Slug: "0", AllocationWeight: 50}},
+		}},
+	}); err != nil {
+		t.Fatalf("experiments page does not render: %v", err)
+	}
+	return out.String()
 }

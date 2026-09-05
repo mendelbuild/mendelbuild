@@ -17,6 +17,19 @@
 {{if .Success}}
 <div class="callout callout-success"><p class="callout-body">Saved.</p></div>
 {{end}}
+{{if .Starting}}
+<div class="callout callout-waiting">
+    <p class="callout-body">
+        Starting. Each arm's image is built from its variation's branch, which takes
+        a few minutes; production keeps serving mainline until the last step.
+    </p>
+</div>
+{{end}}
+{{if .Stopping}}
+<div class="callout callout-waiting">
+    <p class="callout-body">Stopping. Traffic returns to mainline first, then the arms are removed.</p>
+</div>
+{{end}}
 {{if .Installing}}
 <div class="callout callout-waiting">
     <p class="callout-body">
@@ -173,6 +186,67 @@
                     <button type="submit" class="btn btn-primary">Save</button>
                 </div>
             </form>
+        </div>
+
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">Experiments</h2></div>
+            {{if not .Ready}}
+            <p class="card-note">
+                Everything above has to be true first. An experiment started before
+                then would deploy arms nothing could route to.
+            </p>
+            {{end}}
+
+            {{range .Experiments}}
+            <div class="ladder-step" data-state="{{if eq (printf "%v" .Status) "running"}}done{{else}}waiting{{end}}">
+                <span class="ladder-body">
+                    <span class="ladder-name">{{.Status}} &mdash; {{len .Arms}} arms</span>
+                    <span class="ladder-detail">
+                        {{range .Arms}}<code>{{.Slug}}</code> {{.AllocationWeight}}%  {{end}}
+                    </span>
+                </span>
+            </div>
+            <form method="POST" class="actions"
+                  action="/p/{{$.ProjectID}}/experiments/{{.ID}}/{{if eq (printf "%v" .Status) "running"}}stop{{else}}start{{end}}">
+                <button type="submit" class="btn {{if eq (printf "%v" .Status) "running"}}btn-danger{{else}}btn-primary{{end}}"{{if not $.Ready}} disabled{{end}}>
+                    {{if eq (printf "%v" .Status) "running"}}Stop and return everyone to mainline{{else}}Start taking live traffic{{end}}
+                </button>
+            </form>
+            {{end}}
+
+            {{if .Candidates}}
+            <form method="POST" action="/p/{{.ProjectID}}/experiments/create">
+                <div class="field">
+                    <label for="hop_id">Run a hop as a live experiment</label>
+                    <span class="hint">Mainline and one arm per variation, sharing traffic evenly.</span>
+                    <select id="hop_id" name="hop_id">
+                        {{range .Candidates}}{{if not .ExperimentID}}
+                        <option value="{{.HopID}}">{{.HopName}} ({{len .Variations}} variations)</option>
+                        {{end}}{{end}}
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="mde">Minimum detectable effect</label>
+                    <span class="hint">The smallest change worth acting on. Sets how long this must run.</span>
+                    <input type="text" id="mde" name="mde" class="input-mono" value="0.02">
+                </div>
+                <div class="field">
+                    <label for="duration_hours">Planned duration (hours)</label>
+                    <input type="text" id="duration_hours" name="duration_hours" class="input-mono" value="336">
+                </div>
+                <div class="field">
+                    <label for="stopping_rule">Stopping rule</label>
+                    <span class="hint">Pre-registered, because choosing when to stop after seeing the data is what inflates the false-positive rate.</span>
+                    <select id="stopping_rule" name="stopping_rule">
+                        <option value="fixed_horizon">Fixed horizon</option>
+                        <option value="sequential">Sequential test</option>
+                    </select>
+                </div>
+                <div class="actions"><button type="submit" class="btn btn-secondary">Create</button></div>
+            </form>
+            {{else}}
+            <p class="empty">No hop has variations to compare yet.</p>
+            {{end}}
         </div>
 
         <div class="card">

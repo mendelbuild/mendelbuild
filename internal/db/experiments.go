@@ -348,3 +348,67 @@ func (db *DB) GetExperimentEvents(ctx context.Context, experimentID uuid.UUID) (
 	}
 	return out, rows.Err()
 }
+
+// ExperimentCandidate is a Hop that could take live traffic: it has Variations
+// with generated code, and so has something to compare.
+type ExperimentCandidate struct {
+	HopID        uuid.UUID
+	HopName      string
+	Variations   []domain.Variation
+	ExperimentID *uuid.UUID
+	Status       string
+}
+
+// ListExperimentCandidates returns the Hops of a project that have Variations
+// ready to serve, newest first.
+//
+// A Hop with no Variation has nothing to compare mainline against, and one whose
+// Variations are still being generated has no code to deploy -- neither is a
+// candidate, and offering them would be offering an experiment that cannot start.
+func (db *DB) ListExperimentCandidates(ctx context.Context, projectID uuid.UUID) ([]ExperimentCandidate, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT h.id, h.name, e.id, e.status
+		FROM hops h
+		JOIN strategies s ON s.id = h.strategy_id
+		LEFT JOIN experiments e ON e.hop_id = h.id
+		WHERE s.project_id = $1
+		  AND EXISTS (
+		      SELECT 1 FROM variations v
+		      WHERE v.hop_id = h.id AND v.status NOT IN ('creating', 'terminated')
+		  )
+		ORDER BY h.created_at DESC
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ExperimentCandidate
+	for rows.Next() {
+		var c ExperimentCandidate
+		var status *string
+		if err := rows.Scan(&c.HopID, &c.HopName, &c.ExperimentID, &status); err != nil {
+			return nil, err
+		}
+		if status != nil {
+			c.Status = *status
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for i := range out {
+		vs, err := db.GetVariationsByHop(ctx, out[i].HopID)
+		if err != nil {
+			return nil, err
+		}
+		for _, v := range vs {
+			if v.Status != domain.VariationStatusCreating && v.Status != domain.VariationStatusTerminated {
+				out[i].Variations = append(out[i].Variations, v)
+			}
+		}
+	}
+	return out, nil
+}

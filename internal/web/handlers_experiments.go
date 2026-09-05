@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/bhs/mendelbuild/internal/assigner"
 	"github.com/bhs/mendelbuild/internal/crypto"
 	"github.com/bhs/mendelbuild/internal/domain"
 )
@@ -36,6 +38,20 @@ func (s *Server) handleProjectExperiments(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	candidates, err := s.db.ListExperimentCandidates(ctx, projectID)
+	if err != nil {
+		log.Printf("experiments[%s]: could not list candidates: %v", projectID, err)
+	}
+	var running []*domain.Experiment
+	for _, c := range candidates {
+		if c.ExperimentID == nil {
+			continue
+		}
+		if e, err := s.db.GetExperiment(ctx, *c.ExperimentID); err == nil && e != nil {
+			running = append(running, e)
+		}
+	}
+
 	obs, observedAt := s.experimentObservationFor(projectID)
 	steps := domain.ExperimentReadiness(obs)
 	headline, blocked := domain.ExperimentHeadline(steps)
@@ -52,9 +68,14 @@ func (s *Server) handleProjectExperiments(w http.ResponseWriter, r *http.Request
 		"CheckedLabel": checkedLabel(observedAt),
 		"Observation":  obs,
 		"DatastoreVar": VerifyDatastoreVar,
+		"Candidates":   candidates,
+		"Experiments":  running,
+		"Ready":        len(domain.ExperimentBlockers(domain.ExperimentReadiness(obs))) == 0,
 		"Fingerprint":  obs.Fingerprint(),
 		"Success":      r.URL.Query().Get("success") == "1",
 		"Installing":   r.URL.Query().Get("installing") == "1",
+		"Starting":     r.URL.Query().Get("starting") == "1",
+		"Stopping":     r.URL.Query().Get("stopping") == "1",
 		"Error":        r.URL.Query().Get("error"),
 	}
 	s.addOpenInputCount(ctx, data)
@@ -161,4 +182,151 @@ func (s *Server) handleExperimentStatus(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	fmt.Fprintf(w, `{"fingerprint":%q,"checking":%t}`, obs.Fingerprint(), observedAt.IsZero())
+}
+
+// handleCreateExperiment turns a Hop's Variations into Arms.
+//
+// Equal shares, because nothing is known yet that would justify anything else,
+// and an uneven split chosen by default is a decision nobody made.
+func (s *Server) handleCreateExperiment(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+	back := "/p/" + projectID.String() + "/experiments"
+
+	hopID, err := uuid.Parse(r.FormValue("hop_id"))
+	if err != nil {
+		http.Redirect(w, r, back+"?error=pick+a+hop", http.StatusSeeOther)
+		return
+	}
+
+	variations, err := s.db.GetVariationsByHop(ctx, hopID)
+	if err != nil {
+		http.Redirect(w, r, back+"?error=could+not+read+the+variations", http.StatusSeeOther)
+		return
+	}
+	var usable []domain.Variation
+	for _, v := range variations {
+		if v.Status != domain.VariationStatusCreating && v.Status != domain.VariationStatusTerminated {
+			usable = append(usable, v)
+		}
+	}
+	if len(usable) == 0 {
+		http.Redirect(w, r, back+"?error=that+hop+has+no+variations+to+compare", http.StatusSeeOther)
+		return
+	}
+
+	mde := 0.02
+	if v, err := strconv.ParseFloat(r.FormValue("mde"), 64); err == nil && v > 0 {
+		mde = v
+	}
+	hours := 336
+	if v, err := strconv.Atoi(r.FormValue("duration_hours")); err == nil && v > 0 {
+		hours = v
+	}
+	rule := domain.StoppingRule(r.FormValue("stopping_rule"))
+	if rule != domain.StoppingSequential {
+		rule = domain.StoppingFixedHorizon
+	}
+
+	exp := &domain.Experiment{
+		ProjectID: projectID, HopID: hopID,
+		// The device path: Mendel's own cookie identifies a browser, which is
+		// what it can establish without the application's help. Per-user
+		// assignment needs the application to mint a bucket, which it does not
+		// do yet.
+		AssignmentUnit:      domain.AssignmentUnitSession,
+		AssignmentKeySource: domain.AssignmentKeyCookie,
+		AssignmentKeyName:   assigner.CookieName,
+		MinimumDetectableEffect: &mde,
+		PlannedDurationHours:    &hours,
+		StoppingRule:            rule,
+	}
+	if err := s.db.CreateExperiment(ctx, exp); err != nil {
+		http.Redirect(w, r, back+"?error=could+not+create+the+experiment", http.StatusSeeOther)
+		return
+	}
+
+	// Mainline plus one Arm per Variation, sharing traffic evenly. The remainder
+	// goes to mainline rather than being dropped, so the shares always total a
+	// whole and no visitor falls through an allocation that adds to 99.
+	arms := len(usable) + 1
+	each := 100 / arms
+	if err := s.db.CreateExperimentArm(ctx, &domain.ExperimentArm{
+		ExperimentID: exp.ID, Slug: domain.MainlineSlug,
+		AllocationWeight: 100 - each*len(usable),
+	}); err != nil {
+		http.Redirect(w, r, back+"?error=could+not+create+the+control+arm", http.StatusSeeOther)
+		return
+	}
+	for i := range usable {
+		if err := s.db.UpsertExperimentArm(ctx, &domain.ExperimentArm{
+			ExperimentID: exp.ID, VariationID: &usable[i].ID,
+			Slug:             armSlugFor(usable[i]),
+			AllocationWeight: each,
+		}); err != nil {
+			http.Redirect(w, r, back+"?error=could+not+create+an+arm", http.StatusSeeOther)
+			return
+		}
+	}
+
+	http.Redirect(w, r, back+"?success=1", http.StatusSeeOther)
+}
+
+// handleStartExperiment takes live traffic.
+func (s *Server) handleStartExperiment(w http.ResponseWriter, r *http.Request) {
+	s.runExperimentAction(w, r, "starting", func(ctx context.Context, id uuid.UUID, log func(string)) error {
+		return s.StartExperiment(ctx, id, log, log)
+	})
+}
+
+// handleStopExperiment returns every visitor to mainline.
+func (s *Server) handleStopExperiment(w http.ResponseWriter, r *http.Request) {
+	s.runExperimentAction(w, r, "stopping", func(ctx context.Context, id uuid.UUID, log func(string)) error {
+		return s.StopExperiment(ctx, id, "Stopped from the experiments page", log)
+	})
+}
+
+// runExperimentAction runs one in the background and returns immediately.
+//
+// Starting builds an image per Arm, which outlasts any browser's patience. The
+// page reports what happened from the experiment's own status afterwards.
+func (s *Server) runExperimentAction(w http.ResponseWriter, r *http.Request, verb string,
+	action func(context.Context, uuid.UUID, func(string)) error) {
+
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+	experimentID, err := uuid.Parse(chi.URLParam(r, "experimentID"))
+	if err != nil {
+		http.Error(w, "invalid experiment ID", http.StatusBadRequest)
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		logf := func(msg string) { log.Printf("experiment[%s]: %s", experimentID, msg) }
+		if err := action(ctx, experimentID, logf); err != nil {
+			log.Printf("experiment[%s]: %s failed: %v", experimentID, verb, err)
+		}
+	}()
+
+	http.Redirect(w, r, "/p/"+projectID.String()+"/experiments?"+verb+"=1", http.StatusSeeOther)
+}
+
+// armSlugFor names an Arm after its Variation, uniquely.
+func armSlugFor(v domain.Variation) string {
+	name := strings.TrimSpace(v.Name)
+	if name == "" {
+		name = "arm"
+	}
+	// The id's prefix because Variation names are not unique, and two Arms
+	// sharing a slug would share a cookie value and a route.
+	return sanitizeAppName(name) + "-" + v.ID.String()[:6]
 }
