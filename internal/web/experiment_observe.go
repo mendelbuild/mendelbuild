@@ -121,9 +121,11 @@ func (s *Server) observeGatewayControllers(ctx context.Context, projectID uuid.U
 		// means, and it is the answer rather than a failure to get one.
 		if strings.Contains(string(out), "doesn't have a resource type") ||
 			strings.Contains(string(out), "the server could not find the requested resource") {
-			// No Gateway API at all, so neither question has a yes.
+			// No Gateway API at all, so neither question has a yes. Whether
+			// Mendel could install a controller is moot until the cluster has
+			// the API to install it against.
 			return domain.FactFalse, command, domain.FactFalse,
-				canInstallController(ctx, session), installEnvoy, shellURL
+				domain.FactUnknown, installEnvoy, shellURL
 		}
 		return domain.FactUnknown, command, domain.FactUnknown, domain.FactUnknown, installEnvoy, shellURL
 	}
@@ -145,12 +147,17 @@ func (s *Server) observeGatewayControllers(ctx context.Context, projectID uuid.U
 	// round trips to the cluster.
 	mayInstall = domain.FactUnknown
 	if cookies == domain.FactFalse {
+		manifest, err := fetchInstallManifest(ctx)
+		if err != nil {
+			log.Printf("experiments[%s]: could not fetch the controller manifest: %v", projectID, err)
+			return api, command, cookies, domain.FactUnknown, installEnvoy, shellURL
+		}
 		var why string
-		mayInstall, why = canInstallControllerWhy(ctx, session)
-		if why != "" {
+		mayInstall, why = canInstallController(ctx, session, manifest)
+		if why != "" && mayInstall != domain.FactTrue {
 			// An inconclusive probe used to be silent, which made "Mendel could
 			// not establish whether it may install this" impossible to act on.
-			log.Printf("experiments[%s]: permission probe inconclusive: %s", projectID, why)
+			log.Printf("experiments[%s]: install dry run says %v: %s", projectID, mayInstall, why)
 		}
 	}
 	return api, command, cookies, mayInstall, installEnvoy, shellURL

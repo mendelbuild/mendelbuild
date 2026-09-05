@@ -1,9 +1,7 @@
 package web
 
 import (
-	"errors"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 
@@ -197,41 +195,6 @@ func TestControllerVersionIsPinned(t *testing.T) {
 	}
 }
 
-// kubectl warns on stderr for cluster-scoped resources and answers on stdout.
-// Reading them together makes the answer match neither word, so Mendel would
-// decide it could not tell and never offer to install — on exactly the clusters
-// where it can.
-func TestCanIVerdictIsReadFromStdoutAlone(t *testing.T) {
-	exitErr := errors.New("exit status 1")
-
-	for name, tc := range map[string]struct {
-		stdout string
-		err    error
-		want   domain.Fact
-	}{
-		"plain yes":              {"yes\n", nil, domain.FactTrue},
-		"plain no":               {"no\n", exitErr, domain.FactFalse},
-
-		// Verbatim from GKE, which appends its reason to the verdict line. Read
-		// as the last word this gave `"clusterroles".`, so a clear refusal was
-		// reported as "could not tell" and the page offered an install the
-		// cluster had already said it would reject.
-		"gke no with reason": {
-			`no - requires one of ["container.clusterRoles.update"] permission(s) in Cloud IAM ` +
-				`or a Kubernetes RBAC role with verb "patch" for resource "clusterroles".` + "\n",
-			exitErr, domain.FactFalse,
-		},
-		"yes with trailing blank": {"yes\n\n", nil, domain.FactTrue},
-		"could not ask":          {"", errors.New("connection refused"), domain.FactUnknown},
-		"unexpected answer":      {"maybe\n", nil, domain.FactUnknown},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if got := interpretCanI(tc.stdout, tc.err); got != tc.want {
-				t.Errorf("interpretCanI(%q) = %v, want %v", tc.stdout, got, tc.want)
-			}
-		})
-	}
-}
 
 // "Not set" and "could not tell" are different answers to different questions,
 // and the page shows them differently on purpose.
@@ -260,42 +223,6 @@ func TestMissingDatastoreReadsAsMissingNotAsAFailure(t *testing.T) {
 	}
 }
 
-// The probe must ask about the verb the install actually uses.
-//
-// `kubectl apply --server-side` is a PATCH whatever the object's current state,
-// so an account permitted to create but not to patch fails on the very first
-// apply. GKE's container.developer is exactly such an account: asking about
-// create returned yes and the install then failed on every RBAC object in the
-// manifest.
-func TestPermissionProbeAsksAboutPatch(t *testing.T) {
-	src, err := os.ReadFile("experiment_controller.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(src), `"auth", "can-i", "patch"`) {
-		t.Error("the probe does not ask about patch, which is what apply --server-side does")
-	}
-	if strings.Contains(string(src), `"auth", "can-i", "create"`) {
-		t.Error("the probe still asks about create, which the install never performs")
-	}
-
-	// And it has to cover what the manifest actually contains. Asking about two
-	// of six is how a partial install gets attempted.
-	for _, needed := range []string{
-		"clusterroles", "clusterrolebindings", "roles", "rolebindings",
-		"customresourcedefinitions", "mutatingwebhookconfigurations",
-	} {
-		found := false
-		for _, r := range installNeeds {
-			if r == needed {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("the probe does not ask about %s, which the manifest patches", needed)
-		}
-	}
-}
 
 // A person who has to learn about Homebrew before their first experiment will
 // not have a first experiment. When Mendel cannot install the controller, the
@@ -408,5 +335,75 @@ func TestFingerprintTracksEveryDisplayedFact(t *testing.T) {
 				t.Errorf("a change to %s does not change the fingerprint, so the page stays stale", name)
 			}
 		})
+	}
+}
+
+// The install must not fight the platform for the CRDs it already owns.
+//
+// Envoy Gateway bundles its own copy of all ten Gateway API definitions. On GKE
+// those are installed and managed by kube-addon-manager, so applying them over
+// the top fails twice: server-side apply reports a field-manager conflict, and
+// Autopilot's enforce-gateway-standard-channel policy refuses the
+// experimental-channel ones outright. Both were observed on a real cluster.
+func TestInstallLeavesPlatformOwnedCRDsAlone(t *testing.T) {
+	manifest := `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: httproutes.gateway.networking.k8s.io
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: udproutes.gateway.networking.k8s.io
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: envoyproxies.gateway.envoyproxy.io
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: xbackends.gateway.networking.x-k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: envoy-gateway
+`
+	out := installableManifest(manifest)
+
+	for _, gone := range []string{"httproutes.gateway.networking.k8s.io", "udproutes.gateway.networking.k8s.io"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("kept %s, which the platform owns", gone)
+		}
+	}
+	// Only Envoy Gateway provides these, so dropping them would install a
+	// controller that cannot start. Note x-k8s.io is a different group and must
+	// survive, which a looser match on "gateway.networking" would not.
+	for _, kept := range []string{
+		"envoyproxies.gateway.envoyproxy.io",
+		"xbackends.gateway.networking.x-k8s.io",
+		"kind: Deployment",
+	} {
+		if !strings.Contains(out, kept) {
+			t.Errorf("dropped %s, which nothing else provides", kept)
+		}
+	}
+}
+
+// install.yaml creates no GatewayClass -- Envoy Gateway leaves that to whoever
+// installs it. Waiting for a class the manifest never creates would have waited
+// forever on an install that had entirely succeeded.
+func TestInstallCreatesTheGatewayClassItself(t *testing.T) {
+	m := gatewayClassManifest()
+	for _, want := range []string{
+		"kind: GatewayClass",
+		"name: " + ExperimentGatewayClass,
+		"controllerName: gateway.envoyproxy.io/gatewayclass-controller",
+	} {
+		if !strings.Contains(m, want) {
+			t.Errorf("the gateway class manifest is missing %q", want)
+		}
 	}
 }

@@ -2,9 +2,11 @@ package web
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -76,95 +78,88 @@ func cloudShellURL(env map[string]string) string {
 	return "https://shell.cloud.google.com/?show=terminal"
 }
 
-// canInstallController asks the cluster whether Mendel's credentials may do it.
+// gatewayAPICRD matches a Gateway API custom resource definition, as opposed to
+// Envoy Gateway's own.
+var gatewayAPICRD = regexp.MustCompile(`(?m)^\s*name:\s*[a-z]+\.gateway\.networking\.k8s\.io\s*$`)
+
+// installableManifest is the controller's manifest with the Gateway API custom
+// resource definitions removed.
 //
-// Asking is exact where inferring is not: a service account's rights are the
-// union of its IAM role and any RBAC bound to it, so a role name says nothing
-// definite. Envoy Gateway brings custom resource definitions and cluster roles,
-// which are the two most privileged things in its manifest -- if those are
-// permitted the rest follows, and if they are not the install fails partway,
-// which is worse than not starting.
-func canInstallController(ctx context.Context, session *gkeSession) domain.Fact {
-	verdict, _ := canInstallControllerWhy(ctx, session)
-	return verdict
-}
-
-// installNeeds are the privileged resources the manifest touches, with the verb
-// it touches them with.
+// Envoy Gateway bundles its own copy of all ten, and on GKE they are already
+// installed and managed by the platform. Applying them over the top fails twice
+// over: server-side apply reports a field-manager conflict with
+// kube-addon-manager, and Autopilot's enforce-gateway-standard-channel policy
+// refuses the experimental-channel ones outright -- grpcroutes, listenersets,
+// tcproutes, udproutes.
 //
-// patch, not create. `apply --server-side` is a PATCH whatever the object's
-// current state, so an account permitted to create and not to patch fails on the
-// very first apply -- which is exactly what GKE's container.developer allows,
-// and exactly what this probe missed when it asked about create.
-var installNeeds = []string{
-	"customresourcedefinitions",
-	"clusterroles",
-	"clusterrolebindings",
-	"roles",
-	"rolebindings",
-	"mutatingwebhookconfigurations",
-}
-
-// canInstallControllerWhy also returns what went wrong when the answer is
-// unknown, so an inconclusive probe leaves a trail instead of a shrug.
-func canInstallControllerWhy(ctx context.Context, session *gkeSession) (domain.Fact, string) {
-	for _, resource := range installNeeds {
-		cmd := exec.CommandContext(ctx, "kubectl", "auth", "can-i", "patch", resource)
-		cmd.Env = session.env
-		// Output rather than CombinedOutput: for a cluster-scoped resource
-		// kubectl writes "Warning: resource ... is not namespace scoped" to
-		// stderr, and folding that in with the answer means the answer matches
-		// neither yes nor no. The verdict is on stdout alone.
-		out, err := cmd.Output()
-
-		switch interpretCanI(string(out), err) {
-		case domain.FactTrue:
+// Removing them is not a workaround for the policy, it is the correct thing to
+// install: the cluster's own definitions are the ones every controller on it
+// must agree about, and a second copy is what the conflict is warning about.
+// Envoy Gateway's own definitions -- the gateway.envoyproxy.io and
+// gateway.networking.x-k8s.io groups -- are kept, since nothing else provides
+// them.
+func installableManifest(raw string) string {
+	var keep []string
+	for _, doc := range strings.Split(raw, "\n---") {
+		if strings.Contains(doc, "kind: CustomResourceDefinition") && gatewayAPICRD.MatchString(doc) {
 			continue
-		case domain.FactFalse:
-			return domain.FactFalse, ""
-		default:
-			why := fmt.Sprintf("asking whether %s may be patched gave %q", resource, strings.TrimSpace(string(out)))
-			var exit *exec.ExitError
-			if errors.As(err, &exit) {
-				why += ": " + strings.TrimSpace(string(exit.Stderr))
-			} else if err != nil {
-				why += ": " + err.Error()
-			}
-			return domain.FactUnknown, why
 		}
+		if strings.TrimSpace(doc) == "" {
+			continue
+		}
+		keep = append(keep, doc)
 	}
-	return domain.FactTrue, ""
+	return strings.Join(keep, "\n---") + "\n"
 }
 
-// interpretCanI reads kubectl's verdict.
+// gatewayClassManifest points a GatewayClass at the controller.
 //
-// `can-i` answers on stdout and exits non-zero for "no", so a non-zero exit is
-// an answer rather than a failure -- and anything that is neither word is a
-// failure to ask, which must not be read as permission either way.
+// install.yaml contains no GatewayClass at all -- Envoy Gateway leaves that to
+// whoever installs it, and its quickstart creates one separately. Waiting for a
+// class the manifest never creates would have waited forever, on an install that
+// had entirely succeeded.
+func gatewayClassManifest() string {
+	return fmt.Sprintf(`apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: %s
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+`, ExperimentGatewayClass)
+}
+
+// canInstallController asks the cluster by attempting the thing.
 //
-// The verdict is the *first* word, because a refusal is not the bare word "no".
-// GKE appends its reason to the same line:
+// `apply --server-side --dry-run=server` sends the real objects through the real
+// admission chain -- authentication, authorization, admission webhooks and
+// policies -- and persists nothing. The exit code is the answer.
 //
-//	no - requires one of ["container.clusterRoles.update"] permission(s) ...
+// This replaced a `kubectl auth can-i` probe over a hand-written list of
+// resources and verbs, which was a *model* of what the manifest does, and was
+// wrong three ways at once. It asked about create where a server-side apply
+// patches. It listed six resources where the manifest touches more. And it could
+// only ever see RBAC -- the thing that actually blocked this install was an
+// Autopilot ValidatingAdmissionPolicy, which no permission question would have
+// revealed.
 //
-// Reading the last word gave `"clusterroles".`, which matches neither word, so
-// a clear refusal was reported as "could not tell" -- and the page offered to
-// attempt an install the cluster had already said it would reject.
-func interpretCanI(stdout string, err error) domain.Fact {
-	fields := strings.Fields(strings.TrimSpace(stdout))
-	if len(fields) == 0 {
-		return domain.FactUnknown
+// The dry run has no model. It is the operation.
+func canInstallController(ctx context.Context, session *gkeSession, manifest string) (domain.Fact, string) {
+	cmd := exec.CommandContext(ctx, "kubectl", "apply", "--server-side", "--dry-run=server", "-f", "-")
+	cmd.Env = session.env
+	cmd.Stdin = strings.NewReader(manifest)
+
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return domain.FactTrue, ""
 	}
-	switch strings.ToLower(fields[0]) {
-	case "yes":
-		return domain.FactTrue
-	case "no":
-		return domain.FactFalse
+
+	// Forbidden is the cluster saying no, whether the source is RBAC or a
+	// policy. Anything else is a failure to ask -- a network error, a manifest
+	// that could not be fetched -- and must not be reported as a refusal.
+	if strings.Contains(string(out), "forbidden") || strings.Contains(string(out), "Forbidden") {
+		return domain.FactFalse, strings.TrimSpace(string(out))
 	}
-	if err != nil {
-		return domain.FactUnknown
-	}
-	return domain.FactUnknown
+	return domain.FactUnknown, strings.TrimSpace(string(out))
 }
 
 // installExperimentController installs Envoy Gateway and waits for its
@@ -192,22 +187,37 @@ func (s *Server) installExperimentController(ctx context.Context, projectID uuid
 	}
 	defer session.cleanup()
 
-	// Only a definite no stops this. If Mendel cannot tell whether it is
-	// allowed, the informative thing is to try: the API server's refusal names
-	// the exact permission that is missing, where "could not tell" names
-	// nothing and leaves the user to run a command Mendel could have run.
-	if canInstallController(ctx, session) == domain.FactFalse {
-		return fmt.Errorf("these credentials may not modify cluster roles and webhooks, so "+
-			"Mendel cannot install the controller. An administrator can run:\n  %s",
-			installControllerCommand(env))
+	// Only a definite refusal stops this. Where the dry run cannot tell -- a
+	// network failure, a manifest that would not download -- the informative
+	// thing is to try, because the real apply's error names the cause where
+	// "could not tell" names nothing.
+	manifest, err := fetchInstallManifest(ctx)
+	if err != nil {
+		return err
+	}
+
+	if verdict, why := canInstallController(ctx, session, manifest); verdict == domain.FactFalse {
+		return fmt.Errorf("the cluster refused this install:\n%s\n\nSomeone with administrator "+
+			"access can run:\n  %s", why, installControllerCommand(env))
 	}
 
 	logInfo("Installing Envoy Gateway " + EnvoyGatewayVersion)
-	apply := exec.CommandContext(ctx, "kubectl", "apply", "--server-side",
-		"-f", envoyGatewayManifestURL())
+	apply := exec.CommandContext(ctx, "kubectl", "apply", "--server-side", "-f", "-")
 	apply.Env = session.env
+	apply.Stdin = strings.NewReader(manifest)
 	if out, err := apply.CombinedOutput(); err != nil {
 		return fmt.Errorf("installing the controller failed: %s: %w",
+			strings.TrimSpace(string(out)), err)
+	}
+
+	// The manifest creates no GatewayClass, so nothing yet points at the
+	// controller that was just installed.
+	logInfo("Pointing a gateway class at the controller")
+	class := exec.CommandContext(ctx, "kubectl", "apply", "--server-side", "-f", "-")
+	class.Env = session.env
+	class.Stdin = strings.NewReader(gatewayClassManifest())
+	if out, err := class.CombinedOutput(); err != nil {
+		return fmt.Errorf("could not create the gateway class: %s: %w",
 			strings.TrimSpace(string(out)), err)
 	}
 
@@ -244,4 +254,31 @@ func waitForGatewayClass(ctx context.Context, session *gkeSession, class string,
 	}
 	return fmt.Errorf("the controller was applied but %s never reported Accepted (last saw %q); "+
 		"the objects exist and nothing is serving them", class, last)
+}
+
+
+// fetchInstallManifest downloads the controller manifest and removes what the
+// platform already owns.
+//
+// Fetched here rather than handed to kubectl as a URL, because it has to be
+// filtered before it is applied and dry-run against exactly what will be
+// applied. A probe of a different manifest than the one that runs is not a probe.
+func fetchInstallManifest(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, envoyGatewayManifestURL(), nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("could not fetch the controller manifest: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("the controller manifest returned %s", resp.Status)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil {
+		return "", fmt.Errorf("could not read the controller manifest: %w", err)
+	}
+	return installableManifest(string(raw)), nil
 }
