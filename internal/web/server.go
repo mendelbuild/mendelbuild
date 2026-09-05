@@ -678,6 +678,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/domain", s.handleProjectDomain)
 		r.Get("/experiments", s.handleProjectExperiments)
 		r.Post("/experiments/verify-datastore", s.handleSaveVerifyDatastore)
+		r.Post("/experiments/install-controller", s.handleInstallExperimentController)
 		r.Get("/domain/readiness", s.handleDomainReadiness)
 		r.Post("/domain", s.handleSaveProjectDomain)
 		r.Post("/domain/named-demos", s.handleSetNamedDemos)

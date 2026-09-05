@@ -57,8 +57,8 @@ func (s *Server) observeExperimentReadiness(ctx context.Context, projectID uuid.
 	// demand a database of a project that may never need one.
 	obs.SchemaChanges = domain.FactUnknown
 
-	obs.GatewayAPI, obs.EnableGatewayCommand, obs.CookieMatching, obs.InstallControllerHint =
-		s.observeGatewayControllers(ctx, projectID)
+	obs.GatewayAPI, obs.EnableGatewayCommand, obs.CookieMatching,
+		obs.CanInstallController, obs.InstallControllerHint = s.observeGatewayControllers(ctx, projectID)
 	obs.VerifyDatastore, obs.VerifyReachable = s.observeVerifyDatastore(ctx, projectID)
 	return obs
 }
@@ -71,17 +71,17 @@ func (s *Server) observeExperimentReadiness(ctx context.Context, projectID uuid.
 // a controller, which is what a cluster without a managed one would need and
 // which no selectable channel currently is.
 func (s *Server) observeGatewayControllers(ctx context.Context, projectID uuid.UUID) (
-	api domain.Fact, enable string, cookies domain.Fact, install string) {
+	api domain.Fact, enable string, cookies domain.Fact, mayInstall domain.Fact, install string) {
 	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
 	if err != nil || channel == nil || channel.HostingPlatform == nil ||
 		channel.ArtifactKind != domain.DeployArtifactKubernetes {
 		// Not a Kubernetes channel, so the question does not arise yet.
-		return domain.FactUnknown, "", domain.FactUnknown, ""
+		return domain.FactUnknown, "", domain.FactUnknown, domain.FactUnknown, ""
 	}
 
 	env, err := s.deployCredentialsForChannel(ctx, projectID, channel)
 	if err != nil {
-		return domain.FactUnknown, "", domain.FactUnknown, ""
+		return domain.FactUnknown, "", domain.FactUnknown, domain.FactUnknown, ""
 	}
 
 	command := fmt.Sprintf(
@@ -90,12 +90,11 @@ func (s *Server) observeGatewayControllers(ctx context.Context, projectID uuid.U
 
 	// Idempotent, because a user re-running it is the normal case rather than
 	// the exception.
-	installEnvoy := "helm upgrade --install eg oci://docker.io/envoyproxy/gateway-helm " +
-		"-n envoy-gateway-system --create-namespace"
+	installEnvoy := installControllerCommand()
 
 	session, err := newGKESession(ctx, env)
 	if err != nil {
-		return domain.FactUnknown, command, domain.FactUnknown, installEnvoy
+		return domain.FactUnknown, command, domain.FactUnknown, domain.FactUnknown, installEnvoy
 	}
 	defer session.cleanup()
 
@@ -111,9 +110,10 @@ func (s *Server) observeGatewayControllers(ctx context.Context, projectID uuid.U
 		if strings.Contains(string(out), "doesn't have a resource type") ||
 			strings.Contains(string(out), "the server could not find the requested resource") {
 			// No Gateway API at all, so neither question has a yes.
-			return domain.FactFalse, command, domain.FactFalse, installEnvoy
+			return domain.FactFalse, command, domain.FactFalse,
+				canInstallController(ctx, session), installEnvoy
 		}
-		return domain.FactUnknown, command, domain.FactUnknown, installEnvoy
+		return domain.FactUnknown, command, domain.FactUnknown, domain.FactUnknown, installEnvoy
 	}
 
 	api, cookies = domain.FactFalse, domain.FactFalse
@@ -129,7 +129,13 @@ func (s *Server) observeGatewayControllers(ctx context.Context, projectID uuid.U
 			cookies = domain.FactTrue
 		}
 	}
-	return api, command, cookies, installEnvoy
+	// Only worth asking when it is the outstanding question; it costs two more
+	// round trips to the cluster.
+	mayInstall = domain.FactUnknown
+	if cookies == domain.FactFalse {
+		mayInstall = canInstallController(ctx, session)
+	}
+	return api, command, cookies, mayInstall, installEnvoy
 }
 
 // observeVerifyDatastore reports whether a non-production datastore has been

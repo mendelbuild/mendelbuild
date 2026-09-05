@@ -17,6 +17,15 @@
 {{if .Success}}
 <div class="callout callout-success"><p class="callout-body">Saved.</p></div>
 {{end}}
+{{if .Installing}}
+<div class="callout callout-waiting">
+    <p class="callout-body">
+        Installing the gateway controller. It takes a minute or two, and Mendel waits
+        for the controller to claim its class rather than for the manifest to apply
+        &mdash; reload to see where it got to.
+    </p>
+</div>
+{{end}}
 {{if .Error}}
 <div class="callout callout-failure"><p class="callout-body">{{.Error}}</p></div>
 {{end}}
@@ -86,6 +95,23 @@
                 behind it that can match. Nothing about your current deployments
                 changes.
             </p>
+            {{if eq (printf "%v" .Observation.CanInstallController) "true"}}
+            <p class="card-note">
+                Mendel's credentials can do this, so it does not need to be your job.
+            </p>
+            <form method="POST" action="/p/{{.ProjectID}}/experiments/install-controller" class="actions">
+                <button type="submit" class="btn btn-primary">Install it</button>
+            </form>
+            {{else}}
+            <p class="card-note">
+                {{if eq (printf "%v" .Observation.CanInstallController) "false"}}
+                Mendel's credentials may not create custom resource definitions or cluster
+                roles, so it cannot install this itself. Someone with cluster-admin can:
+                {{else}}
+                Mendel could not establish whether its credentials may install this, so it
+                has not tried. Someone with cluster-admin can:
+                {{end}}
+            </p>
             {{if .Observation.InstallControllerHint}}
             <div class="script-block">
                 <div class="script-head">
@@ -95,9 +121,10 @@
                     </button>
                 </div>
                 <pre class="script-body"><code><span class="script-line">{{.Observation.InstallControllerHint}}</span></code></pre>
-                <p class="script-note">Safe to run again; it upgrades in place if already installed.</p>
+                <p class="script-note">Safe to run again; a server-side apply, not a create.</p>
             </div>
             <pre id="install-controller" hidden>{{.Observation.InstallControllerHint}}</pre>
+            {{end}}
             {{end}}
         </div>
         {{end}}

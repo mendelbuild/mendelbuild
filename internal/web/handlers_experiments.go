@@ -1,8 +1,11 @@
 package web
 
 import (
+	"context"
+	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -49,6 +52,7 @@ func (s *Server) handleProjectExperiments(w http.ResponseWriter, r *http.Request
 		"Observation":  obs,
 		"DatastoreVar": VerifyDatastoreVar,
 		"Success":      r.URL.Query().Get("success") == "1",
+		"Installing":   r.URL.Query().Get("installing") == "1",
 		"Error":        r.URL.Query().Get("error"),
 	}
 	s.addOpenInputCount(ctx, data)
@@ -101,4 +105,37 @@ func (s *Server) handleSaveVerifyDatastore(w http.ResponseWriter, r *http.Reques
 	// the old one would show the state from before the change.
 	s.invalidateExperimentObservation(projectID)
 	http.Redirect(w, r, back+"?success=1", http.StatusSeeOther)
+}
+
+
+// handleInstallExperimentController installs the gateway controller that can
+// match cookies.
+//
+// Mendel does this rather than handing over a command, because it has to be able
+// to for any project: a user who must run kubectl themselves before their first
+// experiment has been handed a prerequisite, not a product. The command remains
+// for the case Mendel's credentials cannot, which is a real case and is reported
+// rather than guessed at.
+func (s *Server) handleInstallExperimentController(w http.ResponseWriter, r *http.Request) {
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+	back := "/p/" + projectID.String() + "/experiments"
+
+	// Detached from the request: installing pulls a manifest, applies it and
+	// waits for a controller to come up, which outlasts a browser that has given
+	// up. The page reports what happened from the observation afterwards.
+	go func() {
+		bg, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+		defer cancel()
+
+		logInfo := func(msg string) { log.Printf("experiments[%s]: %s", projectID, msg) }
+		if err := s.installExperimentController(bg, projectID, logInfo); err != nil {
+			log.Printf("experiments[%s]: installing the controller failed: %v", projectID, err)
+		}
+	}()
+
+	http.Redirect(w, r, back+"?installing=1", http.StatusSeeOther)
 }

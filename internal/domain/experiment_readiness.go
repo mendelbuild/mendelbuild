@@ -65,7 +65,12 @@ type ExperimentObservation struct {
 	// separate remedy, and because GKE's own class does not have it: it matches
 	// headers Exact only, and an Exact match on a Cookie header cannot pick one
 	// cookie out of the several a visitor carries.
-	CookieMatching        Fact
+	CookieMatching Fact
+
+	// CanInstallController is whether Mendel's own credentials may install it.
+	// Asked of the cluster rather than inferred from a role name, because a
+	// service account's rights are the union of IAM and RBAC.
+	CanInstallController  Fact
 	InstallControllerHint string
 
 	// ProdHostname is whether production answers at a name. Without one there is

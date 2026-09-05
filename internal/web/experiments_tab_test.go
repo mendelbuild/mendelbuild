@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -146,4 +147,89 @@ func renderExperimentsPage(t *testing.T, obs domain.ExperimentObservation) strin
 		t.Fatalf("experiments page does not render: %v", err)
 	}
 	return out.String()
+}
+
+// Mendel installs the controller when it can, and says who must when it cannot.
+//
+// A user who has to run kubectl themselves before their first experiment has
+// been handed a prerequisite, not a product. But "cannot" is a real case, and it
+// is asked of the cluster rather than assumed either way — so there are three
+// states here and the page must not collapse them into two.
+func TestInstallIsOfferedAsAnActionWhenMendelCanDoIt(t *testing.T) {
+	obs := domain.ExperimentObservation{
+		GatewayAPI: domain.FactTrue, CookieMatching: domain.FactFalse,
+		CanInstallController:  domain.FactTrue,
+		InstallControllerHint: installControllerCommand(),
+		ProdHostname:          domain.FactTrue, ProdHTTPS: domain.FactTrue,
+		SchemaChanges: domain.FactFalse,
+	}
+	html := renderExperimentsPage(t, obs)
+	if !strings.Contains(html, "/experiments/install-controller") {
+		t.Error("Mendel can install it and did not offer to")
+	}
+	if strings.Contains(html, "cluster-admin can") {
+		t.Error("the page asked a person to run kubectl that Mendel could run itself")
+	}
+
+	// Refused: the command, and who has to run it.
+	obs.CanInstallController = domain.FactFalse
+	refused := renderExperimentsPage(t, obs)
+	if strings.Contains(refused, `action="/p/abc/experiments/install-controller"`) {
+		t.Error("an install button was offered that Mendel's credentials would refuse")
+	}
+	for _, want := range []string{"kubectl apply --server-side", "cluster-admin can"} {
+		if !strings.Contains(refused, want) {
+			t.Errorf("a refused install does not show %q", want)
+		}
+	}
+
+	// Unknown is its own state: Mendel has not tried, and says so rather than
+	// claiming its credentials were refused.
+	obs.CanInstallController = domain.FactUnknown
+	unknown := renderExperimentsPage(t, obs)
+	if !strings.Contains(unknown, "could not establish whether") {
+		t.Error("an undetermined permission was reported as a refusal")
+	}
+}
+
+// The controller version is pinned, and the pin is what the install applies. A
+// controller that changed under a running experiment could change how traffic is
+// routed mid-comparison.
+func TestControllerVersionIsPinned(t *testing.T) {
+	url := envoyGatewayManifestURL()
+	if !strings.Contains(url, EnvoyGatewayVersion) {
+		t.Errorf("the manifest URL does not carry the pinned version: %s", url)
+	}
+	if strings.Contains(url, "latest") {
+		t.Error("the install follows 'latest', so a release could change routing mid-experiment")
+	}
+	if !strings.Contains(installControllerCommand(), "--server-side") {
+		t.Error("the command is not a server-side apply, so re-running it conflicts")
+	}
+}
+
+// kubectl warns on stderr for cluster-scoped resources and answers on stdout.
+// Reading them together makes the answer match neither word, so Mendel would
+// decide it could not tell and never offer to install — on exactly the clusters
+// where it can.
+func TestCanIVerdictIsReadFromStdoutAlone(t *testing.T) {
+	exitErr := errors.New("exit status 1")
+
+	for name, tc := range map[string]struct {
+		stdout string
+		err    error
+		want   domain.Fact
+	}{
+		"plain yes":              {"yes\n", nil, domain.FactTrue},
+		"plain no":               {"no\n", exitErr, domain.FactFalse},
+		"yes with trailing blank": {"yes\n\n", nil, domain.FactTrue},
+		"could not ask":          {"", errors.New("connection refused"), domain.FactUnknown},
+		"unexpected answer":      {"maybe\n", nil, domain.FactUnknown},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := interpretCanI(tc.stdout, tc.err); got != tc.want {
+				t.Errorf("interpretCanI(%q) = %v, want %v", tc.stdout, got, tc.want)
+			}
+		})
+	}
 }
