@@ -532,3 +532,14 @@ func renderExperimentsPageWith(t *testing.T, obs domain.ExperimentObservation, r
 	}
 	return out.String()
 }
+
+// Someone who has just finished generating a hop's variations is on the hop
+// page, and that is where they decide they want live traffic. The controls are
+// project-scoped and live in settings, which is right -- but a feature nothing
+// links to is a feature nobody finds, and this one was found by asking.
+func TestHopPageLinksToLiveTrafficExperiments(t *testing.T) {
+	hop := readTemplateFile(t, "hop_detail.html")
+	if !strings.Contains(hop, "/experiments") {
+		t.Error("the hop page offers no way to reach live-traffic experiments")
+	}
+}

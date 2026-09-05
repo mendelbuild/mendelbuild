@@ -146,6 +146,23 @@
         </div>
         {{end}}
 
+        {{/* Where a live experiment is started from. The controls themselves are
+             project-scoped -- a cluster, a domain, a datastore -- so they live in
+             settings; but this is the page someone is on when they decide they
+             want one, and a feature nothing links to is a feature nobody finds. */}}
+        <div class="card">
+            <div class="card-head"><h2 class="card-title">Live traffic</h2></div>
+            <p class="card-note">
+                This hop's variations can be served side by side to real visitors,
+                each visitor staying with one of them. What that needs of the
+                project &mdash; and the controls to start it &mdash; are on the
+                experiments tab.
+            </p>
+            <div class="actions">
+                <a class="btn btn-secondary" href="/p/{{$.ProjectID}}/experiments">Live-traffic experiments</a>
+            </div>
+        </div>
+
         <details class="disclosure">
             <summary>Diagnostics</summary>
             <div class="disclosure-body">
