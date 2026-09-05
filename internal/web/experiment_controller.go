@@ -141,12 +141,21 @@ func canInstallControllerWhy(ctx context.Context, session *gkeSession) (domain.F
 // `can-i` answers on stdout and exits non-zero for "no", so a non-zero exit is
 // an answer rather than a failure -- and anything that is neither word is a
 // failure to ask, which must not be read as permission either way.
+//
+// The verdict is the *first* word, because a refusal is not the bare word "no".
+// GKE appends its reason to the same line:
+//
+//	no - requires one of ["container.clusterRoles.update"] permission(s) ...
+//
+// Reading the last word gave `"clusterroles".`, which matches neither word, so
+// a clear refusal was reported as "could not tell" -- and the page offered to
+// attempt an install the cluster had already said it would reject.
 func interpretCanI(stdout string, err error) domain.Fact {
-	lines := strings.Fields(strings.TrimSpace(stdout))
-	if len(lines) == 0 {
+	fields := strings.Fields(strings.TrimSpace(stdout))
+	if len(fields) == 0 {
 		return domain.FactUnknown
 	}
-	switch strings.ToLower(lines[len(lines)-1]) {
+	switch strings.ToLower(fields[0]) {
 	case "yes":
 		return domain.FactTrue
 	case "no":

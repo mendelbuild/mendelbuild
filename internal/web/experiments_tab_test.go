@@ -211,6 +211,16 @@ func TestCanIVerdictIsReadFromStdoutAlone(t *testing.T) {
 	}{
 		"plain yes":              {"yes\n", nil, domain.FactTrue},
 		"plain no":               {"no\n", exitErr, domain.FactFalse},
+
+		// Verbatim from GKE, which appends its reason to the verdict line. Read
+		// as the last word this gave `"clusterroles".`, so a clear refusal was
+		// reported as "could not tell" and the page offered an install the
+		// cluster had already said it would reject.
+		"gke no with reason": {
+			`no - requires one of ["container.clusterRoles.update"] permission(s) in Cloud IAM ` +
+				`or a Kubernetes RBAC role with verb "patch" for resource "clusterroles".` + "\n",
+			exitErr, domain.FactFalse,
+		},
 		"yes with trailing blank": {"yes\n\n", nil, domain.FactTrue},
 		"could not ask":          {"", errors.New("connection refused"), domain.FactUnknown},
 		"unexpected answer":      {"maybe\n", nil, domain.FactUnknown},
