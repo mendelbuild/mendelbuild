@@ -642,35 +642,62 @@ for three DNS records. A project with twenty demos and a per-deployment
 acknowledgement produces "3 of 20 confirmed", and the remaining seventeen have
 no obvious presentation. The domain ladder's precedent does not reach this far.
 
-**O17 — reopened.** Whether "absence that narrows" is a cell severity or a
-separate functional area. Drawing §4.2 appeared to settle it — separate rows, no
-severity field — and D38 was written on that basis.
+**O17 — reopened, and the code has already answered most of it.** Whether
+"absence that narrows" is a cell severity or a separate functional area. Drawing
+§4.2 appeared to settle it — separate rows, no severity field — and D38 was
+written on that basis.
 
-It reopened before this document was merged, on evidence from the routing work
-rather than from any argument here. `DomainStep` grew an `Advisory` flag, for a
-step "worth doing and does not have to be done", with the reasoning that *"not
-every property is required-true: some are conditional on what is actually being
-attempted, and some are real concerns that are a poor reason to refuse to
-proceed"* — and that without the flag the two are indistinguishable from a state,
-so callers end up matching on step names to tell them apart.
+`DomainStep` then grew an `Advisory` flag, for a step *"worth doing and does not
+have to be done"*, with the reasoning that *"not every property is
+required-true: some are conditional on what is actually being attempted, and
+some are real concerns that are a poor reason to refuse to proceed."*
 
-That is the severity field D38 declined, arrived at independently, in the very
-prototype §9 step 2 requires this design to reproduce byte for byte. Which means
-one of three things, and they are worth separating rather than picking quickly:
+That sentence names **two** things, and `experiment_readiness.go` does both with
+the one boolean:
 
-- **D38 is wrong**, and a required/advisory distinction belongs on the cell.
-- **The ladder's `Advisory` is a different thing** — a *conditional* condition,
-  one that does not apply given what is being attempted, which is closer to the
-  "not applicable" half of D33's cell than to a severity at all.
-- **Both are right and the word is doing double duty**, in which case the
-  general model needs the distinction the flag's own comment gestures at: a
-  condition that does not apply here, versus one that applies and is not fatal.
+- **Always advisory.** `https.Advisory = true`, unconditionally. Production
+  answering over http only means the assignment cookie cannot be marked
+  `Secure`, so it can be rewritten in transit and a participant could choose
+  their own Arm. That is a real concern, it never stops being one, and it is a
+  poor reason to refuse to run an experiment. A **severity**.
+- **Advisory only sometimes.** `store.Advisory = !needed` and
+  `reach.Advisory = !needed`, where `needed` is `obs.SchemaChanges == FactTrue`.
+  A verification datastore is required of an experiment that changes the schema
+  and irrelevant to one that does not. The code names this itself — the constant
+  above it says three places "have to agree about which step is *the conditional
+  one*". Not a severity at all: **applicability**.
 
-The second reading is the one to test first, because it would leave D33 and D38
-intact and merely mean `Advisory` is named for the wrong half of what it does.
-Whichever it is, it has to be settled before §9 step 2, not after: that step
-requires reproducing the ladder exactly, and it cannot reproduce a flag the
-model has no room for.
+So the answer is that both exist and the word was doing double duty, which was
+the third of the three readings and the one this document leaned away from.
+Two distinct things are wanted: a cell that **applies only when some fact
+holds**, and a condition that **applies and is not fatal**.
+
+**Which means D38 was over-generalised from one example.** It concluded "no
+severity field" from *Enforce Arm containment* overlapping the experiment rows in
+one cell out of twenty — two nearly disjoint things, correctly two rows. Apply
+the same test to the https case and it gives the opposite answer: "run an
+experiment with a tamper-resistant assignment cookie" shares every condition with
+"run an experiment" bar one. A row that is another row plus one cell is not a
+row.
+
+**The test, then, is overlap, and it is falsifiable:** near-disjoint conditions
+mean two functional areas; near-total overlap means one functional area and a
+severity on the cell. D38 becomes the second half of that rather than a blanket
+refusal.
+
+**And it collapses two rows in §4.2.** Exp1 and Exp2 are the same functional area
+with the datastore conditions conditional on a declared fact, which is what
+`experiment_readiness.go` already implements and what §13 §16 already says —
+*"Tier 1 falls out of Tier 2 rather than preceding it: an experiment that
+declares no migration is a Tier 1 experiment, and needs strictly less."* They are
+two columns here only because this document had no way to mark a cell
+conditional. That is not cosmetic: two rows implies the user picks which
+experiment they are running, and a conditional cell implies Mendel derives it
+from what the Variation declared — and §13 is explicit that the tier is
+classified, never chosen.
+
+Held rather than applied, since it restructures the table this document is
+mostly about, and §4.2 is what a reader looks at first.
 
 **O18 — How stale may an observation be before it is `unknown` again?** The
 existing domain cache has an answer for DNS. A cluster access probe, a channel

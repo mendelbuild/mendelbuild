@@ -59,8 +59,12 @@ They are worth separating because only one of them is an administrator's:
 
 | Layer | Scope | Who | Frequency |
 |---|---|---|---|
-| Gateway API CRDs, the controller, a `GatewayClass` | cluster | administrator | once per cluster |
-| A `Gateway` resource, and the Envoy it provisions | namespace | **Mendel** | once per project |
+| GKE's managed Gateway controller and its `GatewayClass` | cluster | Google | present already |
+| Envoy Gateway: CRDs, controller, its own `GatewayClass` | cluster | administrator, or Mendel where permitted | once per cluster |
+| The `Gateway` resources, and the Envoy one of them provisions | namespace | **Mendel** | once per project |
+
+Three rather than two, since O23 and §2.5 — the managed controller stays, and a
+second one goes in beneath it.
 
 Mendel owning the `Gateway` matters. It means Mendel gets its own Envoy for
 experiment traffic rather than sharing whatever the user's other workloads use,
@@ -118,9 +122,10 @@ irrelevant to.
 
 ### 2.5 What to do about a controller that cannot match
 
-Four options, none free, and this one is Ben's to pick rather than the
-document's — it changes what a user has to set up before an experiment is
-possible at all.
+**Decided: option A, in the two-tier arrangement below** (D50). The remaining
+options are kept because the reasoning is what makes the choice legible, and
+because C is what a user with no cluster-admin ends up with if the install
+cannot happen.
 
 **A. Install a conformant controller** — Envoy Gateway or Istio, both of which
 support regex header matching. This is §2 in full: the
@@ -153,9 +158,43 @@ Arms — so conversion, the metric these experiments exist to move, is
 unavailable. Worth having as the thing that works while A is being set up; not
 worth mistaking for the product.
 
-The shape that follows from A is worth stating even before it is chosen: the
-controller install stops being a cluster-side nicety and becomes the gate on
-everything except D. That makes it exactly the condition
+#### The arrangement, since A does not mean replacing what is there
+
+Envoy Gateway goes **beneath** the GKE Gateway rather than in place of it. Each
+tier does the thing it is good at:
+
+```
+   request ──▶ GKE Gateway ──────────▶ Envoy Gateway ──────▶ Arm / mainline
+               gke-l7-global-...      envoy-gateway class
+               · the static IP        · regex on Cookie
+               · the wildcard cert    · Arm match rules
+               · TLS termination      · the assigner fallback
+               · hostname match       (§3)
+               (all Core; all works)
+```
+
+This keeps everything that already works and adds only what is missing. The
+certificate story stays exactly as §2 and the domain ladder describe it —
+Certificate Manager attached to the outer Gateway, one wildcard covering every
+name — and that story is not portable to a controller Mendel installs itself,
+so moving off the managed class would have cost it. Hostname matching, which
+O21 shows is load-bearing because one Gateway serves the namespace, is Core on
+the outer tier. Only the cookie matching that O23 killed moves inward, to a
+controller that supports it.
+
+Two consequences to carry:
+
+- **There is one more proxy in the path.** §6.1's rule is that Mendel does not
+  *build* a proxy, and Envoy is off-the-shelf, so this does not breach it. It is
+  still another hop to operate and another thing that can be down.
+- **The experiment-capable condition names the inner tier.** "Gateway API is
+  enabled" is true of every GKE cluster and settles nothing; what has to be true
+  is that Envoy Gateway is installed and its `GatewayClass` is `Accepted`. §2.3's
+  `SelfSubjectAccessReview` probe is what decides whether Mendel may install it,
+  and the administrator script is the fallback when it may not.
+
+The controller install therefore stops being a cluster-side nicety and becomes
+the gate on everything except D. That makes it exactly the condition
 [17_functional_area_matrix.md](17_functional_area_matrix.md) §6 nominates as the
 one most likely to break a premature abstraction — a property Mendel can
 sometimes satisfy itself and sometimes only emit a script for — and it is no
@@ -187,10 +226,10 @@ declared unit rather than configured:
 | `user`, `session`, `tenant` | The application, which knows who this is | A bucket the client carries (§3.6) | **blocked, O23** |
 
 The last column is a late finding and does not change the design, only what can
-run before §2.5 is settled. Both blocked mechanisms carry their value in a
-cookie, and the GatewayClass Mendel currently deploys cannot match a cookie —
-O23 has the evidence and §2.5 the options. Everything below is written as though
-that were fixed, because the fix is a controller rather than a redesign.
+run before the controller lands. Both blocked mechanisms carry their value in a
+cookie, and the outer GatewayClass cannot match a cookie — O23 has the evidence.
+§2.5 settles the remedy: Envoy Gateway underneath, which unblocks both. The fix
+is a controller rather than a redesign, so everything below stands as written.
 
 The rest of this section is the `device` path, which is the one §13 D20 names
 for Tier 1 and the only one that works for a visitor nobody has identified yet.
@@ -804,6 +843,7 @@ than reopening the range this plan started with.
 | D47 | For `user`, `session` and `tenant`, the application mints a bucket from the key and a per-experiment salt Mendel injects; the edge matches it | Prefix-match an existing identity field | **Blocked with D23 by O23.** No salt to turn, so every experiment draws the same cohort, and it assumes a uniformity a sequential id does not have. A conformance argument was also offered here and is withdrawn — both carry a cookie and both need the regex match O23 is about |
 | D48 | One bucket per running experiment, in its own cookie; the salt is fixed for that experiment's life | One project-wide bucket reused across experiments | A single scalar cannot answer for two salts, and rotating mid-flight re-buckets everyone at once |
 | D49 | On the bucket path an Arm grows from unallocated buckets or is withdrawn to mainline; a bucket never moves between Arms | Reassign buckets freely when the allocation changes | Moving one switches everybody in it mid-experiment, and hands a participant with Tier 2 writes under Arm a to Arm b |
+| D50 | Install Envoy Gateway **beneath** the GKE Gateway: the outer tier keeps the address, the wildcard certificate and hostname matching, the inner one does Arm matching | Replace the managed class outright; move to a multi-cluster class; a hostname per Arm | The managed class cannot match a cookie (O23) and Certificate Manager is attached to it; replacing it would trade a working certificate story for the one feature that is missing |
 
 ## 10. Open questions
 
