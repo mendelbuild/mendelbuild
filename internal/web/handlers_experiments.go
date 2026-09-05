@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -43,12 +44,16 @@ func (s *Server) handleProjectExperiments(w http.ResponseWriter, r *http.Request
 		log.Printf("experiments[%s]: could not list candidates: %v", projectID, err)
 	}
 	var running []*domain.Experiment
+	failures := map[uuid.UUID]*domain.FailureReport{}
 	for _, c := range candidates {
 		if c.ExperimentID == nil {
 			continue
 		}
 		if e, err := s.db.GetExperiment(ctx, *c.ExperimentID); err == nil && e != nil {
 			running = append(running, e)
+			if f := s.latestFailure(ctx, e.ID); f != nil {
+				failures[e.ID] = f
+			}
 		}
 	}
 
@@ -70,6 +75,7 @@ func (s *Server) handleProjectExperiments(w http.ResponseWriter, r *http.Request
 		"DatastoreVar": VerifyDatastoreVar,
 		"Candidates":   candidates,
 		"Experiments":  running,
+		"Failures":     failures,
 		"Ready":        len(domain.ExperimentBlockers(domain.ExperimentReadiness(obs))) == 0,
 		"Fingerprint":  obs.Fingerprint() + "|" + s.experimentFingerprint(ctx, projectID),
 		"Success":      r.URL.Query().Get("success") == "1",
@@ -319,9 +325,18 @@ func (s *Server) runExperimentAction(w http.ResponseWriter, r *http.Request, ver
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
 		logf := func(msg string) { log.Printf("experiment[%s]: %s", experimentID, msg) }
-		if err := action(ctx, experimentID, logf); err != nil {
-			log.Printf("experiment[%s]: %s failed: %v", experimentID, verb, err)
+
+		err := action(ctx, experimentID, logf)
+		if err == nil {
+			return
 		}
+		// The log is for whoever maintains Mendel. The record is for whoever
+		// pressed the button, who cannot act on a kubectl error and needs to
+		// know what happened to their traffic. Without this a failed action
+		// left no trace in the product at all, and the page simply offered the
+		// button again -- which reads as the button not working.
+		log.Printf("experiment[%s]: %s failed: %v", experimentID, verb, err)
+		s.recordFailure(ctx, experimentID, verb, err)
 	}()
 
 	http.Redirect(w, r, "/p/"+projectID.String()+"/experiments?"+verb+"=1", http.StatusSeeOther)
@@ -361,4 +376,54 @@ func (s *Server) experimentFingerprint(ctx context.Context, projectID uuid.UUID)
 		fmt.Fprintf(&b, "%s=%s;", c.ExperimentID, c.Status)
 	}
 	return b.String()
+}
+
+
+// recordFailure writes what went wrong where the page can find it.
+func (s *Server) recordFailure(ctx context.Context, experimentID uuid.UUID, verb string, cause error) {
+	report := domain.ReportStartFailure(cause.Error())
+	if verb == "stopping" {
+		// Whether traffic came back decides what to tell them, and it is the
+		// first thing the stop does -- so a failure after that point is far less
+		// serious than one before it.
+		returned := !strings.Contains(cause.Error(), "point")
+		report = domain.ReportStopFailure(cause.Error(), returned)
+	}
+
+	detail, err := json.Marshal(map[string]string{
+		"summary": report.Summary, "effect": report.Effect, "detail": report.Detail,
+	})
+	if err != nil {
+		detail = nil
+	}
+	s.db.RecordExperimentEvent(ctx, &domain.ExperimentEvent{
+		ExperimentID: experimentID,
+		Kind:         domain.EventFailed,
+		Detail:       report.Summary + " " + report.Effect,
+		Data:         detail,
+	})
+}
+
+// latestFailure returns the most recent failure of an experiment, or nil.
+//
+// Only shown while it is still the last thing that happened: a failure followed
+// by a successful start is history, not a warning, and leaving it on screen
+// would report a problem that has been fixed.
+func (s *Server) latestFailure(ctx context.Context, experimentID uuid.UUID) *domain.FailureReport {
+	events, err := s.db.GetExperimentEvents(ctx, experimentID)
+	if err != nil || len(events) == 0 {
+		return nil
+	}
+	last := events[len(events)-1]
+	if last.Kind != domain.EventFailed {
+		return nil
+	}
+
+	var fields map[string]string
+	if err := json.Unmarshal(last.Data, &fields); err != nil {
+		return &domain.FailureReport{Summary: last.Detail}
+	}
+	return &domain.FailureReport{
+		Summary: fields["summary"], Effect: fields["effect"], Detail: fields["detail"],
+	}
 }

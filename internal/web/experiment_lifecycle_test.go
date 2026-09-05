@@ -203,3 +203,41 @@ func renderExperimentsPageWithStatus(t *testing.T, status domain.ExperimentStatu
 	}
 	return out.String()
 }
+
+// A failure has to reach the product, not just the log.
+//
+// Four separate failures in this area left no trace a user could see: the page
+// simply offered the button again, which reads as the button not working. The
+// log had the cause every time, and the log is not somewhere a person running
+// an experiment on their own application can go.
+func TestFailureIsReportedInTermsTheUserAskedIn(t *testing.T) {
+	start := domain.ReportStartFailure(
+		`error: the namespace from the provided object "envoy-gateway-system" does not match`)
+
+	// The first question is what happened to their traffic, and the error never
+	// answers it.
+	if !strings.Contains(start.Effect, "Nothing changed") {
+		t.Errorf("a failed start does not say what became of production: %q", start.Effect)
+	}
+	if start.Yours {
+		t.Error("a failed start blamed the user for something Mendel did")
+	}
+	// The cause is kept, but it is not the message.
+	if !strings.Contains(start.Detail, "envoy-gateway-system") {
+		t.Error("the technical cause was discarded; whoever maintains Mendel needs it")
+	}
+	if strings.Contains(start.Summary, "namespace") {
+		t.Error("the summary leads with a kubectl error rather than with what happened")
+	}
+
+	// Stopping is the case where the reassuring version would be a lie: traffic
+	// is returned first, so a failure before that leaves the experiment serving.
+	early := domain.ReportStopFailure("could not point pong-game-prod at pong-game-prod", false)
+	if !strings.Contains(early.Effect, "still be split") {
+		t.Errorf("a stop that never returned traffic implies it did: %q", early.Effect)
+	}
+	late := domain.ReportStopFailure("deleting resources failed", true)
+	if strings.Contains(late.Effect, "still be split") {
+		t.Errorf("a stop that did return traffic alarms about it anyway: %q", late.Effect)
+	}
+}

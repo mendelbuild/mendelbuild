@@ -172,7 +172,73 @@ const (
 	EventMainlineDeployed  ExperimentEventKind = "mainline_deployed"
 	EventArmWithdrawn      ExperimentEventKind = "arm_withdrawn"
 	EventKillSwitchPulled  ExperimentEventKind = "kill_switch_pulled"
+
+	// EventFailed records that Mendel could not do what was asked. Its Detail is
+	// written for the person who pressed the button; the technical cause goes in
+	// Data, where it is available without being the headline.
+	EventFailed ExperimentEventKind = "failed"
 )
+
+// FailureReport is what a person needs to know when an action did not work.
+//
+// Deliberately not the error. "the namespace from the provided object
+// envoy-gateway-system does not match" is exactly right for whoever maintains
+// Mendel and useless to whoever is running an experiment on their own
+// application: it tells them nothing about what happened to their production
+// traffic, and nothing they could act on.
+type FailureReport struct {
+	// Summary says what did not happen, in the terms the button was pressed in.
+	Summary string
+
+	// Effect says what this means for traffic, which is the question anybody
+	// asks first and which the error never answers.
+	Effect string
+
+	// Yours says whether the person can do anything about it. Most of these are
+	// Mendel's fault, and saying so is more useful than implying otherwise.
+	Yours bool
+
+	// Detail is the technical cause, kept for whoever maintains Mendel.
+	Detail string
+}
+
+// ReportStartFailure describes a failed start in those terms.
+//
+// The effect is the same whatever went wrong, and it is the reassuring half:
+// production is repointed last, after everything else has succeeded, so a start
+// that fails at any earlier step has changed nothing a visitor can see.
+func ReportStartFailure(detail string) FailureReport {
+	return FailureReport{
+		Summary: "Mendel could not start this experiment.",
+		Effect:  "Nothing changed for your visitors: production is still serving mainline on its own.",
+		Detail:  detail,
+	}
+}
+
+// ReportStartFailurePtr is the same for a caller holding a pointer, which the
+// page is, since a nil report means nothing went wrong.
+func ReportStartFailurePtr(detail string) *FailureReport {
+	r := ReportStartFailure(detail)
+	return &r
+}
+
+// ReportStopFailure describes a failed stop.
+//
+// The effect here is not reassuring and must not be written as though it were.
+// Stopping returns traffic first and tidies afterwards, so a failure may leave
+// an experiment still serving -- which is the thing somebody stopping it wanted
+// to end.
+func ReportStopFailure(detail string, trafficReturned bool) FailureReport {
+	effect := "Traffic may still be split across arms. Try again, or stop it at the cluster."
+	if trafficReturned {
+		effect = "Visitors are back on mainline; some of the experiment's resources may remain."
+	}
+	return FailureReport{
+		Summary: "Mendel could not finish stopping this experiment.",
+		Effect:  effect,
+		Detail:  detail,
+	}
+}
 
 // ExperimentEvent is something that happened while the experiment ran.
 //

@@ -206,6 +206,30 @@
                     </span>
                 </span>
             </div>
+            {{if $.Failures}}{{with index $.Failures .ID}}
+            {{/* What happened, in the terms the button was pressed in. The cause
+                 is kept behind a disclosure because it is written for whoever
+                 maintains Mendel: a kubectl error tells the person running an
+                 experiment nothing they can act on, and nothing about what
+                 became of their traffic -- which is the thing they want to know
+                 first, and is what the summary leads with. */}}
+            <div class="callout callout-failure">
+                <p class="callout-title">{{.Summary}}</p>
+                <p class="callout-body">{{.Effect}}</p>
+                {{if not .Yours}}
+                <p class="callout-body subtle">
+                    This is Mendel's to fix rather than yours. Trying again is safe.
+                </p>
+                {{end}}
+                {{if .Detail}}
+                <details class="disclosure">
+                    <summary>Technical detail</summary>
+                    <div class="disclosure-body"><p class="pre-wrap mono">{{.Detail}}</p></div>
+                </details>
+                {{end}}
+            </div>
+            {{end}}{{end}}
+
             {{if .InProgress}}
             {{/* Neither button, because neither is true yet. An action offered
                  while the last one is still running is an action that will be

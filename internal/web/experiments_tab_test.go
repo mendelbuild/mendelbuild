@@ -564,3 +564,50 @@ func TestFingerprintCoversExperimentState(t *testing.T) {
 		t.Errorf("the page and its status endpoint build the fingerprint differently (%d matching sites)", n)
 	}
 }
+
+// The page shows the failure, and keeps the cause where it does not shout.
+func TestFailureRendersWithTheCauseBehindADisclosure(t *testing.T) {
+	id := uuid.New()
+	obs := domain.ExperimentObservation{
+		GatewayAPI: domain.FactTrue, CookieMatching: domain.FactTrue,
+		ProdHostname: domain.FactTrue, ProdHTTPS: domain.FactTrue,
+		SchemaChanges: domain.FactFalse,
+	}
+	steps := domain.ExperimentReadiness(obs)
+	headline, blocked := domain.ExperimentHeadline(steps)
+
+	var out strings.Builder
+	if err := parsePageTemplate("project_experiments.html").ExecuteTemplate(&out, "page-content", map[string]interface{}{
+		"SettingsTab": "experiments", "ProjectID": "abc", "Steps": steps,
+		"Headline": headline, "Blocked": blocked, "Checking": false,
+		"CheckedLabel": "just now", "Observation": obs, "Ready": true,
+		"DatastoreVar": VerifyDatastoreVar, "Success": false, "Error": "",
+		"Fingerprint": "x", "Candidates": nil,
+		"Experiments": []*domain.Experiment{{ID: id, Status: domain.ExperimentDraft}},
+		"Failures": map[uuid.UUID]*domain.FailureReport{
+			id: domain.ReportStartFailurePtr(`error: the namespace from the provided object "envoy-gateway-system" does not match`),
+		},
+	}); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	html := out.String()
+
+	if !strings.Contains(html, "Nothing changed for your visitors") {
+		t.Error("the page does not say what became of production, which is the first question")
+	}
+	if !strings.Contains(html, "Mendel's to fix rather than yours") {
+		t.Error("the page does not say whose problem this is")
+	}
+	// The cause is present and behind a disclosure, not the headline.
+	if !strings.Contains(html, "<summary>Technical detail</summary>") {
+		t.Error("the cause is not tucked away for whoever maintains Mendel")
+	}
+	head := html[:strings.Index(html, "Technical detail")]
+	if strings.Contains(head, "envoy-gateway-system") {
+		t.Error("a kubectl error is being shown as the headline")
+	}
+	// And the button comes back, because trying again is safe.
+	if !strings.Contains(html, "/start\"") {
+		t.Error("a failed experiment offers no way to try again")
+	}
+}
