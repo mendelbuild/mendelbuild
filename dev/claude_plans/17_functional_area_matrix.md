@@ -1,6 +1,6 @@
 # The Functional Area Matrix — Design
 
-Status: **steps 1 and 2 built; the rest is design.** §9 records what is done and
+Status: **steps 1 to 3 built; the rest is design.** §9 records what is done and
 what building it corrected. The machinery is
 `internal/domain/functional_area.go`, the first area is
 `functional_area_domain.go`, and `DomainReadiness` is now one assessment of it.
@@ -948,9 +948,33 @@ implementation without collision. Step 6 is the merge point.
    two areas need it, the likelier reading is that those preconditions *are*
    conditions and the catalogue is under-populated (O14).
 
-3. **Re-express `EvaluateRequirements`.** Proves the two-scope model (D36),
-   `deferred`, and `unavailable` via `DeployURLLimitation`. Its existing tests
-   are again the criterion.
+3. **Re-express `EvaluateRequirements`.** — **done**,
+   `internal/domain/functional_area_deploy.go`, along with the rest of the
+   conditions the *Demo* and *Production* rows need. `EvaluateRequirements`
+   itself is unchanged and still does the per-requirement judging; what is new
+   is the two conditions that aggregate it, and the nine others beside them.
+
+   D36 now has work to do rather than being documentation. `BuildCatalogue`
+   refuses a condition satisfied at one scope that depends on one satisfied at a
+   finer scope: a project-scoped answer resting on a per-deployment one has as
+   many answers as there are deployments, and picking one silently is how a
+   project gets reported ready on the strength of its healthiest deployment.
+
+   The rest landed as designed. A `secret` is declared per Variation and
+   satisfied per project; an `acknowledgement` is declared identically and
+   satisfied per deployment; `Deferred` is satisfied rather than outstanding,
+   because production's redirect URI is unknowable until production exists;
+   `DeployURLLimitation` is `unavailable`, since no value the reader supplies
+   fixes a bare IP over http.
+
+   **And the totality test earned itself immediately.** The channel-validation
+   conditions read `IsDemoValidated()` off `Observations.Channel` without
+   checking it for nil, which panics for any project with no channel — the
+   commonest state a new project is in.
+   `TestEveryConditionIsATotalPredicate` caught it on the first run, before any
+   caller existed. That is the rule from §3.5 doing exactly what it was written
+   for: a condition that cannot answer about some situation is not merely
+   inelegant, it is a crash waiting for that situation.
 
 4. **Replace the inline handler checks.** `handleStartDemo`,
    `runChannelDemoDeployment`, `runChannelProdDeployment` and the settings

@@ -97,11 +97,14 @@ func domainConditions() []Condition {
 //
 // Built once, because a malformed catalogue is a bug in this package and the
 // right time to find out is the first time anything touches it.
-var domainCatalogue = NewCatalogue(domainConditions(), []FunctionalArea{{
-	ID:       AreaNamedDemos,
-	Name:     "Serve deployments by name over https",
-	Requires: []ConditionID{CondBaseDomain, CondStaticIP, CondWildcardRecord, CondChallengeRecords, CondCertificate},
-}})
+var domainCatalogue = NewCatalogue(
+	append(domainConditions(), deployConditions()...),
+	append([]FunctionalArea{{
+		ID:       AreaNamedDemos,
+		Name:     "Serve deployments by name over https",
+		Requires: []ConditionID{CondBaseDomain, CondStaticIP, CondWildcardRecord, CondChallengeRecords, CondCertificate},
+	}}, deployAreas()...),
+)
 
 // Catalogue returns the functional areas Mendel knows about.
 func FunctionalAreas() *Catalogue { return domainCatalogue }

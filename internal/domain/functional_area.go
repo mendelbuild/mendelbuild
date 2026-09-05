@@ -57,6 +57,38 @@ const (
 	RemedyUnavailable Remedy = "unavailable"
 )
 
+// Scope is what a condition is about. Ordered coarse to fine, and the order is
+// load-bearing: see BuildCatalogue's check that nothing depends on an answer
+// finer than itself.
+type Scope int
+
+const (
+	ScopeInstallation Scope = iota
+	ScopeProject
+	ScopeChannel
+	ScopeHop
+	ScopeVariation
+	ScopeDeployment
+)
+
+func (s Scope) String() string {
+	switch s {
+	case ScopeInstallation:
+		return "installation"
+	case ScopeProject:
+		return "project"
+	case ScopeChannel:
+		return "channel"
+	case ScopeHop:
+		return "hop"
+	case ScopeVariation:
+		return "variation"
+	case ScopeDeployment:
+		return "deployment"
+	}
+	return "unknown"
+}
+
 // ConditionState is where one condition stands.
 type ConditionState string
 
@@ -108,6 +140,16 @@ type Condition struct {
 	Evidence Evidence
 	Remedy   Remedy
 
+	// DeclaredAt is where the question comes from and SatisfiedAt is where the
+	// answer lives. They are frequently different, and a single field for both
+	// is the bug this pair exists to prevent: a variation's `secret` requirement
+	// is declared by that variation's code and satisfied once for the whole
+	// project, while its `acknowledgement` is declared the same way and satisfied
+	// separately for every deployment. One scope would have the checklist asking
+	// project-level questions about a Variation.
+	DeclaredAt  Scope
+	SatisfiedAt Scope
+
 	// DependsOn names conditions that must be satisfied before this one can be
 	// anyone's move. Blocked is computed from this rather than authored, so two
 	// areas sharing a condition cannot disagree about the order.
@@ -150,10 +192,28 @@ type FunctionalArea struct {
 // sharing is the entire reason the matrix is a table rather than four
 // checklists.
 type Observations struct {
-	// Domain is the project's domain, and what was found when Mendel last
-	// looked for its records.
+	// ProjectDomain is the project's domain, and Domain is what was found when
+	// Mendel last looked for its records.
 	ProjectDomain *ProjectDomain
 	Domain        DomainObservation
+
+	// Readiness is what project settings hold, and EncryptionKeyConfigured is
+	// whether this Mendel installation can decrypt anything at all.
+	Readiness               ProjectReadiness
+	EncryptionKeyConfigured bool
+
+	// Channel is the active deployment channel, nil when none is configured.
+	// The two facts beside it need a database and a platform table, so they are
+	// gathered rather than derived here.
+	Channel                     *ProjectDeploymentChannel
+	ChannelCombinationSupported bool
+	MissingChannelCredentials   []string
+
+	// Requirements is what the code being deployed needs, already judged against
+	// the deployment in question by EvaluateRequirements -- which is where the
+	// per-deployment half of the two-scope model actually happens, since it is
+	// the deploy URL that decides what an acknowledgement resolves to.
+	Requirements []RequirementStatus
 }
 
 // Catalogue holds the conditions and the areas built from them.
@@ -194,10 +254,24 @@ func BuildCatalogue(conditions []Condition, areas []FunctionalArea) (*Catalogue,
 		}
 		c.conditions[cond.ID] = cond
 	}
-	for _, dep := range c.conditions {
+	for _, id := range sortedIDs(c.conditions) {
+		dep := c.conditions[id]
 		for _, on := range dep.DependsOn {
-			if _, ok := c.conditions[on]; !ok {
+			upstream, ok := c.conditions[on]
+			if !ok {
 				return nil, fmt.Errorf("condition %q depends on %q, which does not exist", dep.ID, on)
+			}
+			// A coarse answer cannot rest on a finer one without saying how the
+			// finer answers combine, and nothing here says. A project-scoped
+			// condition depending on a per-deployment one has as many answers as
+			// there are deployments, and picking one of them silently is how a
+			// project gets reported ready on the strength of its healthiest
+			// deployment.
+			if upstream.SatisfiedAt > dep.SatisfiedAt {
+				return nil, fmt.Errorf(
+					"condition %q is satisfied per %s and depends on %q, which is satisfied per %s: "+
+						"a coarser answer cannot rest on a finer one without a rule for combining them",
+					dep.ID, dep.SatisfiedAt, on, upstream.SatisfiedAt)
 			}
 		}
 	}
@@ -219,6 +293,17 @@ func BuildCatalogue(conditions []Condition, areas []FunctionalArea) (*Catalogue,
 		return nil, err
 	}
 	return c, nil
+}
+
+// sortedIDs returns a map's condition ids in a stable order, so that an error
+// about a malformed catalogue names the same condition on every run.
+func sortedIDs(m map[ConditionID]Condition) []ConditionID {
+	ids := make([]ConditionID, 0, len(m))
+	for id := range m {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
 }
 
 // checkAcyclic refuses a catalogue whose dependencies loop.
@@ -266,12 +351,7 @@ func (c *Catalogue) checkAcyclic() error {
 // conditionIDs returns every condition id in a stable order, so that an error
 // message about a malformed catalogue does not change between runs.
 func (c *Catalogue) conditionIDs() []ConditionID {
-	ids := make([]ConditionID, 0, len(c.conditions))
-	for id := range c.conditions {
-		ids = append(ids, id)
-	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	return ids
+	return sortedIDs(c.conditions)
 }
 
 // Condition returns one condition and whether it exists.
