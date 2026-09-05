@@ -2,7 +2,6 @@ package domain
 
 import (
 	"fmt"
-	"strings"
 )
 
 // Getting a deployment reachable by name is a chain of steps, and only some of
@@ -92,108 +91,25 @@ type DomainStep struct {
 //
 // Ordered because the order is the point: a user staring at a certificate that
 // will not issue is usually two steps back, at a record that does not resolve.
+//
+// The ladder is now one functional area evaluated against the catalogue in
+// functional_area_domain.go, rather than five steps assembled by hand. The
+// output is unchanged and this file's tests are what say so.
 func (d *ProjectDomain) DomainReadiness(obs DomainObservation) []DomainStep {
 	if d == nil {
 		return nil
 	}
 
-	steps := make([]DomainStep, 0, 5)
+	a := FunctionalAreas().Assess(AreaNamedDemos, Observations{ProjectDomain: d, Domain: obs})
 
-	// 1. The domain itself.
-	domainSet := d.BaseDomain != ""
-	steps = append(steps, DomainStep{
-		Name:   "Give Mendel a domain you control",
-		State:  stateIf(domainSet, StepYourMove),
-		Detail: detailIf(domainSet, d.BaseDomain, "Mendel puts names under this and never touches your DNS."),
-	})
-
-	// 2. The address its records point at. Mendel's own job.
-	haveIP := d.StaticIP != ""
-	steps = append(steps, DomainStep{
-		Name:   "Mendel reserves an address",
-		State:  gate(domainSet, haveIP, StepWaiting),
-		Detail: detailIf(haveIP, d.StaticIP, "Reserved on the next deploy or validation of this channel."),
-	})
-
-	// 3. The wildcard record. Verified, not taken on trust.
-	wildcardRight := haveIP && obs.WildcardTarget == d.StaticIP
-	wildcardDetail := "Create the A record listed below."
-	switch {
-	case wildcardRight:
-		wildcardDetail = d.DemoWildcard() + " resolves to " + d.StaticIP
-	case obs.WildcardTarget != "":
-		wildcardDetail = fmt.Sprintf("%s resolves to %s, but the deployments are at %s. "+
-			"The record points somewhere else.", d.DemoWildcard(), obs.WildcardTarget, d.StaticIP)
+	steps := make([]DomainStep, 0, len(a.Steps))
+	for _, s := range a.Steps {
+		steps = append(steps, DomainStep{
+			Name:   s.Name,
+			State:  domainStepState(s),
+			Detail: s.Detail,
+		})
 	}
-	steps = append(steps, DomainStep{
-		Name:   "Create the wildcard A record",
-		State:  observed(obs, gate(haveIP, wildcardRight, StepYourMove)),
-		Detail: checkingOr(obs, wildcardDetail),
-	})
-
-	// 4. The ownership records for the certificate, one per zone it covers.
-	//
-	// Reported together rather than as a step each: they are created in the same
-	// sitting, in the same tool, and a ladder that grows a rung per zone tells
-	// the reader the shape of the task changed when it did not.
-	challengeAsked := len(d.Challenges) > 0
-	var outstanding, wrong []string
-	for _, c := range d.Challenges {
-		target, found := obs.ChallengeTargets[c.RecordName]
-		switch {
-		case !found:
-			outstanding = append(outstanding, c.RecordName)
-		case !hostsEqual(target, c.RecordValue):
-			wrong = append(wrong, fmt.Sprintf("%s resolves to %s", c.RecordName, target))
-		}
-	}
-	challengeRight := challengeAsked && len(outstanding) == 0 && len(wrong) == 0
-
-	challengeDetail := ""
-	switch {
-	case !challengeAsked:
-		challengeDetail = "Mendel requests the certificate first; the records appear once it has."
-	case challengeRight:
-		challengeDetail = fmt.Sprintf("All %d records resolve correctly.", len(d.Challenges))
-	case len(wrong) > 0:
-		challengeDetail = strings.Join(wrong, "; ") + " rather than the value below."
-	default:
-		challengeDetail = fmt.Sprintf("%d of %d created. Still to create: %s.",
-			len(d.Challenges)-len(outstanding), len(d.Challenges), strings.Join(outstanding, ", "))
-	}
-
-	steps = append(steps, DomainStep{
-		Name:   challengeStepName(len(d.Challenges)),
-		State:  observed(obs, gate(challengeAsked, challengeRight, StepYourMove)),
-		Detail: checkingOr(obs, challengeDetail),
-	})
-
-	// 5. The authority's part, which nobody can hurry.
-	//
-	// Three outcomes, not two. Mendel either has the authority's answer, has not
-	// asked yet, or asked and could not find out -- and the third is not a fact
-	// about the certificate. Reporting it as one turns a transient gcloud failure
-	// into a step the user is told is outstanding, which is how a certificate
-	// that has been ACTIVE for a day comes and goes from the page.
-	certDetail := certificateComingDetail
-	certDone := obs.CertificateState == "ACTIVE"
-	certState := observed(obs, gate(challengeRight, certDone, StepWaiting))
-	switch {
-	case obs.CertificateUnknown:
-		certState = StepUnknown
-		certDetail = "Mendel could not reach the certificate authority to check. " +
-			"This says nothing about the certificate; the next check will try again."
-	case certDone:
-		certDetail = "Deployments answer over https, and their URLs can be registered."
-	case obs.CertificateState != "":
-		certDetail = "Certificate state: " + obs.CertificateState
-	}
-	steps = append(steps, DomainStep{
-		Name:   "Certificate issued",
-		State:  certState,
-		Detail: checkingOr(obs, certDetail),
-	})
-
 	return steps
 }
 
