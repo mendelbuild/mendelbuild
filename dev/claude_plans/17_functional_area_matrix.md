@@ -1,7 +1,9 @@
 # The Functional Area Matrix — Design
 
-Status: **draft, revised after review.** No code written. Nothing under
-`internal/` is touched by this document.
+Status: **steps 1 and 2 built; the rest is design.** §9 records what is done and
+what building it corrected. The machinery is
+`internal/domain/functional_area.go`, the first area is
+`functional_area_domain.go`, and `DomainReadiness` is now one assessment of it.
 
 Companion to [13_live_traffic_experiments.md](13_live_traffic_experiments.md)
 and [16_experiment_routing.md](16_experiment_routing.md), which between them
@@ -905,20 +907,46 @@ Steps 1 through 5 touch no code under `internal/experiment`, `internal/codegen`
 or the experiment handlers, so they can proceed alongside live-experiment
 implementation without collision. Step 6 is the merge point.
 
-1. **The catalogue and the evaluator, as pure functions with no callers.** Graph
-   evaluation, gating, fan-out aggregation, the state lattice. Testable entirely
-   on a fixture catalogue. Port `RequireForExperiments` as the first two
-   conditions — §3.1's pair — since restating it is the first real exercise of
-   D34, and if it needs the matrix to grow an operator to fit, the design is
-   wrong.
+1. **The catalogue and the evaluator, as pure functions with no callers.** —
+   **done**, `internal/domain/functional_area.go`. Graph evaluation, gating,
+   fan-out counts, the state lattice, and a `BuildCatalogue` that refuses a
+   cycle, a dangling dependency, or an area gated by nothing.
+
+   Two of this design's rules are now tests over the shipped catalogue rather
+   than sentences in a document nobody rereads.
+   `TestEveryConditionIsATotalPredicate` asks every condition about seven shapes
+   of observation and fails any that cannot answer (D51).
+   `TestUnsatisfiedConditionsSayWhatIsMissing` fails any condition that is
+   unsatisfied and says nothing about what would change it (D39).
 
 2. **Re-express `DomainReadiness` as a functional area, and require identical
-   output.** The existing `domain_readiness_test.go` is the acceptance
-   criterion: same steps, same states, same details, same headline. This is the
-   de-risking step, because it exercises ordering, gating, observation,
-   fan-out-by-count and the "not looked yet" state at once, against a case
-   already known to be right. If the abstraction cannot reproduce the ladder
-   exactly, stop and revise it before anything else is ported.
+   output.** — **done.** All seven tests in `domain_readiness_test.go` pass
+   unchanged, and `TestTheLadderIsTheAssessment` now holds the two together so
+   they cannot drift apart later.
+
+   It reproduced, and cost two corrections, both to things this document had
+   stated wrongly:
+
+   **Evaluate first, then gate.** The obvious order — refuse to run a condition
+   whose dependencies are unmet — reports an already-satisfied condition as
+   blocked, which is a plain lie about something that is true. So a condition is
+   asked first and only *demoted* to blocked when it comes back unsatisfied,
+   which is what `gate()` always did. The states meaning "Mendel does not know"
+   are not demoted either, or an unchecked step would be called blocked and
+   claim knowledge in the other direction. The saving the original order was
+   after — not paying for a lookup that cannot matter — belongs to whoever
+   gathers the observations, since evaluators are pure functions over a struct
+   already in hand.
+
+   **Four of five dependencies were condition-to-condition; one was not.** The
+   certificate records cannot be created until Mendel has requested a
+   certificate, and "Mendel has requested one" is a fact about the request rather
+   than a condition anyone needs listed. That needed an explicit `Ready`
+   predicate beside `DependsOn`. It is the first evidence about D35 and it is
+   mixed: the graph carried four fifths of the ordering, and the remaining case
+   did not want to be a condition. Watch whether `Ready` stays rare — if the next
+   two areas need it, the likelier reading is that those preconditions *are*
+   conditions and the catalogue is under-populated (O14).
 
 3. **Re-express `EvaluateRequirements`.** Proves the two-scope model (D36),
    `deferred`, and `unavailable` via `DeployURLLimitation`. Its existing tests
