@@ -14,12 +14,11 @@ func experimentFixture() ExperimentDeployment {
 		Name:     "exp-checkout",
 		Hostname: "app.example.com",
 		Arms: []ArmDeployment{
-			{Slug: assigner.MainlineSlug, Backend: "pong-game-prod"},
-			{Slug: "a", Image: "gcr.io/p/pong:a"},
-			{Slug: "b", Image: "gcr.io/p/pong:b"},
+			{Slug: assigner.MainlineSlug, Backend: "pong-game-prod", Weight: 50},
+			{Slug: "a", Image: "gcr.io/p/pong:a", Weight: 25},
+			{Slug: "b", Image: "gcr.io/p/pong:b", Weight: 25},
 		},
-		Allocation:    `{"salt":"s","key":{"source":"cookie","name":"sid"},"arms":[]}`,
-		AssignerImage: "gcr.io/p/mendel-assigner:1",
+		Secure: true,
 	}
 }
 
@@ -81,15 +80,23 @@ func TestEveryArmGetsARuleAndTheFallbackIsTheAssigner(t *testing.T) {
 		t.Error("the regex is not escaped for a YAML double-quoted scalar")
 	}
 
-	// Everything with no Arm cookie must reach the assigner, or a first-time
-	// visitor is served by whichever rule happens to catch them.
-	if !strings.Contains(m, "exp-checkout-assigner") {
-		t.Error("nothing routes an unassigned visitor to the assigner")
+	// A visitor with no cookie is assigned by the response that serves them:
+	// weighted backends, each setting the cookie naming itself. Verified against
+	// a real Envoy Gateway -- twelve requests, every cookie matching the arm that
+	// served it.
+	fallback := m[strings.LastIndex(m, "  - backendRefs:"):]
+	if strings.Contains(fallback, "type: RegularExpression") {
+		t.Error("the fallback carries a match, so it is not the least specific rule")
 	}
-	assignerRule := strings.LastIndex(m, "name: exp-checkout-assigner")
-	lastArmRule := strings.LastIndex(m, "type: RegularExpression")
-	if assignerRule < lastArmRule {
-		t.Error("the fallback is listed before an Arm rule; it must be last")
+	for _, slug := range []string{assigner.MainlineSlug, "a", "b"} {
+		if !strings.Contains(fallback, assigner.CookieName+"="+slug) {
+			t.Errorf("an unassigned visitor can never be placed in arm %q", slug)
+		}
+	}
+	// A cookie the browser will not send back assigns nobody: every request
+	// would look unassigned and no visitor would stay in an Arm.
+	if !strings.Contains(fallback, "Max-Age=") || !strings.Contains(fallback, "Path=/") {
+		t.Error("the assignment cookie is not durable enough to keep a visitor in one arm")
 	}
 }
 
@@ -116,25 +123,6 @@ func TestMainlineIsNotRedeployed(t *testing.T) {
 	}
 }
 
-func TestAllocationTravelsWithTheExperiment(t *testing.T) {
-	d := experimentFixture()
-	m, err := d.Manifest()
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	if !strings.Contains(m, "allocation.json: |") {
-		t.Error("the assigner has no allocation to read")
-	}
-	if !strings.Contains(m, `"salt":"s"`) {
-		t.Error("the allocation did not reach the ConfigMap")
-	}
-	// Mounted, or the file the assigner reads is not there and it refuses to
-	// start -- which is correct behaviour and a confusing way to find this out.
-	if !strings.Contains(m, "mountPath: /etc/mendel") {
-		t.Error("the allocation is not mounted into the assigner")
-	}
-}
-
 // Everything is labelled with the experiment, so teardown can find what it made
 // without knowing what each object is.
 func TestResourcesCarryTheExperimentLabel(t *testing.T) {
@@ -151,8 +139,16 @@ func TestManifestRefusesWhatCannotBeDeployed(t *testing.T) {
 	for name, mutate := range map[string]func(*ExperimentDeployment){
 		"no hostname":        func(d *ExperimentDeployment) { d.Hostname = "" },
 		"no name":            func(d *ExperimentDeployment) { d.Name = "" },
-		"no allocation":      func(d *ExperimentDeployment) { d.Allocation = "" },
-		"no assigner image":  func(d *ExperimentDeployment) { d.AssignerImage = "" },
+		// Relative weights, so they need not total anything in particular --
+		// Envoy normalises them. All zero is the case that cannot work: no
+		// visitor could ever be assigned.
+		"every share is zero": func(d *ExperimentDeployment) {
+			for i := range d.Arms {
+				d.Arms[i].Weight = 0
+			}
+		},
+		"a negative share": func(d *ExperimentDeployment) { d.Arms[1].Weight = -1 },
+		"two arms share a slug": func(d *ExperimentDeployment) { d.Arms[2].Slug = d.Arms[1].Slug },
 		"no mainline":        func(d *ExperimentDeployment) { d.Arms[0].Slug = "c" },
 		"mainline no backend": func(d *ExperimentDeployment) { d.Arms[0].Backend = "" },
 		"arm with no image":  func(d *ExperimentDeployment) { d.Arms[1].Image = "" },

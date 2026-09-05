@@ -29,6 +29,9 @@ type ArmDeployment struct {
 	// the existing deployment's Service; for a Variation it is the one rendered
 	// here.
 	Backend string
+
+	// Weight is this Arm's share of visitors who arrive without an assignment.
+	Weight int
 }
 
 // ExperimentGatewayClass is the class of the controller that does Arm matching.
@@ -60,13 +63,12 @@ type ExperimentDeployment struct {
 	Hostname string
 	Arms     []ArmDeployment
 
-	// Allocation is what the assigner reads, as JSON. It lives in a ConfigMap
-	// rather than being fetched from Mendel: production traffic must not depend
-	// on Mendel being reachable.
-	Allocation string
+	// Secure marks the assignment cookie Secure, which requires https. Marking
+	// it on an http site means the browser never sends it back, so every request
+	// looks unassigned and nobody stays in an Arm.
+	Secure bool
 
-	AssignerImage string
-	EnvFrom       string
+	EnvFrom string
 }
 
 // cookieMatch is the regular expression that recognises one Arm in a Cookie
@@ -93,15 +95,10 @@ func (d ExperimentDeployment) Validate() string {
 		// matching to.
 		return "an experiment needs a hostname: the routes are matched on it"
 	}
-	if strings.TrimSpace(d.Allocation) == "" {
-		return "an experiment needs an allocation for the assigner to read"
-	}
-	if strings.TrimSpace(d.AssignerImage) == "" {
-		return "an experiment needs the assigner image"
-	}
-
+	weights := make([]assigner.ArmWeight, 0, len(d.Arms))
 	mainline := 0
 	for _, a := range d.Arms {
+		weights = append(weights, assigner.ArmWeight{Slug: a.Slug, Weight: a.Weight})
 		if strings.TrimSpace(a.Slug) == "" {
 			return "an Arm with no slug cannot be named in a cookie or matched by a route"
 		}
@@ -117,8 +114,8 @@ func (d ExperimentDeployment) Validate() string {
 	if mainline != 1 {
 		return fmt.Sprintf("exactly one Arm is mainline; this has %d", mainline)
 	}
-	if len(d.Arms) < 2 {
-		return "an experiment needs mainline and at least one Arm to compare against it"
+	if msg := assigner.ValidateAllocation(weights); msg != "" {
+		return msg
 	}
 	return ""
 }
@@ -130,66 +127,6 @@ func (d ExperimentDeployment) Manifest() (string, error) {
 	}
 
 	var b strings.Builder
-
-	// The allocation, indented into the ConfigMap.
-	fmt.Fprintf(&b, `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: %s-allocation
-data:
-  allocation.json: |
-%s
----
-`, d.Name, indent(d.Allocation, "    "))
-
-	// The assigner. One replica is not enough: it is on the path of every
-	// visitor's first request, and a restart with one replica turns that into an
-	// error rather than a redirect.
-	fmt.Fprintf(&b, `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: %[1]s-assigner
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: %[1]s-assigner
-  template:
-    metadata:
-      labels:
-        app: %[1]s-assigner
-    spec:
-      containers:
-      - name: assigner
-        image: %[2]s
-        args: ["-addr=:%[3]d", "-allocation=/etc/mendel/allocation.json"]
-        ports:
-        - containerPort: %[3]d
-        volumeMounts:
-        - name: allocation
-          mountPath: /etc/mendel
-        readinessProbe:
-          httpGet:
-            path: /healthz
-            port: %[3]d
-      volumes:
-      - name: allocation
-        configMap:
-          name: %[1]s-allocation
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: %[1]s-assigner
-spec:
-  type: ClusterIP
-  selector:
-    app: %[1]s-assigner
-  ports:
-  - port: 80
-    targetPort: %[3]d
----
-`, d.Name, d.AssignerImage, hosting.ContainerPort)
 
 	// One Deployment and Service per Arm that is not mainline.
 	for _, arm := range d.Arms {
@@ -338,12 +275,30 @@ spec:
 `, cookieMatch(arm.Slug), backend)
 	}
 
-	// Anything with no Arm cookie goes to the assigner, which gives it one and
-	// sends it back. Last, and with no match, so it is the least specific rule.
-	fmt.Fprintf(&b, `  - backendRefs:
-    - name: %s-assigner
+	// Anything with no Arm cookie is assigned here, by the same response that
+	// serves it. The backends are weighted and each sets the cookie naming
+	// itself, so the visitor is placed and told about it in one round trip --
+	// with nothing to deploy, no redirect, and no request that cannot be
+	// redirected because it carried a body.
+	//
+	// Last, and with no match of its own, so it is the least specific rule.
+	fmt.Fprint(&b, "  - backendRefs:\n")
+	for _, arm := range d.Arms {
+		backend := arm.Backend
+		if backend == "" {
+			backend = d.armResource(arm.Slug)
+		}
+		fmt.Fprintf(&b, `    - name: %s
       port: 80
-`, d.Name)
+      weight: %d
+      filters:
+      - type: ResponseHeaderModifier
+        responseHeaderModifier:
+          add:
+          - name: Set-Cookie
+            value: %q
+`, backend, arm.Weight, assigner.SetCookieValue(arm.Slug, d.Secure))
+	}
 
 	return b.String(), nil
 }
