@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,7 +31,10 @@ import (
 // first.
 const EnvoyGatewayVersion = "v1.9.1"
 
-func envoyGatewayManifestURL() string {
+func envoyGatewayManifestURL() string { return envoyGatewayManifestURLFn() }
+
+// Indirected so a test can serve a local manifest without touching the pin.
+var envoyGatewayManifestURLFn = func() string {
 	return "https://github.com/envoyproxy/gateway/releases/download/" +
 		EnvoyGatewayVersion + "/install.yaml"
 }
@@ -275,6 +279,19 @@ func waitForGatewayClass(ctx context.Context, session *gkeSession, class string,
 }
 
 
+// manifestCache holds the filtered manifest for the life of the process.
+//
+// The URL is pinned to a released version, so its contents cannot change --
+// which makes re-fetching it pure waste. And it was being re-fetched a great
+// deal: the readiness check dry-runs the install while the controller is
+// missing, so every refresh of the experiments page downloaded four megabytes
+// and filtered them again. That is the whole reason the page felt slow to notice
+// the controller arriving.
+var manifestCache struct {
+	sync.Mutex
+	filtered string
+}
+
 // fetchInstallManifest downloads the controller manifest and removes what the
 // platform already owns.
 //
@@ -282,6 +299,13 @@ func waitForGatewayClass(ctx context.Context, session *gkeSession, class string,
 // filtered before it is applied and dry-run against exactly what will be
 // applied. A probe of a different manifest than the one that runs is not a probe.
 func fetchInstallManifest(ctx context.Context) (string, error) {
+	manifestCache.Lock()
+	cached := manifestCache.filtered
+	manifestCache.Unlock()
+	if cached != "" {
+		return cached, nil
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, envoyGatewayManifestURL(), nil)
 	if err != nil {
 		return "", err
@@ -298,5 +322,10 @@ func fetchInstallManifest(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("could not read the controller manifest: %w", err)
 	}
-	return installableManifest(string(raw)), nil
+	filtered := installableManifest(string(raw))
+
+	manifestCache.Lock()
+	manifestCache.filtered = filtered
+	manifestCache.Unlock()
+	return filtered, nil
 }

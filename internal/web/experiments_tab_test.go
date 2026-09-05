@@ -2,6 +2,9 @@ package web
 
 import (
 	"net/http"
+	"net/http/httptest"
+	"fmt"
+	"context"
 	"strings"
 	"testing"
 
@@ -414,5 +417,43 @@ func TestInstallCreatesTheGatewayClassItself(t *testing.T) {
 		if !strings.Contains(m, want) {
 			t.Errorf("the gateway class manifest is missing %q", want)
 		}
+	}
+}
+
+// The manifest URL is pinned to a released version, so its contents cannot
+// change and re-fetching it is pure waste.
+//
+// It was being fetched a great deal: the readiness check dry-runs the install
+// while the controller is missing, so every refresh of the page downloaded four
+// megabytes and filtered them again. That is why the page was slow to notice the
+// controller arriving.
+func TestManifestIsFetchedOnce(t *testing.T) {
+	var hits int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		fmt.Fprint(w, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n")
+	}))
+	defer server.Close()
+
+	manifestCache.Lock()
+	manifestCache.filtered = ""
+	manifestCache.Unlock()
+	t.Cleanup(func() {
+		manifestCache.Lock()
+		manifestCache.filtered = ""
+		manifestCache.Unlock()
+	})
+
+	original := envoyGatewayManifestURLFn
+	envoyGatewayManifestURLFn = func() string { return server.URL }
+	t.Cleanup(func() { envoyGatewayManifestURLFn = original })
+
+	for i := 0; i < 5; i++ {
+		if _, err := fetchInstallManifest(context.Background()); err != nil {
+			t.Fatalf("fetch %d: %v", i, err)
+		}
+	}
+	if hits != 1 {
+		t.Errorf("downloaded the pinned manifest %d times; it cannot change", hits)
 	}
 }
