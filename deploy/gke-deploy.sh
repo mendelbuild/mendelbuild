@@ -31,6 +31,43 @@ if [ "${BEHIND:-0}" -gt 0 ]; then
 fi
 
 REGION=${REGION:-us-central1}
+
+# Deploy where GCP_PROJECT says, not wherever kubectl happens to point.
+#
+# Every kubectl call below used the ambient current-context, which is global,
+# survives between sessions, and is changed by any `gcloud container clusters
+# get-credentials` anyone runs for any reason -- including for an unrelated
+# cluster. When that happens this script builds the right image, pushes it to
+# the right registry, and then aims the rollout at somebody else's cluster. It
+# failed loudly here, on a namespace that did not exist, which was luck: against
+# a cluster that happened to have a `mendel` deployment it would have quietly
+# deployed staging over it.
+#
+# So derive the context from GCP_PROJECT and pass it explicitly. The context is
+# never switched, because mutating global state to fix a problem caused by
+# global state only moves it.
+CONTEXTS=$(kubectl config get-contexts -o name | grep "^gke_${GCP_PROJECT}_" || true)
+CONTEXT_COUNT=$(printf '%s' "$CONTEXTS" | grep -c . || true)
+
+if [ "${CONTEXT_COUNT:-0}" -eq 0 ]; then
+    echo "No kubectl context for project $GCP_PROJECT."
+    echo "Get credentials for its cluster first:"
+    echo
+    echo "  gcloud container clusters get-credentials <cluster> --location <location> --project $GCP_PROJECT"
+    echo
+    exit 1
+fi
+if [ "$CONTEXT_COUNT" -gt 1 ]; then
+    echo "More than one kubectl context for project $GCP_PROJECT:"
+    printf '%s\n' "$CONTEXTS" | sed 's/^/  /'
+    echo
+    echo "Set KUBE_CONTEXT to the one you mean."
+    exit 1
+fi
+
+KUBE_CONTEXT=${KUBE_CONTEXT:-$CONTEXTS}
+echo "=== Deploying to $KUBE_CONTEXT ==="
+kubectl() { command kubectl --context "$KUBE_CONTEXT" "$@"; }
 # Include timestamp to ensure unique tag even with uncommitted changes
 TAG="$(git rev-parse --short HEAD)-$(date +%s)"
 IMAGE="$REGION-docker.pkg.dev/$GCP_PROJECT/mendel/mendel:$TAG"
