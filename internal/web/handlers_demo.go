@@ -1973,6 +1973,30 @@ func digestOf(parts []string) string {
 // calling it done, which is untrue, and calling it failed, which is worse.
 var errStillProvisioning = errors.New("deployed, but the load balancer is not serving yet")
 
+// servingStatus says whether a status code means the deployment is answering.
+//
+// Anything but a gateway error, because those come from the load balancer rather
+// than from the application: 502, 503 and 504 are what it returns while it has
+// no healthy backend to send to, and on GKE a 503 arrives with "fault filter
+// abort" in the body, which reads as a hard failure rather than as a thing still
+// coming up.
+//
+// The previous version accepted any reply at all -- it even logged the code and
+// returned true anyway -- so a deployment was reported done, and its URL handed
+// over, while the load balancer still had nothing behind it.
+//
+// A 4xx is accepted deliberately: it comes from the application, which means the
+// application is being reached, and an app with no route at / is not a failed
+// deployment. A 500 is accepted for the same reason and is the app's problem to
+// report, not something waiting will fix.
+func servingStatus(code int) bool {
+	switch code {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return false
+	}
+	return true
+}
+
 // waitUntilServing blocks until the URL answers, reporting false on timeout.
 //
 // Any HTTP response counts. A 404 means the load balancer is routing, which is
@@ -1999,8 +2023,12 @@ func (s *Server) waitUntilServing(ctx context.Context, url string,
 		}
 		if resp, err := client.Get(url); err == nil {
 			resp.Body.Close()
-			logMilestone(fmt.Sprintf("Serving: %s answered %d", url, resp.StatusCode))
-			return true
+			if servingStatus(resp.StatusCode) {
+				logMilestone(fmt.Sprintf("Serving: %s answered %d", url, resp.StatusCode))
+				return true
+			}
+			// A reply is not the same as being served. Keep waiting rather than
+			// handing over a URL that answers with a gateway error.
 		}
 		// Every couple of minutes, not every attempt: a log line per failed probe
 		// buries the milestones in noise about a thing that is going fine.

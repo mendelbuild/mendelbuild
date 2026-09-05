@@ -241,3 +241,26 @@ func TestFailureIsReportedInTermsTheUserAskedIn(t *testing.T) {
 		t.Errorf("a stop that did return traffic alarms about it anyway: %q", late.Effect)
 	}
 }
+
+// A reply is not the same as being served.
+//
+// waitUntilServing accepted any HTTP response, so a deployment was reported done
+// and its URL handed over while the load balancer still had no healthy backend.
+// On GKE that URL answers 503 with "fault filter abort" in the body, which reads
+// as a hard failure rather than as something still coming up — and the user is
+// given the link at exactly the moment it looks broken.
+func TestGatewayErrorsAreNotServing(t *testing.T) {
+	for _, code := range []int{502, 503, 504} {
+		if servingStatus(code) {
+			t.Errorf("%d comes from the load balancer with no backend, and is not serving", code)
+		}
+	}
+	// These come from the application, which means it is being reached. An app
+	// with no route at / is not a failed deployment, and an app returning 500 has
+	// a problem that waiting will not fix.
+	for _, code := range []int{200, 204, 301, 302, 401, 404, 418, 500} {
+		if !servingStatus(code) {
+			t.Errorf("%d is the application answering, so the deployment is serving", code)
+		}
+	}
+}
