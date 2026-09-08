@@ -524,7 +524,7 @@ Recorded with what was rejected, for audit.
 | D18 | Allocation derived from MDE and duration, mainline carries the brunt | Even split across Arms | Minimises exposure while still reaching significance |
 | D19 | Mainline deploys during an experiment: carry on and annotate | Invalidate and restart | Unrelated merges are constant; restarting means nothing ever finishes |
 | D20 | Tier 1 assigns by a Mendel-set cookie; `user`/`tenant` wait for Tier 2 | Read an app-supplied user key in Tier 1 | No login-transition case to handle; the assigner is a hash and a Set-Cookie |
-| D53 | Mendel provisions a verification database per experiment, on a server the project already has | Ask the user for a throwaway database; provision a managed instance | A blank database fails admission, and a schema-current one per experiment is not something a person can supply; a managed instance assumes an engine that has one, which the user's project may not |
+| D53 | Mendel provisions a verification database per experiment, on a server the project already has | Ask the user for a throwaway database; provision a managed instance | A blank database fails admission, and a schema-current one per experiment is not something a person can supply; a managed instance assumes an engine that has one, which the user's project may not. **Where it happens is amended by §20 D54: inside the adapter, not from Mendel** |
 
 ---
 
