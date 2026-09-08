@@ -611,6 +611,12 @@ func (s *Server) setupRoutes() {
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(staticSubFS))))
 
 	// Health check (public, for load balancer)
+	// Where a datastore adapter running in a project's own channel reports what
+	// it found. Outside the project scope and unauthenticated as a user on
+	// purpose: the caller is a job with no session, and the bearer token Mendel
+	// minted for that one invocation is what identifies it.
+	r.Post("/adapters/report", s.handleAdapterReport)
+
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))

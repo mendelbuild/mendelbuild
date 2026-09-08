@@ -89,6 +89,36 @@ CREATE TABLE sessions (
 CREATE INDEX idx_sessions_token ON sessions(token_hash);
 CREATE INDEX idx_sessions_expires ON sessions(expires_at);
 
+-- One invocation of a datastore adapter running as a job in the project's own
+-- channel [added in 051]. The exchange is asynchronous -- Mendel deploys a job
+-- and the answer arrives later from a process it does not control -- so there
+-- has to be something the report is matched against, and something that can say
+-- "asked, nothing back yet".
+CREATE TABLE adapter_invocations (
+    id UUID PRIMARY KEY,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    phase TEXT NOT NULL,
+
+    -- Minted per invocation and never stored; the hash is, as sessions do.
+    token_hash BYTEA NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+
+    -- The question as asked, so a late report is checked against it rather
+    -- than a reconstruction. JSONB normalises: same JSON, not same bytes.
+    instruction JSONB NOT NULL,
+
+    -- Null until something reports: neither a yes nor a no but no answer yet.
+    result JSONB,
+    outcome TEXT,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    reported_at TIMESTAMPTZ
+);
+
+CREATE INDEX idx_adapter_invocations_token ON adapter_invocations(token_hash);
+CREATE INDEX idx_adapter_invocations_recent
+    ON adapter_invocations(project_id, phase, created_at DESC);
+
 --------------------------------------------------------------------------------
 -- STRATEGIES
 --------------------------------------------------------------------------------
