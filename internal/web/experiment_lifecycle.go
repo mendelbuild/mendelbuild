@@ -106,7 +106,7 @@ func (s *Server) StartExperiment(ctx context.Context, experimentID uuid.UUID,
 		if err != nil {
 			return fmt.Errorf("building arm %s: %w", arm.Slug, err)
 		}
-		logMilestone("Built " + arm.Slug + " from " + commit[:min(7, len(commit))])
+		logMilestone("Built " + arm.Slug + " from " + short(commit))
 
 		envFrom, err := s.applyArmEnvironment(ctx, exp, arm, pd.ProdHost(), session, logInfo)
 		if err != nil {

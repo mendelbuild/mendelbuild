@@ -36,6 +36,9 @@ import (
 // assignment is happening at all.
 const SplitSampleSize = 24
 
+// sampleConcurrency is how many of those are in flight at once.
+const sampleConcurrency = 8
+
 // ArmShare is one Arm's showing in a sample.
 type ArmShare struct {
 	Slug string
@@ -119,10 +122,20 @@ func (s *Server) SampleSplit(ctx context.Context, exp *domain.Experiment, host s
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
+	// Concurrent, because sequentially this would outlast the patience of the
+	// person waiting for it -- but bounded, because the site being sampled is
+	// the user's production and a diagnostic has no business arriving as a
+	// burst. Sequential requests would also be slow enough to be worth
+	// abandoning, which is how a check stops being run.
+	inFlight := make(chan struct{}, sampleConcurrency)
+
 	for i := 0; i < SplitSampleSize; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			inFlight <- struct{}{}
+			defer func() { <-inFlight }()
+
 			slug, err := sampleOnce(ctx, sample.URL)
 
 			mu.Lock()
@@ -172,7 +185,7 @@ func sampleOnce(ctx context.Context, url string) (string, error) {
 	}
 
 	client := &http.Client{
-		Timeout: 15 * time.Second,
+		Timeout: 10 * time.Second,
 		// Redirects are not followed. The assignment happens on the first
 		// response, and following a redirect would report the Arm that served
 		// the destination -- which, with a cookie now set, is the same Arm and
