@@ -447,6 +447,7 @@ plan saying a third would be the joke writing itself.
 | Create the certificate record | observed | user | project | project |  |  | ● |  |
 | Mendel reserves an address | derived | mendel | project | project |  |  | ● |  |
 | Create the wildcard A record | observed | user | project | project |  |  | ● |  |
+| Arms can be given the environment production runs with | observed | user | variation | project |  | ● |  |  |
 | A non-production datastore to verify against | asked | user | project | project |  | ● |  |  |
 | That datastore is reachable | probed | user | project | project |  | ● |  |  |
 | Production answers at a name | observed | user | project | project |  | ● |  |  |

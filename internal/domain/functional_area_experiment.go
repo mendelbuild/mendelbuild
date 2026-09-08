@@ -35,6 +35,7 @@ const (
 	CondProvableSchema ConditionID = "experiment.schema-changes-provable"
 	CondVerifyReachable ConditionID = "experiment.verification-datastore-answers"
 	CondProdHTTPS      ConditionID = "production.serves-https"
+	CondArmEnvironment ConditionID = "experiment.arms-get-the-same-environment"
 )
 
 func experimentConditions() []Condition {
@@ -148,6 +149,29 @@ func experimentConditions() []Condition {
 				"Not checked yet.")
 		},
 	}, {
+		ID:   CondArmEnvironment,
+		Name: "Arms can be given the environment production runs with",
+		// A condition and not a check buried in the start path, because it is
+		// the third instance of a rule the other two deploy paths already
+		// enforce. An Arm brought up without production's values differs from
+		// the control in a way nobody chose, and the comparison then measures
+		// the missing configuration rather than the change -- which is exactly
+		// what happened on the first live experiment, where both Arms logged
+		// "Google OAuth: NOT configured" and mainline beside them did not.
+		Evidence:    EvidenceObserved,
+		Remedy:      RemedyUser,
+		DeclaredAt:  ScopeVariation,
+		SatisfiedAt: ScopeProject,
+		Evaluate: func(o Observations) Finding {
+			return factFinding(o.Experiment.ArmEnvironment,
+				"Every value the merged code needs is stored, so each arm starts with what "+
+					"production has.",
+				detailOr(o.Experiment.ArmEnvironmentMissing,
+					"Production needs values that are not stored. Arms would run without them and "+
+						"differ from the control in a way nobody chose."),
+				"Mendel could not read what the code needs.")
+		},
+	}, {
 		ID:   CondProdHTTPS,
 		Name: "That name serves https",
 		// The one warning. Not required by the routing mechanism -- an
@@ -178,7 +202,7 @@ func experimentArea() FunctionalArea {
 		Name: "Run a live-traffic experiment",
 		Requires: []ConditionID{
 			CondGatewayAPI, CondCookieMatching, CondProdHostname,
-			CondProvableSchema, CondVerifyReachable,
+			CondArmEnvironment, CondProvableSchema, CondVerifyReachable,
 		},
 		Warns: []ConditionID{CondProdHTTPS},
 	}

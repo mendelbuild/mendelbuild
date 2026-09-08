@@ -101,6 +101,21 @@ type ExperimentObservation struct {
 	// the requirements of the hardest.
 	SchemaChanges Fact
 
+	// ArmEnvironment is whether the values production runs with are all stored,
+	// so an Arm can be given the same ones.
+	//
+	// A condition rather than a check inside the start path, because it gates:
+	// an Arm deployed without them differs from the mainline it is measured
+	// against in a way nobody chose -- sign-in that silently does not work --
+	// and the result then measures the missing configuration rather than the
+	// change. The demo and production deploys are already refused for this;
+	// experiments were the third path and were not.
+	ArmEnvironment Fact
+
+	// ArmEnvironmentMissing names what is not stored, so the step says which
+	// value to go and enter rather than that something is wrong.
+	ArmEnvironmentMissing string
+
 	// VerifyDatastore is whether a non-production datastore has been given.
 	// Additivity is settled by running the migration and diffing, and running it
 	// against production is not free even rolled back.
@@ -194,9 +209,9 @@ func ExperimentBlockers(steps []ReadinessStep) []string {
 // background refresh that finds nothing new leaves it identical, so a watching
 // page reloads exactly when there is something to see and not on a timer.
 func (o ExperimentObservation) Fingerprint() string {
-	return fmt.Sprintf("%v/%v/%v/%v/%v/%v/%s",
+	return fmt.Sprintf("%v/%v/%v/%v/%v/%v/%v/%s",
 		o.GatewayAPI, o.CookieMatching, o.CanInstallController,
-		o.ProdHostname, o.ProdHTTPS, o.VerifyDatastore, o.ProdHost)
+		o.ProdHostname, o.ProdHTTPS, o.VerifyDatastore, o.ArmEnvironment, o.ProdHost)
 }
 
 // detailOr prefers the observed value over a generic sentence, since a reader

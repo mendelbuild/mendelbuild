@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -71,7 +72,52 @@ func (s *Server) observeExperimentReadiness(ctx context.Context, projectID uuid.
 		obs.CanInstallController, obs.InstallControllerHint, obs.CloudShellURL =
 		s.observeGatewayControllers(ctx, projectID)
 	obs.VerifyDatastore, obs.VerifyReachable = s.observeVerifyDatastore(ctx, projectID)
+	obs.ArmEnvironment, obs.ArmEnvironmentMissing = s.observeArmEnvironment(ctx, projectID, obs.ProdHost)
 	return obs
+}
+
+// observeArmEnvironment reports whether the values production runs with are all
+// stored, so an Arm can be given the same ones.
+//
+// The merged requirements, because that is what an Arm needs: it runs its
+// Variation's branch, which is mainline's code plus a change. A Variation that
+// declares something new of its own is not asked about here -- this is the
+// project-scoped question, assessed for a settings page where no particular
+// experiment is in front of the reader.
+func (s *Server) observeArmEnvironment(ctx context.Context, projectID uuid.UUID,
+	prodHost string) (domain.Fact, string) {
+
+	deployURL := prodHost
+	if deployURL != "" {
+		deployURL = "https://" + deployURL
+	}
+
+	statuses, err := s.prodRequirementStatus(ctx, projectID, deployURL)
+	if err != nil {
+		// Could not look, which is Mendel's problem and not a missing value.
+		// Reporting it as false would tell somebody to go and enter secrets they
+		// have already entered.
+		return domain.FactUnknown, ""
+	}
+	if len(statuses) == 0 {
+		// Nothing merged declares a requirement, so there is nothing an Arm
+		// could be missing. A definite yes rather than an unknown: the question
+		// was asked and the answer is that the code needs nothing.
+		return domain.FactTrue, "Nothing the merged code needs has to be configured."
+	}
+
+	var missing []string
+	for _, st := range domain.BlockingRequirements(statuses) {
+		missing = append(missing, st.Requirement.Name)
+	}
+	if len(missing) == 0 {
+		return domain.FactTrue, ""
+	}
+	sort.Strings(missing)
+	return domain.FactFalse, fmt.Sprintf(
+		"Not stored yet: %s. Arms would start without that, and so differ from the control in a "+
+			"way nobody chose. The production deployment page is where these are entered.",
+		strings.Join(missing, ", "))
 }
 
 // observeGatewayAPI asks the cluster whether it can reconcile a Gateway.

@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func ladderByName(steps []ReadinessStep) map[string]ReadinessStep {
 	out := make(map[string]ReadinessStep, len(steps))
@@ -17,6 +20,7 @@ func allTrue() ExperimentObservation {
 		GatewayAPI: FactTrue, CookieMatching: FactTrue, ProdHostname: FactTrue, ProdHost: "app.example.com",
 		ProdHTTPS: FactTrue, SchemaChanges: FactTrue,
 		VerifyDatastore: FactTrue, VerifyReachable: FactTrue,
+		ArmEnvironment: FactTrue,
 	}
 }
 
@@ -188,4 +192,61 @@ func TestDeclaredMigrationRequiresTheDatastore(t *testing.T) {
 	if len(ExperimentBlockers(steps)) == 0 {
 		t.Error("the missing datastore should be listed as a blocker")
 	}
+}
+
+// An arm brought up without production's values is not a comparison.
+//
+// Both arms of the first live experiment logged "Google OAuth: NOT configured"
+// while mainline beside them had what the ordinary deploy injected, so the arms
+// differed from the control in a way nobody chose and the result would have
+// measured the missing configuration rather than the change. The demo and
+// production deploys were already refused for this; experiments were the third
+// path and were not, so it is stated once here as a condition rather than a
+// fourth check somewhere else.
+func TestArmsAreRefusedWithoutTheEnvironmentProductionRunsWith(t *testing.T) {
+	obs := allTrue()
+	obs.ArmEnvironment = FactFalse
+	obs.ArmEnvironmentMissing = "Not stored yet: GOOGLE_CLIENT_SECRET."
+
+	steps := ExperimentReadiness(obs)
+	_, blocked := ExperimentHeadline(steps)
+	if !blocked {
+		t.Error("an experiment whose arms cannot be configured was allowed to run")
+	}
+
+	blockers := ExperimentBlockers(steps)
+	found := false
+	for _, b := range blockers {
+		if strings.Contains(b, "GOOGLE_CLIENT_SECRET") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the refusal does not name the value that is missing: %v", blockers)
+	}
+}
+
+// Not knowing is not the same as knowing it is missing.
+//
+// The distinction Fact exists for. Mendel failing to read what the code needs is
+// Mendel's problem; reporting it as an unmet requirement sends somebody to enter
+// secrets they have already entered, which is the exact confusion that told a
+// user to redo something already done.
+func TestUnreadableRequirementsAreUncheckedRatherThanMissing(t *testing.T) {
+	obs := allTrue()
+	obs.ArmEnvironment = FactUnknown
+
+	for _, s := range ExperimentReadiness(obs) {
+		if s.Name != "Arms can be given the environment production runs with" {
+			continue
+		}
+		if s.State == StepYourMove {
+			t.Error("a check Mendel could not perform was reported as the user's to fix")
+		}
+		if s.State == StepDone {
+			t.Error("a check Mendel could not perform was reported as satisfied")
+		}
+		return
+	}
+	t.Error("the condition is not in the ladder at all")
 }
