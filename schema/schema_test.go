@@ -22,7 +22,7 @@ import (
 // change that silently goes unverified is worse than a noisy failure.
 // Override the target with MENDEL_TEST_DB_URL.
 func TestMigrationsMatchFullSchema(t *testing.T) {
-	connString := testdb.ConnString()
+	connString := testdb.Require(t)
 
 	ctx := context.Background()
 

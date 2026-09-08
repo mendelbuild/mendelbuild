@@ -18,7 +18,7 @@ import (
 func scratchDB(t *testing.T, mirroring string) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
-	conn := testdb.ConnString()
+	conn := testdb.Require(t)
 
 	schema := "scratch_" + uuid.New().String()[:8]
 	admin, err := pgxpool.New(ctx, conn)

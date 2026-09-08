@@ -22,7 +22,7 @@ import (
 func testDB(t *testing.T) (*DB, uuid.UUID) {
 	t.Helper()
 
-	connString := testdb.ConnString()
+	connString := testdb.Require(t)
 
 	ctx := context.Background()
 	schemaName := "test_req_" + uuid.New().String()[:8]

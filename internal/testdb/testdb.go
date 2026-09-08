@@ -6,7 +6,10 @@
 // write against the wrong default.
 package testdb
 
-import "os"
+import (
+	"os"
+	"testing"
+)
 
 // DefaultConnString is the database tests use when MENDEL_TEST_DB_URL is unset,
 // mirroring the fallback the binary itself uses in getConnString.
@@ -32,4 +35,32 @@ func ConnString() string {
 		return s
 	}
 	return DefaultConnString
+}
+
+// Require is how a test says it needs a real database, and it exists to keep
+// one rule in one place rather than in each package's own words.
+//
+// The rule has two halves, and they pull in opposite directions:
+//
+//   - **A missing database is a failure, not a skip.** A test that quietly skips
+//     stops covering anything and reports a pass while doing it, which is how a
+//     suite rots without anyone noticing. `go test ./schema/...` has always been
+//     deliberate about this, and the reasoning is the same everywhere: a change
+//     that silently goes unverified is worse than a noisy failure. Require does
+//     not enforce that half — the caller connects and fails — but it is the
+//     reason this is not simply a skip helper.
+//
+//   - **`-short` is the quick loop and is allowed to skip.** Someone iterating on
+//     a pure function should not wait for containers, and asking for `-short` is
+//     asking for exactly that trade with your eyes open. It is a request, not a
+//     default, so nothing is silently lost.
+//
+// Anything heavier than a database — a fixture repository's own datastore, in a
+// container, per test — belongs in the heavy tier instead. See CLAUDE.md.
+func Require(t *testing.T) string {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("needs a database; -short is the quick loop, so this is deliberately not run")
+	}
+	return ConnString()
 }

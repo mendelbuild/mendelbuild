@@ -168,7 +168,7 @@ func tsTestTable(t *testing.T, columns string) (*pgxpool.Pool, string) {
 	t.Helper()
 	ctx := context.Background()
 
-	pool, err := pgxpool.New(ctx, testdb.ConnString())
+	pool, err := pgxpool.New(ctx, testdb.Require(t))
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}

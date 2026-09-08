@@ -24,7 +24,7 @@ import (
 func targetDB(t *testing.T) (*pgxpool.Pool, *experiment.Applier) {
 	t.Helper()
 	ctx := context.Background()
-	conn := testdb.ConnString()
+	conn := testdb.Require(t)
 
 	schema := "exp_" + uuid.New().String()[:8]
 	admin, err := pgxpool.New(ctx, conn)

@@ -11,6 +11,7 @@ import (
 	"github.com/bhs/mendelbuild/internal/experiment"
 	"github.com/bhs/mendelbuild/internal/experiment/conformance"
 	"github.com/bhs/mendelbuild/internal/experiment/pgstore"
+	"github.com/bhs/mendelbuild/internal/testdb"
 )
 
 // pgstore is one implementation of experiment.Datastore, and this is where it
@@ -22,10 +23,7 @@ import (
 // Postgres's assumptions -- which is what reading pgstore and copying it would
 // have done.
 func TestPostgresConforms(t *testing.T) {
-	url := os.Getenv("MENDEL_TEST_DB_URL")
-	if url == "" {
-		url = "postgres://localhost:5432/mendel_test?sslmode=disable"
-	}
+	url := testdb.Require(t)
 
 	conformance.Run(t, conformance.Fixture{
 		NewStore: func(t *testing.T) experiment.Datastore {
@@ -85,11 +83,14 @@ func newScratchSchema(t *testing.T, url string) *pgxpool.Pool {
 
 	pool, err := pgxpool.New(t.Context(), url)
 	if err != nil {
-		t.Skipf("no test database (%v); set MENDEL_TEST_DB_URL to run the conformance suite", err)
+		t.Fatalf("connecting to the test database: %v", err)
 	}
+	// A failure rather than a skip, which is what this used to do and was the
+	// odd one out. A conformance suite that quietly does not run is an adapter
+	// nobody is checking, reported as a pass. -short is where opting out lives.
 	if err := pool.Ping(t.Context()); err != nil {
 		pool.Close()
-		t.Skipf("no test database (%v); set MENDEL_TEST_DB_URL to run the conformance suite", err)
+		t.Fatalf("no test database at %s: %v", url, err)
 	}
 
 	schema := fmt.Sprintf("mendel_conf_%d", os.Getpid())

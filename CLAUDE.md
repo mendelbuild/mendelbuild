@@ -384,6 +384,39 @@ Two corollaries that have already cost time:
   sentence naming what is missing, and the declining code path and the checklist
   render *the same string*. `experiment.RequireForExperiments` is the model.
 
+### Three Tiers of Test
+
+```bash
+go test -short ./...    # the quick loop: pure functions only, ~3s
+go test ./...           # the default: everything needing Postgres too
+go test -tags heavy ./... # not built yet -- see below
+```
+
+**A missing dependency is a failure, not a skip.** `go test ./schema/...` has
+always been deliberate about this and the rule is general: a test that quietly
+skips stops covering anything while still reporting a pass, which is how a suite
+rots with nobody noticing. If the default run cannot reach Postgres it fails and
+says so.
+
+**`-short` is the one sanctioned way to opt out**, because asking for it is
+asking for that trade with your eyes open. `testdb.Require(t)` is where both
+halves live, so no package has to restate them and none can drift.
+
+**The heavy tier does not exist yet, and should not be built empty.** It is for
+anything that starts containers of its own — a fixture repository's datastore,
+several engines, minutes rather than seconds — and it runs on demand, and
+eventually before a production release. Staging does not need it.
+
+When the first such test is written, two things are already decided. It gets an
+explicit opt-in rather than a `-short` check, because `-short` is subtractive and
+this tier is additive: the quick loop should not be the only way to avoid
+something that takes minutes. And the opt-in should be an environment variable
+checked by a helper rather than a build tag, for a reason worth remembering —
+**code behind a build tag is not compiled in a normal run, so it is not even
+syntax-checked**, and a tier that runs rarely is exactly the one that rots into
+not compiling. A build tag would need `go vet -tags heavy ./...` in CI to
+compensate; an env var needs nothing.
+
 ### Fixture User Repositories
 
 `testdata/user_repos/` holds small self-contained repositories standing in for
