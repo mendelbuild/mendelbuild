@@ -3,8 +3,11 @@ package web
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -28,22 +31,18 @@ import (
 
 // armBuildsFor says how each Arm's build stands against its branch.
 //
-// One ls-remote for the whole repository rather than one per Arm: the question
-// is asked on every render of the page, and answering it by fetching a working
-// tree per Arm would make a page cost a repository.
+// One ls-remote for the whole repository rather than one per Arm, and cached:
+// this is asked on every render of the Hop page, and the first version put a
+// network call to the user's git host on that path, so a slow GitHub made the
+// page slow and an unreachable one made it hang for as long as the request
+// lasted.
 //
 // A repository Mendel cannot reach yields unknown for every Arm, never stale.
 // Telling somebody to rebuild an Arm that is already current wastes a build and,
 // mid-experiment, changes what participants see for no reason at all.
 func (s *Server) armBuildsFor(ctx context.Context, exp *domain.Experiment) map[uuid.UUID]domain.ArmBuild {
 	builds := make(map[uuid.UUID]domain.ArmBuild, len(exp.Arms))
-
-	heads := map[string]string{}
-	if access, err := s.repoAccessFor(ctx, exp.ProjectID); err == nil {
-		if found, err := git.RemoteHeads(ctx, access.URL, access.AuthToken); err == nil {
-			heads = found
-		}
-	}
+	heads := s.branchHeadsFor(ctx, exp.ProjectID)
 
 	for _, arm := range exp.Arms {
 		head := ""
@@ -53,6 +52,113 @@ func (s *Server) armBuildsFor(ctx context.Context, exp *domain.Experiment) map[u
 		builds[arm.ID] = domain.DescribeArmBuild(arm, head)
 	}
 	return builds
+}
+
+// --- Branch heads, kept off the render path ---
+//
+// The same arrangement as the domain and experiment observations and for the
+// same reason: this costs a round trip to somebody else's git host, and a page
+// should not wait on one. See domain_observe_cache.go.
+//
+// It differs in one way, deliberately. Those caches return empty on a cold entry
+// and the page polls a status endpoint until it fills; this one looks
+// synchronously the first time, under a short timeout. The Hop page has no such
+// poll, so a cold entry would report every Arm unchecked until somebody
+// reloaded -- which is the state a reader is least able to act on, offered at
+// exactly the moment they came to look.
+
+const (
+	// branchHeadTTL is how long a look is reused. Short enough that a push made
+	// while somebody is working shows up without them wondering, long enough
+	// that reading a page repeatedly does not hammer the remote.
+	branchHeadTTL = 60 * time.Second
+
+	// branchHeadTimeout bounds the one look a reader waits for. Past it the
+	// answer is unknown, which is honest and is not stale -- the distinction
+	// that keeps a timeout from asking for a needless rebuild.
+	branchHeadTimeout = 5 * time.Second
+)
+
+type branchHeads struct {
+	heads      map[string]string
+	at         time.Time
+	refreshing bool
+}
+
+type branchHeadCache struct {
+	mu      sync.Mutex
+	entries map[uuid.UUID]branchHeads
+}
+
+// branchHeadsFor returns the project's branch heads, looking them up only when
+// there is nothing to serve.
+func (s *Server) branchHeadsFor(ctx context.Context, projectID uuid.UUID) map[string]string {
+	entry, cold, refresh := s.takeBranchHeadSlot(projectID)
+
+	if cold {
+		// Nothing to show, so this reader waits -- briefly, and for a bounded
+		// time. Every later reader is served from what this one fetched.
+		look, cancel := context.WithTimeout(ctx, branchHeadTimeout)
+		defer cancel()
+		return s.refreshBranchHeads(look, projectID)
+	}
+	if refresh {
+		// Something to show and it is going stale. The reader gets the previous
+		// answer, which is at most one TTL old, and the next one gets a fresh
+		// look. A staleness verdict a minute behind is not a category of error;
+		// a page that waits on a network call is.
+		go func() {
+			bg, cancel := context.WithTimeout(context.Background(), branchHeadTimeout)
+			defer cancel()
+			s.refreshBranchHeads(bg, projectID)
+		}()
+	}
+	return entry.heads
+}
+
+// takeBranchHeadSlot reports what is cached and who should go and look.
+//
+// cold means there is nothing to serve at all; refresh means what is there has
+// aged out. At most one caller is given either, so a page opened in three tabs
+// makes one request rather than three.
+func (s *Server) takeBranchHeadSlot(projectID uuid.UUID) (entry branchHeads, cold, refresh bool) {
+	s.branchHeads.mu.Lock()
+	defer s.branchHeads.mu.Unlock()
+
+	if s.branchHeads.entries == nil {
+		s.branchHeads.entries = make(map[uuid.UUID]branchHeads)
+	}
+	entry = s.branchHeads.entries[projectID]
+
+	if entry.refreshing || time.Since(entry.at) <= branchHeadTTL {
+		return entry, false, false
+	}
+	claimed := entry
+	claimed.refreshing = true
+	s.branchHeads.entries[projectID] = claimed
+	return entry, entry.at.IsZero(), !entry.at.IsZero()
+}
+
+// refreshBranchHeads looks, stores what it found, and returns it.
+//
+// A failed look is stored too, as an empty set with a fresh timestamp. Leaving
+// the entry cold would send every subsequent reader to a remote that is not
+// answering, one bounded wait each; storing it means one reader pays and the
+// rest are told "unchecked" immediately, which is the same answer sooner.
+func (s *Server) refreshBranchHeads(ctx context.Context, projectID uuid.UUID) map[string]string {
+	var heads map[string]string
+	if access, err := s.repoAccessFor(ctx, projectID); err == nil {
+		if found, err := git.RemoteHeads(ctx, access.URL, access.AuthToken); err == nil {
+			heads = found
+		} else {
+			log.Printf("experiment[%s]: could not read the repository's branches: %v", projectID, err)
+		}
+	}
+
+	s.branchHeads.mu.Lock()
+	defer s.branchHeads.mu.Unlock()
+	s.branchHeads.entries[projectID] = branchHeads{heads: heads, at: time.Now()}
+	return heads
 }
 
 // RefreshExperimentArms rebases each Arm onto main, rebuilds it, and -- when the

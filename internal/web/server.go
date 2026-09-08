@@ -45,6 +45,7 @@ type Server struct {
 	// experiments. See experiment_observe.go.
 	experimentObs experimentObservationCache
 	splitSamples  splitSampleCache
+	branchHeads   branchHeadCache
 }
 
 type contextKey string
