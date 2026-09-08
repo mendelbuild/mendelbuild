@@ -1,10 +1,10 @@
 # The Functional Area Matrix — Design
 
-Status: **steps 1 to 5 built; step 6 is what remains.** §9 records what is done
-and what building it corrected. The machinery is
-`internal/domain/functional_area.go`; the areas are in `functional_area_domain.go`
-and `functional_area_deploy.go`; `DomainReadiness` is one assessment of it, and
-the demo and production gates decline with its own sentences.
+Status: **built.** Four functional areas, twenty-two conditions, both ladders and
+every deploy gate going through one mechanism. §9 records what each step
+corrected. §4.2 is generated from the catalogue and checked by a test, so this
+document cannot drift from the code it describes. What remains is listed in §5
+and is additions rather than architecture.
 
 Companion to [13_live_traffic_experiments.md](13_live_traffic_experiments.md)
 and [16_experiment_routing.md](16_experiment_routing.md), which between them
@@ -407,51 +407,88 @@ user picks which kind of experiment they are running, and one row implies Mendel
 derives it from what the Variation declared. §13 is explicit that the tier is
 classified, never chosen.
 
-### 4.2 The shared conditions
+### 4.2 The matrix
 
-**A condition used by exactly one functional area does not earn a place in the
-table** — it is a list under that row, and §5 has those. What a table is for is
-the sharing, so this is the sharing. Transposed so the areas fit across:
+**Generated from the catalogue.** This table is rendered by
+`Catalogue.MatrixMarkdown` and checked by `TestThePlanMatchesTheCatalogue`, so a
+condition added in Go without this document updating fails the suite. Regenerate
+with:
 
-| Functional Area Condition | Evidence | Remedy | Code | Demo | Prod | Named | Experiment | Enforce |
-|---|---|---|:-:|:-:|:-:|:-:|:-:|:-:|
-| Repository URL is set | asked | user | ● | ● | ● | | ● | |
-| A push token is stored | asked | user | ● | ● | ● | | ● | |
-| The encryption key is configured | observed | user | | ● | ● | | ● | ● |
-| A deployment channel is configured | asked | user | | ● | ● | ● | ● | |
-| The channel's credentials are stored | asked | user | | ● | ● | ● | ● | |
-| The channel's combination is supported | derived | unavailable | | ● | ● | | ● | |
-| Every `secret` requirement has a value | declared | user | | ● | ● | | ● | |
-| Every `acknowledgement` is confirmed | declared | user | | ● | ● | | ● | |
-| The production path is validated | probed | mendel | | | ● | | ● | |
-| The deployment's URL is registrable | derived | unavailable | | ● | ● | | | |
-| A base domain is set | asked | user | | | | ● | ● | |
-| The certificate is issued | observed | elsewhere | | | | ● | ● | |
-| The datastore supports what this experiment does | probed | unavailable | | | | | ● | ● |
+```bash
+MENDEL_UPDATE_MATRIX=1 go test ./internal/domain/ -run TestThePlanMatchesTheCatalogue
+```
 
-● required. Every marked cell is required and every one of them is true or
-false; there is no operator in the table beyond *and*, and no third truth value
-in a cell (D33, D51).
+That is the same discipline `schema/full.sql` is under, and it is here for the
+same reason: a document describing code it is not connected to drifts, and drift
+in *this* document means a reader reasoning about a matrix that no longer
+exists. The design is about gates saying one thing and pages saying another; a
+plan saying a third would be the joke writing itself.
+
+● required ○ a warning (§4.2.1), which does not gate
+
+<!-- BEGIN GENERATED MATRIX -->
+| Functional Area Condition | Evidence | Remedy | Declared | Satisfied | demo | experiment | named-demos | production |
+|---|---|---|---|---|:-:|:-:|:-:|:-:|
+| That combination is one Mendel can deploy | derived | unavailable | project | channel | ● |  |  | ● |
+| Choose how this project deploys | asked | user | project | project | ● |  |  | ● |
+| Store the credentials that channel needs | asked | user | channel | project | ● |  |  | ● |
+| The deployment has a URL a provider will accept | derived | unavailable | deployment | deployment | ● |  |  | ● |
+| Configure the encryption key | observed | user | installation | installation | ● |  |  | ● |
+| Store a token Mendel can push with | asked | user | project | project | ● |  |  | ● |
+| Give Mendel a repository to write into | asked | user | project | project | ● |  |  | ● |
+| Confirm the setup steps done elsewhere | declared | user | variation | deployment | ● |  |  | ● |
+| Supply the values this code needs | declared | user | variation | project | ● |  |  | ● |
+| Prove the demo path works | probed | mendel | channel | channel | ● |  |  |  |
+| Prove the production path works | probed | mendel | channel | channel |  |  |  | ● |
+| A controller that can match an experiment cookie | probed | either | channel | channel |  | ● |  |  |
+| Cluster can route per experiment arm | probed | either | channel | channel |  | ● |  |  |
+| Give Mendel a domain you control | asked | user | project | project |  |  | ● |  |
+| Certificate issued | observed | elsewhere | project | project |  |  | ● |  |
+| Create the certificate record | observed | user | project | project |  |  | ● |  |
+| Mendel reserves an address | derived | mendel | project | project |  |  | ● |  |
+| Create the wildcard A record | observed | user | project | project |  |  | ● |  |
+| A non-production datastore to verify against | asked | user | project | project |  | ● |  |  |
+| That datastore is reachable | probed | user | project | project |  | ● |  |  |
+| Production answers at a name | observed | user | project | project |  | ● |  |  |
+| That name serves https | observed | user | project | project |  | ○ |  |  |
+<!-- END GENERATED MATRIX -->
+
+Two rows of the six this document describes are not in it. **Code** — write code
+for a Variation — and **Enforce** — enforce Arm containment — are designed and
+not built, so they have no conditions in the catalogue and correctly do not
+appear. That absence is the table doing its job: an earlier draft of this
+section listed all six as though they existed.
+
+Every marked cell is required and every one of them is true or false; there is
+no operator in the table beyond *and*, and no third truth value in a cell (D33,
+D51).
+
 
 Three things this table says that the prose could not.
 
-**The top eight rows are the reason to build this at all.** Repository, push
-token, encryption key, channel, credentials, combination, secrets and
-acknowledgements are required by three or four rows each, and are today checked
-in three or four unrelated places, in different words, at different moments.
-Those are the duplicate implementations the matrix removes, and they are the
-only reason a table beats six separate checklists.
+**The nine rows at the top are the reason to build this at all.** Repository,
+push token, encryption key, channel, combination, credentials, secrets,
+acknowledgements and the deploy URL are required by *demo* and *production*
+alike, and each was checked in its own words in its own place until step 4.
+Those are the duplicate implementations the matrix removed, and they are the
+only reason a table beats a checklist per area.
 
-**Enforce is a row, not an asterisk.** It overlaps the experiment row in two
-cells out of thirteen. Two rows sharing two cells are not one row with a
-severity on it — which is how the "absence that narrows" question first got
-answered, before §3.5 found the better reason.
+**Demo and production differ by one cell each.** Which validation they need, and
+nothing else — a thing a table makes obvious and separate checklists never
+would.
 
-**The two domain cells on the experiment row are a finding.** Nothing in §13 or
-§16 said a live experiment requires a domain the user controls, and drawing the
-table made the question unavoidable. The cells are marked required, but not for
-the reason that first suggested them, and the difference is the whole value of
-having asked.
+**The experiment row shares nothing with the other three.** Not one cell. That
+is worth noticing rather than assuming: it says the cluster-side conditions are
+genuinely a different set from the deploy-side ones, and it is the evidence that
+*Enforce*, when it is built, belongs as a fourth row rather than as a severity
+on this one — the same reading §3.5 arrived at from the other direction.
+
+**The domain cells that are not on the experiment row are a finding.** An
+earlier draft marked base domain and certificate as required by the experiment
+row. They are not: what a live experiment needs is *production answering at a
+name*, which is its own condition and appears above. Nothing in §13 or §16 said
+an experiment requires a domain the user controls, and drawing the table made
+the question unavoidable.
 
 The reason offered first was cookies: assignment worked by a cookie, a cookie is
 scoped to a host. That turned out to be wrong twice over — a host-only cookie on
@@ -531,81 +568,49 @@ and this is the property that keeps it from becoming its own thing to maintain.
 
 ---
 
-## 5. The single-row conditions
+## 5. The conditions that are not built yet
 
-The table above is the sharing. These are the rest, listed under the one row
-that needs each, and stated as totals so that none of them can go undefined.
-Audited from the tree at `d24ef90` and after; "Today" is how the condition is
-enforced now, which is the inconsistency this replaces.
+§4.2 is now generated, and it lists every condition that exists. What is left to
+say is what does not — the conditions this design named and the catalogue does
+not carry, so that a reader can tell an omission from a decision.
 
-### Code
+**Two functional areas have no conditions at all.** *Write code for a Variation*
+would carry the Anthropic key, the bounded generation run, and the three
+onboarding states — a strategy, approved objectives, an approved roadmap — which
+are today a `switch` in `OnboardingLifecycle` producing prose per state rather
+than an enumerable list (O20 asks whether forcing them into the catalogue loses
+something that ribbon does well). *Enforce Arm containment* would carry the
+privileged datastore credential from §13 §15, and is blocked on the enforcement
+work rather than on anything here.
 
-| Condition | Evidence | Remedy | Today |
-|---|---|---|---|
-| An API key is available to generate with | asked | user | Excluded from `IsReady()` on purpose |
-| A generation run is bounded before it starts | observed | user | `runBudget`, which always bounds — see the warning in §4.2.1 |
-| A strategy exists | derived | user | onboarding ribbon `switch` |
-| Objectives are approved | derived | user | onboarding ribbon `switch` |
-| A roadmap is approved | derived | user | onboarding ribbon `switch` |
-
-### Demo
-
-| Condition | Evidence | Remedy | Today |
-|---|---|---|---|
-| The demo path is validated | probed | mendel | `IsDemoValidated`, four inline checks |
-
-### Named
-
-Every row here exists today, correctly, in `DomainReadiness`, and is listed to
-show what a well-formed functional area looks like when the whole ladder is
-present.
-
-| Condition | Evidence | Remedy | Today |
-|---|---|---|---|
-| A static IP is reserved | derived | mendel | ladder step 2 |
-| The wildcard A record resolves to it | observed | user | ladder step 3 |
-| The challenge records resolve | observed | user | ladder step 4, **fan-out by count** |
-
-### Experiment
-
-The longest list, and the one where §3.5's restatement does the most work: every
-condition below beginning *"any migration"* or *"whatever this experiment"* is
-true of a presentation-only experiment, which is why there is one row and not
-two.
+**Within the experiment row, the conditions from §16 that have no evaluator
+yet:**
 
 | Condition | Evidence | Remedy | Source |
 |---|---|---|---|
 | The platform can route by Assignment Unit | declared | unavailable | §13 §6.3 — Cloud Run cannot |
-| A Gateway API controller that can match is installed | probed | **either** | §16 §2.3, §2.5, D22a, D50 |
-| Its `GatewayClass` is `Accepted` | probed | mendel | §16 §2.3 |
-| That `GatewayClass` can match what assignment carries | probed | **either** | §16 O23 — `Accepted` is not `capable` |
 | The Assignment Unit and its key are declared | declared | user | `.mendel/experiment.json` |
 | The key is edge-extractable | declared | user | §16 D30 |
 | The Variation changes one deployable unit | probed | user | §16 D27 |
 | An effect size, duration and stopping rule are set | asked | user | `NotReadyToStart` |
-| The withdrawal dissonance is acknowledged | asked | user | typed phrase, `requirement_acknowledgements` shape |
+| The withdrawal dissonance is acknowledged | asked | user | typed phrase |
 | The allocation totals 100 with one mainline | derived | user | `ValidateAllocation` |
-| Durable writes agree with the Assignment Unit | derived | user | §13 §5.1 — vacuous unless the unit is `request` |
 | Any migration it declares has both an up and a down | declared | user | "an Arm that cannot be withdrawn cannot be run" |
 | Any migration it declares is namespaced | declared | user | `mendel_exp_` |
-| Schema changes can be proved additive without touching production | probed | user | §3.5 — the worked example |
-| Whatever this experiment changes is purely additive | probed | user | the affirmative judgment |
+| Whatever it changes is purely additive | probed | user | the affirmative judgment |
 | Whatever it touches exists and has an identity | probed | unavailable | else the archive cannot be restored |
 | The verification datastore agrees with production | probed | user | else the proof is about the wrong schema |
-| Nothing has drifted since admission | probed | elsewhere | re-checked at apply |
 | The projected archive size is under the ceiling | derived | unavailable | §13 §9 |
 
-### Enforce
+Several of these are enforced today, correctly, by `experiment.Applier.Admit`
+and `Experiment.NotReadyToStart` — but *per experiment*, at admission, which is
+a different question from whether a project can run one at all. The area in
+§4.2 answers the project-level question; folding in the per-experiment ones
+means Assess taking a subject finer than a project, which O25 records.
 
-| Condition | Evidence | Remedy | Source |
-|---|---|---|---|
-| A privileged datastore credential is available | asked | user | §13 §15 |
-
-### Everywhere
-
-One condition applies to every row and is left out of the table because a column
-of solid dots carries no information: **the project exists and the reader may
-see it.** Worth stating once so that nobody adds it as a cell.
+**Everywhere.** One condition applies to every row and is left out of the table
+because a column of solid dots carries no information: **the project exists and
+the reader may see it.** Worth stating once so that nobody adds it as a cell.
 
 
 ## 6. What is most likely to break this if it is built too early
@@ -743,6 +748,14 @@ does not decompose cleanly: its `switch` distinguishes "drafting" from "the
 draft failed" from "no objectives yet" with three different sentences for what is
 arguably one condition. Forcing it into the catalogue may lose something the
 ribbon does well. Listed, not committed.
+
+**O25 — Can `Assess` take a subject finer than a project?** §5 lists thirteen
+experiment conditions that are enforced today by `Applier.Admit` and
+`NotReadyToStart`, per experiment, at admission. The area in §4.2 answers a
+project-level question — can this project run an experiment at all — and folding
+the per-experiment ones in means an assessment about a particular experiment,
+which `Observations` can carry but nothing yet asks for. The scopes are already
+declared for it; what is missing is a caller with a reason.
 
 **O24 — What happens to an input request when its condition is satisfied some
 other way?** Step 5 stopped short of filing input requests for `yourmove` steps
@@ -1038,18 +1051,59 @@ implementation without collision. Step 6 is the merge point.
    something other than the request being answered, and that question is worth
    its own pass rather than a paragraph here (O24).
 
-6. **The Experiment and Enforce rows**, including everything designed and not
-   built as `unimplemented`. This is the first time the catalogue carries a
-   functional area that is not available, and the first time `either` and
-   `offered` have a real user — §16 D50's controller install being both. O21 is
-   settled the other way from how it was first answered: *Named* **is** a
-   prerequisite, because one Gateway serves the namespace and the hostname is how
-   deployments are told apart on it.
+6. **The Experiment row.** — **done.** `experiment_readiness.go` was a second
+   ladder with its own observation struct, its own state vocabulary aliased onto
+   the domain ladder's, and its own blocker list; `ExperimentReadiness` is now
+   one assessment of an `experiment` area. `either` has its real user in the
+   controller install, and nothing authors `Advisory` any more.
 
-   Two pieces of §16's own build order gate this rather than the reverse: Envoy
-   Gateway has to be installed for anything cookie-carried to run at all, and the
-   bucket path needs codegen to emit the middleware and the deploy path to inject
-   the salt.
+   The two decisions this ladder prompted were tested by folding it in, and both
+   held. **The warning mechanism (D52) did not exist and does now**: an area
+   declares `Warns` beside `Requires`, an unsatisfied warning does not make the
+   area unavailable, and https is the one member. **The datastore steps became
+   totals (D51)** and needed no flag: an experiment that changes no schema has
+   nothing to prove.
+
+   Three things fell out.
+
+   **`Scope`'s zero value was a real scope.** Five domain conditions shipped
+   with scopes nobody had written, which happened to be the coarsest and so
+   passed the coherence check vacuously. The zero value is invalid now, and the
+   check caught all five on the first build. A field that is wrong by omission
+   and right by accident is worse than one that fails.
+
+   **An area can be unavailable purely because nothing has been checked**, and it
+   still owes the reader a reason. An evaluator has nothing to say about the case
+   where Mendel did not look, so the reason is derived from the state in
+   `Assess` rather than left to each evaluator to remember — which makes
+   "unavailable implies a stated reason" structural instead of a convention.
+
+   **One rung stopped vanishing.** "That datastore is reachable" was omitted
+   entirely for a presentation-only experiment; it now renders as done, saying it
+   is not needed — which is what the datastore step one line above it already
+   did, and what the challenge-records step's own comment argues for: a ladder
+   that changes length tells the reader the shape of the task changed when it did
+   not. That argument does not care which direction the length moves in. One test
+   assertion changed with it, deliberately.
+
+7. **The plan's table, generated.** — **done.** `Catalogue.MatrixMarkdown`
+   renders §4.2 and `TestThePlanMatchesTheCatalogue` fails when it is stale,
+   with `MENDEL_UPDATE_MATRIX=1` to rewrite it. Same discipline as
+   `schema/full.sql` against the migrations, and here for the same reason: this
+   document is about gates and pages saying different things, and a plan saying
+   a third would be the joke writing itself.
+
+   Generating it immediately corrected two claims. The document said the
+   experiment row required a base domain and a certificate; it requires
+   *production answering at a name*, which is its own condition. And it listed
+   six areas as though all six existed, where two have no conditions at all —
+   §5 now says which and why.
+
+8. **What is left**, and it is additions rather than architecture. The *Code*
+   and *Enforce* rows have no conditions yet; thirteen experiment conditions are
+   enforced per-experiment at admission rather than per-project here (O25); and
+   `yourmove` steps still do not file input requests (O24). §5 has the list.
+
 
 Steps 1 and 2 are the ones that decide whether any of the rest is worth
 building, for the same reason §13 §16 put migration non-interference first: they
