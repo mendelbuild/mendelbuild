@@ -146,21 +146,221 @@
         </div>
         {{end}}
 
-        {{/* Where a live experiment is started from. The controls themselves are
-             project-scoped -- a cluster, a domain, a datastore -- so they live in
-             settings; but this is the page someone is on when they decide they
-             want one, and a feature nothing links to is a feature nobody finds. */}}
+        {{/* The experiment lives here, on the Hop whose Variations are its Arms.
+             What the project needs before any experiment can run -- a cluster, a
+             domain, a datastore -- is still project-scoped and still on the
+             settings tab; only the blockers it produces are repeated here, from
+             the same conditions, so the two can never disagree about why
+             something is refused. */}}
         <div class="card">
-            <div class="card-head"><h2 class="card-title">Live traffic</h2></div>
+            <div class="card-head">
+                <h2 class="card-title">Live traffic</h2>
+                {{with .Experiment}}<span class="badge badge-quiet">{{.Experiment.Status}}</span>{{end}}
+            </div>
+
+            {{if not .Experiment}}
             <p class="card-note">
                 This hop's variations can be served side by side to real visitors,
-                each visitor staying with one of them. What that needs of the
-                project &mdash; and the controls to start it &mdash; are on the
-                experiments tab.
+                each visitor staying with whichever one they were given. Mainline is
+                the control; each variation gets an arm.
             </p>
-            <div class="actions">
-                <a class="btn btn-secondary" href="/p/{{$.ProjectID}}/experiments">Live-traffic experiments</a>
+            <form method="POST" action="/p/{{$.ProjectID}}/experiments/create">
+                <input type="hidden" name="hop_id" value="{{.Hop.ID}}">
+                <details class="disclosure">
+                    <summary>What it will be registered with</summary>
+                    <div class="disclosure-body">
+                        {{/* Asked before the experiment exists, not after it has run.
+                             Choosing a stopping point once the data is in front of you
+                             is what inflates the false-positive rate, and Mendel checks
+                             continuously rather than once. */}}
+                        <div class="field">
+                            <label for="mde">Smallest effect worth detecting</label>
+                            <span class="hint">Sets how long this has to run. Without one there is
+                                no way to tell a null result from an underpowered one.</span>
+                            <input class="input" id="mde" name="mde" value="0.02">
+                        </div>
+                        <div class="field">
+                            <label for="duration_hours">Planned duration (hours)</label>
+                            <span class="hint">The expected hosting spend as well as the stopping point.</span>
+                            <input class="input" id="duration_hours" name="duration_hours" value="336">
+                        </div>
+                        <div class="field">
+                            <label for="stopping_rule">Stopping rule</label>
+                            <select id="stopping_rule" name="stopping_rule">
+                                <option value="fixed_horizon">Fixed horizon</option>
+                                <option value="sequential">Sequential</option>
+                            </select>
+                        </div>
+                    </div>
+                </details>
+                <div class="actions">
+                    <button type="submit" class="btn btn-secondary">Set up an experiment</button>
+                </div>
+            </form>
+            {{else}}
+            {{with .Experiment}}
+            {{$ev := .}}
+
+            {{/* What the project still needs. The same strings the settings tab
+                 renders, from the same conditions, so a reader is never told two
+                 different reasons for the same refusal. */}}
+            {{if .Checking}}
+            <p class="card-note">Mendel is still checking what this project can do. The start
+                button appears once it knows.</p>
+            {{else if .Blockers}}
+            <div class="callout callout-waiting">
+                <p class="callout-title">Not yet, because of the project rather than this hop</p>
+                <ul class="prereqs-list">{{range .Blockers}}<li>{{.}}</li>{{end}}</ul>
+                <p class="callout-body">
+                    <a href="/p/{{$.ProjectID}}/experiments">Live-traffic experiment settings</a>
+                </p>
             </div>
+            {{end}}
+
+            {{if .Failure}}
+            {{/* What happened, in the terms the button was pressed in. The cause is
+                 behind a disclosure: a kubectl error tells the person running an
+                 experiment nothing they can act on, and nothing about what became
+                 of their traffic -- which is what they want to know first. */}}
+            <div class="callout callout-failure">
+                <p class="callout-title">{{.Failure.Summary}}</p>
+                <p class="callout-body">{{.Failure.Effect}}</p>
+                {{if .Failure.Detail}}
+                <details class="disclosure">
+                    <summary>Technical detail</summary>
+                    <div class="disclosure-body"><p class="pre-wrap mono">{{.Failure.Detail}}</p></div>
+                </details>
+                {{end}}
+            </div>
+            {{end}}
+
+            {{if .Experiment.InProgress}}
+            <p class="card-note">
+                {{if eq (printf "%v" .Experiment.Status) "starting"}}
+                Building an image for each arm and applying the routing. A few minutes;
+                production keeps serving mainline until the last step.
+                {{else}}
+                Returning traffic to mainline, then removing the arms.
+                {{end}}
+            </p>
+            {{end}}
+
+            <div class="table-scroll">
+            <table class="table table-ruled">
+                <thead><tr>
+                    <th>Arm</th><th class="table-num">Share</th><th>Build</th><th></th>
+                </tr></thead>
+                <tbody>
+                {{range .Arms}}
+                <tr>
+                    <td>
+                        {{.Name}}{{if .Mainline}} <span class="badge badge-quiet">control</span>{{end}}
+                        <div class="text-xs subtle">
+                            {{$ev.CookieName}}={{.Arm.Slug}}
+                        </div>
+                    </td>
+                    <td class="table-num">{{.Arm.AllocationWeight}}%</td>
+                    <td>
+                        {{/* never-built, current, stale and unknown are four states and
+                             not two. An arm Mendel could not check is not an arm that is
+                             up to date, and showing the first as the second is how
+                             somebody concludes their change is live when it is not. */}}
+                        <span class="badge badge-{{if eq (printf "%v" .Build.Freshness) "stale"}}warning{{else if eq (printf "%v" .Build.Freshness) "current"}}success{{else}}quiet{{end}}">
+                            {{.Build.Freshness}}
+                        </span>
+                        <div class="text-xs subtle">{{.Build.Detail}}</div>
+                    </td>
+                    <td>
+                        {{if not .Mainline}}
+                        <form method="POST"
+                              action="/p/{{$.ProjectID}}/experiments/{{$ev.Experiment.ID}}/arms/{{.Arm.ID}}/refresh">
+                            <button type="submit" class="btn btn-secondary">Rebase &amp; rebuild</button>
+                        </form>
+                        {{end}}
+                    </td>
+                </tr>
+                {{if .Reach}}
+                <tr class="record-alt">
+                    <td colspan="4">
+                        <span class="text-xs subtle">See this arm deliberately:</span>
+                        {{template "copyable" .Reach}}
+                    </td>
+                </tr>
+                {{end}}
+                {{end}}
+                </tbody>
+            </table>
+            </div>
+
+            <p class="card-note text-sm">
+                Every response from the experiment names its arm in the
+                <code>{{.ArmHeaderName}}</code> header, so a browser's network panel or a
+                single <code>curl -sI</code> answers &ldquo;which version am I getting&rdquo;
+                without changing anything about the app.
+            </p>
+
+            {{if .Running}}
+            <div class="actions">
+                <form method="POST" action="/p/{{$.ProjectID}}/experiments/{{.Experiment.ID}}/sample">
+                    <button type="submit" class="btn btn-secondary">Sample the split</button>
+                </form>
+                <form method="POST" action="/p/{{$.ProjectID}}/experiments/{{.Experiment.ID}}/refresh">
+                    <button type="submit" class="btn btn-secondary">Rebase &amp; rebuild every arm</button>
+                </form>
+            </div>
+            {{end}}
+
+            {{with .Sample}}
+            {{/* What was seen, never what Mendel did. "Applied the routing" is not
+                 an answer to "is traffic being split". */}}
+            <div class="callout {{if .Err}}callout-failure{{else}}callout-neutral{{end}}">
+                <p class="callout-title">{{.Verdict}}</p>
+                {{if .Shares}}
+                <table class="table">
+                    <thead><tr><th>Arm</th><th class="table-num">Allocated</th><th class="table-num">Served</th></tr></thead>
+                    <tbody>
+                    {{range .Shares}}
+                    <tr>
+                        <td><code>{{.Slug}}</code></td>
+                        <td class="table-num">{{.Expected}}%</td>
+                        <td class="table-num">{{.Observed}} of {{$ev.Sample.Total}}</td>
+                    </tr>
+                    {{end}}
+                    </tbody>
+                </table>
+                {{end}}
+                {{if .Failed}}<p class="callout-body">{{.Failed}} request(s) did not complete.</p>{{end}}
+            </div>
+            {{end}}
+
+            <div class="actions">
+                {{if not .Experiment.InProgress}}
+                <form method="POST"
+                      action="/p/{{$.ProjectID}}/experiments/{{.Experiment.ID}}/{{if .Running}}stop{{else}}start{{end}}">
+                    <button type="submit" class="btn {{if .Running}}btn-danger{{else}}btn-primary{{end}}"
+                            {{if not (or .Running .Ready)}} disabled{{end}}>
+                        {{if .Running}}Stop and return everyone to mainline{{else}}Start taking live traffic{{end}}
+                    </button>
+                </form>
+                {{end}}
+                <a class="btn btn-secondary"
+                   href="/p/{{$.ProjectID}}/experiments/{{.Experiment.ID}}/live.json">This experiment as JSON</a>
+            </div>
+
+            {{if .SampleCommand}}
+            <details class="disclosure">
+                <summary>Sampling it yourself</summary>
+                <div class="disclosure-body">
+                    <p class="text-sm">The button above does this. It is here because knowing how
+                        is useful in a script, and because a check you cannot reproduce outside the
+                        product is a check you have to take on trust.</p>
+                    {{template "copyable" .SampleCommand}}
+                </div>
+            </details>
+            {{end}}
+
+            {{end}}
+            {{end}}
         </div>
 
         <details class="disclosure">

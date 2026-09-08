@@ -44,6 +44,7 @@ type Server struct {
 	// What Mendel last saw of each project's readiness to run live-traffic
 	// experiments. See experiment_observe.go.
 	experimentObs experimentObservationCache
+	splitSamples  splitSampleCache
 }
 
 type contextKey string
@@ -683,6 +684,21 @@ func (s *Server) setupRoutes() {
 		r.Post("/experiments/create", s.handleCreateExperiment)
 		r.Post("/experiments/{experimentID}/start", s.handleStartExperiment)
 		r.Post("/experiments/{experimentID}/stop", s.handleStopExperiment)
+
+		// Bringing arms up to date, at both scopes: one arm when one Variation
+		// changed, all of them when mainline moved and every arm is now being
+		// compared against a control it no longer contains.
+		r.Post("/experiments/{experimentID}/refresh", s.handleRefreshExperiment)
+		r.Post("/experiments/{experimentID}/arms/{armID}/refresh", s.handleRefreshExperimentArm)
+
+		// Sampling the split, which is the check nothing inside Mendel can
+		// stand in for: it is the only one that exercises the edge gateway, the
+		// proxy, the weighted fallback and the cookie together.
+		r.Post("/experiments/{experimentID}/sample", s.handleSampleSplit)
+
+		// The same picture as the page, for a reader who would rather have the
+		// data. Project-scoped and authenticated, unlike /version.
+		r.Get("/experiments/{experimentID}/live.json", s.handleExperimentJSON)
 		r.Get("/domain/readiness", s.handleDomainReadiness)
 		r.Post("/domain", s.handleSaveProjectDomain)
 		r.Post("/domain/named-demos", s.handleSetNamedDemos)

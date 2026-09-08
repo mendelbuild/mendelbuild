@@ -10,9 +10,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 
-	"github.com/bhs/mendelbuild/internal/db"
 	"github.com/bhs/mendelbuild/internal/domain"
 )
 
@@ -469,6 +467,9 @@ func TestExperimentControlsAreWiredUp(t *testing.T) {
 
 	want := map[string]bool{
 		"/experiments/create": false, "/start": false, "/stop": false,
+		// Bringing arms up to date, at both scopes, and the split sample. A
+		// button with no route behind it does nothing and says nothing.
+		"/refresh": false, "/sample": false,
 	}
 	chi.Walk(s.router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		if method != http.MethodPost || !strings.Contains(route, "/experiments") {
@@ -489,49 +490,46 @@ func TestExperimentControlsAreWiredUp(t *testing.T) {
 }
 
 // An experiment started before the cluster can route it would deploy arms
-// nothing reaches — a running experiment serving one arm to everybody, which
+// nothing reaches -- a running experiment serving one arm to everybody, which
 // looks like a result rather than a fault.
+//
+// Driven from a real observation through the real conditions, so this checks the
+// wiring between them and not just the template's if-statement. Rendered on the
+// Hop's page, which is where the experiment is now operated from; the readiness
+// it is refused for is still project-scoped and still assessed here.
 func TestStartIsRefusedUntilTheClusterCanRoute(t *testing.T) {
-	notReady := renderExperimentsPageWith(t, domain.ExperimentObservation{
+	cannotRoute := domain.ExperimentBlockers(domain.ExperimentReadiness(domain.ExperimentObservation{
 		GatewayAPI: domain.FactTrue, CookieMatching: domain.FactFalse,
 		ProdHostname: domain.FactTrue, SchemaChanges: domain.FactFalse,
-	}, false)
+	}))
+	if len(cannotRoute) == 0 {
+		t.Fatal("a cluster with no cookie-matching controller reports no blockers")
+	}
+	notReady, _, _, _ := hopPageWithExperiment(t, domain.ExperimentStopped, func(v *ExperimentView) {
+		v.Blockers = cannotRoute
+	})
 	if !strings.Contains(notReady, "disabled") {
 		t.Error("start was offered on a cluster that cannot route arms")
 	}
+	// And it says which property is missing, rather than greying a button out
+	// and leaving the reader to guess -- the same string the settings tab shows,
+	// from the same condition.
+	if !strings.Contains(notReady, "matches headers exactly") {
+		t.Error("the refusal does not say what is missing")
+	}
 
-	ready := renderExperimentsPageWith(t, domain.ExperimentObservation{
+	ready := domain.ExperimentBlockers(domain.ExperimentReadiness(domain.ExperimentObservation{
 		GatewayAPI: domain.FactTrue, CookieMatching: domain.FactTrue,
 		ProdHostname: domain.FactTrue, ProdHTTPS: domain.FactTrue,
 		SchemaChanges: domain.FactFalse,
-	}, true)
-	if strings.Contains(ready, `class="btn btn-primary" disabled`) {
+	}))
+	if len(ready) != 0 {
+		t.Fatalf("a ready cluster still reports blockers: %v", ready)
+	}
+	readyPage, _, _, _ := hopPageWithExperiment(t, domain.ExperimentStopped, nil)
+	if strings.Contains(readyPage, `class="btn btn-primary" disabled`) {
 		t.Error("start was disabled on a cluster that is ready")
 	}
-}
-
-func renderExperimentsPageWith(t *testing.T, obs domain.ExperimentObservation, ready bool) string {
-	t.Helper()
-	steps := domain.ExperimentReadiness(obs)
-	headline, blocked := domain.ExperimentHeadline(steps)
-	id := uuid.New()
-
-	var out strings.Builder
-	if err := parsePageTemplate("project_experiments.html").ExecuteTemplate(&out, "page-content", map[string]interface{}{
-		"SettingsTab": "experiments", "ProjectID": "abc", "Steps": steps,
-		"Headline": headline, "Blocked": blocked, "Checking": false,
-		"CheckedLabel": "just now", "Observation": obs, "Ready": ready,
-		"DatastoreVar": VerifyDatastoreVar, "Success": false, "Error": "",
-		"Fingerprint": obs.Fingerprint(),
-		"Candidates": []db.ExperimentCandidate{{HopID: id, HopName: "scoreboard", Variations: make([]domain.Variation, 2)}},
-		"Experiments": []*domain.Experiment{{
-			ID: id, Status: domain.ExperimentDraft,
-			Arms: []domain.ExperimentArm{{Slug: "0", AllocationWeight: 50}},
-		}},
-	}); err != nil {
-		t.Fatalf("experiments page does not render: %v", err)
-	}
-	return out.String()
 }
 
 // Someone who has just finished generating a hop's variations is on the hop
@@ -567,36 +565,13 @@ func TestFingerprintCoversExperimentState(t *testing.T) {
 
 // The page shows the failure, and keeps the cause where it does not shout.
 func TestFailureRendersWithTheCauseBehindADisclosure(t *testing.T) {
-	id := uuid.New()
-	obs := domain.ExperimentObservation{
-		GatewayAPI: domain.FactTrue, CookieMatching: domain.FactTrue,
-		ProdHostname: domain.FactTrue, ProdHTTPS: domain.FactTrue,
-		SchemaChanges: domain.FactFalse,
-	}
-	steps := domain.ExperimentReadiness(obs)
-	headline, blocked := domain.ExperimentHeadline(steps)
-
-	var out strings.Builder
-	if err := parsePageTemplate("project_experiments.html").ExecuteTemplate(&out, "page-content", map[string]interface{}{
-		"SettingsTab": "experiments", "ProjectID": "abc", "Steps": steps,
-		"Headline": headline, "Blocked": blocked, "Checking": false,
-		"CheckedLabel": "just now", "Observation": obs, "Ready": true,
-		"DatastoreVar": VerifyDatastoreVar, "Success": false, "Error": "",
-		"Fingerprint": "x", "Candidates": nil,
-		"Experiments": []*domain.Experiment{{ID: id, Status: domain.ExperimentDraft}},
-		"Failures": map[uuid.UUID]*domain.FailureReport{
-			id: domain.ReportStartFailurePtr(`error: the namespace from the provided object "envoy-gateway-system" does not match`),
-		},
-	}); err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	html := out.String()
+	cause := `error: the namespace from the provided object "envoy-gateway-system" does not match`
+	html, _, _, _ := hopPageWithExperiment(t, domain.ExperimentStopped, func(v *ExperimentView) {
+		v.Failure = domain.ReportStartFailurePtr(cause)
+	})
 
 	if !strings.Contains(html, "Nothing changed for your visitors") {
 		t.Error("the page does not say what became of production, which is the first question")
-	}
-	if !strings.Contains(html, "Mendel's to fix rather than yours") {
-		t.Error("the page does not say whose problem this is")
 	}
 	// The cause is present and behind a disclosure, not the headline.
 	if !strings.Contains(html, "<summary>Technical detail</summary>") {

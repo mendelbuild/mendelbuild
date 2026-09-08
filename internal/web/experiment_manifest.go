@@ -82,6 +82,49 @@ type ExperimentDeployment struct {
 	Secure bool
 }
 
+// ArmHeader and ExperimentHeader name the Arm a response came from, on the
+// response itself.
+//
+// The cookie was always in every response and the product never mentioned it,
+// so the first person to run an experiment could not tell which version he was
+// being served and resorted to giving each Arm a different background colour to
+// distinguish them. A response header answers it directly:
+//
+//	curl -sI https://app.example.com/ | grep -i x-mendel
+//
+// On the response rather than in the application, because a user's repository
+// should need no awareness of Mendel at all: the gateway is already rewriting
+// these responses to set the assignment cookie, and adding two headers there
+// costs the application nothing and works for every Arm of every project without
+// a line of anybody's code.
+//
+// Not a secret. An Arm slug names a Variation of the user's own making, and a
+// visitor who reads it learns that they are in an experiment -- which is
+// something an experiment's participants are generally entitled to know, and
+// which the assignment cookie already told anyone who looked.
+const (
+	ArmHeader        = "X-Mendel-Arm"
+	ExperimentHeader = "X-Mendel-Experiment"
+)
+
+// armHeaders renders the filter that stamps an Arm's identity on its responses.
+//
+// Rendered for the cookie-matched rules and for the weighted fallback alike,
+// because a visitor's first request is served by the fallback and is exactly the
+// one somebody checking the split is looking at. A header present on every
+// request but the first would be a header nobody could rely on.
+func (d ExperimentDeployment) armHeaders(slug, indent string) string {
+	// Quoted, always. Mainline's slug is "0", which YAML reads as the integer
+	// zero -- and Gateway API's value field is a string, so the CRD rejects the
+	// object. The whole route fails to apply and no Arm is matched at all, over
+	// the one Arm whose name happens to look like a number.
+	return fmt.Sprintf(`%[1]s- name: %[2]s
+%[1]s  value: %[3]q
+%[1]s- name: %[4]s
+%[1]s  value: %[5]q
+`, indent, ArmHeader, slug, ExperimentHeader, d.Name)
+}
+
 // cookieMatch is the regular expression that recognises one Arm in a Cookie
 // header.
 //
@@ -274,11 +317,15 @@ spec:
     - headers:
       - type: RegularExpression
         name: Cookie
-        value: %q
-    backendRefs:
+        value: %s
+    filters:
+    - type: ResponseHeaderModifier
+      responseHeaderModifier:
+        set:
+%s    backendRefs:
     - name: %s
       port: 80
-`, cookieMatch(arm.Slug), backend)
+`, fmt.Sprintf("%q", cookieMatch(arm.Slug)), d.armHeaders(arm.Slug, "        "), backend)
 	}
 
 	// Anything with no Arm cookie is assigned here, by the same response that
@@ -302,8 +349,10 @@ spec:
         responseHeaderModifier:
           add:
           - name: Set-Cookie
-            value: %q
-`, backend, arm.Weight, assigner.SetCookieValue(arm.Slug, d.Secure))
+            value: %s
+          set:
+%s`, backend, arm.Weight, fmt.Sprintf("%q", assigner.SetCookieValue(arm.Slug, d.Secure)),
+			d.armHeaders(arm.Slug, "          "))
 	}
 
 	return b.String(), nil

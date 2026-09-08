@@ -8,6 +8,7 @@ import (
 
 	"github.com/bhs/mendelbuild/internal/assigner"
 	"github.com/bhs/mendelbuild/internal/hosting"
+	"gopkg.in/yaml.v3"
 )
 
 func experimentFixture() ExperimentDeployment {
@@ -340,4 +341,97 @@ func objectNamed(t *testing.T, manifest, name string) string {
 	}
 	t.Fatalf("no object named %s in:\n%s", name, manifest)
 	return ""
+}
+
+// Every response says which Arm served it.
+//
+// The cookie was always there and the product never mentioned it, so the first
+// person to run a live experiment could not tell which version he was being
+// served and gave each Arm a different background colour to tell them apart.
+// A header answers it directly, on the response, without the application
+// knowing Mendel exists.
+//
+// Parsed rather than string-matched, because the failure this is guarding
+// against is a YAML one: mainline's slug is "0", and an unquoted 0 is the
+// integer zero, which Gateway API's string-typed value field rejects -- taking
+// the whole route with it, so no Arm matches at all.
+func TestEveryResponseNamesTheArmThatServedIt(t *testing.T) {
+	m, err := experimentFixture().Manifest()
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	route := parseObject(t, m, "HTTPRoute", "exp-checkout")
+	rules, _ := route["spec"].(map[string]any)["rules"].([]any)
+	if len(rules) != 4 {
+		t.Fatalf("expected three matched rules and a fallback, got %d", len(rules))
+	}
+
+	// The cookie-matched rules: one per Arm, each stamping its own slug.
+	for i, slug := range []string{assigner.MainlineSlug, "a", "b"} {
+		rule := rules[i].(map[string]any)
+		got := headersSet(t, rule["filters"])
+		if got[ArmHeader] != slug {
+			t.Errorf("rule %d sets %s=%v, want %q", i, ArmHeader, got[ArmHeader], slug)
+		}
+		if got[ExperimentHeader] != "exp-checkout" {
+			t.Errorf("rule %d does not name its experiment: %v", i, got[ExperimentHeader])
+		}
+	}
+
+	// And the fallback, which is what serves a visitor's very first request --
+	// exactly the one somebody sampling the split is looking at. A header
+	// present on every request but the first is a header nobody can rely on.
+	fallback := rules[3].(map[string]any)
+	backends, _ := fallback["backendRefs"].([]any)
+	if len(backends) != 3 {
+		t.Fatalf("the fallback should weight every arm, got %d", len(backends))
+	}
+	for i, slug := range []string{assigner.MainlineSlug, "a", "b"} {
+		got := headersSet(t, backends[i].(map[string]any)["filters"])
+		if got[ArmHeader] != slug {
+			t.Errorf("unassigned visitors sent to arm %q are told %v", slug, got[ArmHeader])
+		}
+	}
+}
+
+// parseObject finds one document of the given kind and name, parsed rather than
+// matched, so a test asserts about the object the cluster will see.
+func parseObject(t *testing.T, manifest, kind, name string) map[string]any {
+	t.Helper()
+	dec := yaml.NewDecoder(strings.NewReader(manifest))
+	for {
+		var doc map[string]any
+		err := dec.Decode(&doc)
+		if err != nil {
+			break
+		}
+		if doc == nil {
+			continue
+		}
+		meta, _ := doc["metadata"].(map[string]any)
+		if doc["kind"] == kind && meta["name"] == name {
+			return doc
+		}
+	}
+	t.Fatalf("no %s named %s in:\n%s", kind, name, manifest)
+	return nil
+}
+
+// headersSet returns the header names and values a filter list sets. Values are
+// reported as they parsed, so a slug that YAML turned into a number shows up as
+// a number and fails the comparison rather than passing a Sprintf.
+func headersSet(t *testing.T, filters any) map[string]any {
+	t.Helper()
+	out := map[string]any{}
+	list, _ := filters.([]any)
+	for _, f := range list {
+		mod, _ := f.(map[string]any)["responseHeaderModifier"].(map[string]any)
+		set, _ := mod["set"].([]any)
+		for _, h := range set {
+			entry := h.(map[string]any)
+			out[entry["name"].(string)] = entry["value"]
+		}
+	}
+	return out
 }

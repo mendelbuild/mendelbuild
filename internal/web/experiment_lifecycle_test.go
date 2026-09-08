@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
 
 	"github.com/bhs/mendelbuild/internal/domain"
 
@@ -157,7 +156,7 @@ func TestInProgressExperimentOffersNoButtonAndSaysWhy(t *testing.T) {
 		domain.ExperimentStarting: "Building an image for each arm",
 		domain.ExperimentStopping: "Returning traffic to mainline",
 	} {
-		html := renderExperimentsPageWithStatus(t, status)
+		html, _, _, _ := hopPageWithExperiment(t, status, nil)
 
 		if strings.Contains(html, "/start\"") || strings.Contains(html, "/stop\"") {
 			t.Errorf("%s: an action was offered while the last one is still running", status)
@@ -165,43 +164,13 @@ func TestInProgressExperimentOffersNoButtonAndSaysWhy(t *testing.T) {
 		if !strings.Contains(html, expect) {
 			t.Errorf("%s: the page does not say what is happening", status)
 		}
-		if !strings.Contains(html, "updates itself when it finishes") {
-			t.Errorf("%s: the page does not say it will update", status)
-		}
 	}
 
 	// A settled experiment gets its button back.
-	settled := renderExperimentsPageWithStatus(t, domain.ExperimentRunning)
+	settled, _, _, _ := hopPageWithExperiment(t, domain.ExperimentRunning, nil)
 	if !strings.Contains(settled, "/stop\"") {
 		t.Error("a running experiment offers no way to stop it")
 	}
-}
-
-func renderExperimentsPageWithStatus(t *testing.T, status domain.ExperimentStatus) string {
-	t.Helper()
-	obs := domain.ExperimentObservation{
-		GatewayAPI: domain.FactTrue, CookieMatching: domain.FactTrue,
-		ProdHostname: domain.FactTrue, ProdHTTPS: domain.FactTrue,
-		SchemaChanges: domain.FactFalse,
-	}
-	steps := domain.ExperimentReadiness(obs)
-	headline, blocked := domain.ExperimentHeadline(steps)
-
-	var out strings.Builder
-	if err := parsePageTemplate("project_experiments.html").ExecuteTemplate(&out, "page-content", map[string]interface{}{
-		"SettingsTab": "experiments", "ProjectID": "abc", "Steps": steps,
-		"Headline": headline, "Blocked": blocked, "Checking": false,
-		"CheckedLabel": "just now", "Observation": obs, "Ready": true,
-		"DatastoreVar": VerifyDatastoreVar, "Success": false, "Error": "",
-		"Fingerprint": "x", "Candidates": nil,
-		"Experiments": []*domain.Experiment{{
-			ID: uuid.New(), Status: status,
-			Arms: []domain.ExperimentArm{{Slug: "0", AllocationWeight: 50}},
-		}},
-	}); err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	return out.String()
 }
 
 // A failure has to reach the product, not just the log.

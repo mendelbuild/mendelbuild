@@ -286,7 +286,7 @@ func (s *Server) handleCreateExperiment(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	http.Redirect(w, r, back+"?success=1", http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/hops/%s?created=1", projectID, hopID), http.StatusSeeOther)
 }
 
 // handleStartExperiment takes live traffic.
@@ -321,6 +321,14 @@ func (s *Server) runExperimentAction(w http.ResponseWriter, r *http.Request, ver
 		return
 	}
 
+	// Where to come back to, read before the work starts: the experiment is the
+	// only thing that knows which Hop it belongs to, and it is about to be
+	// changed by a goroutine.
+	back := "/p/" + projectID.String() + "/experiments"
+	if exp, err := s.db.GetExperiment(r.Context(), experimentID); err == nil && exp != nil {
+		back = s.experimentReturnTo(r.Context(), exp)
+	}
+
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
@@ -339,7 +347,7 @@ func (s *Server) runExperimentAction(w http.ResponseWriter, r *http.Request, ver
 		s.recordFailure(ctx, experimentID, verb, err)
 	}()
 
-	http.Redirect(w, r, "/p/"+projectID.String()+"/experiments?"+verb+"=1", http.StatusSeeOther)
+	http.Redirect(w, r, back+"?"+verb+"=1", http.StatusSeeOther)
 }
 
 // armSlugFor names an Arm after its Variation, uniquely.
@@ -426,4 +434,137 @@ func (s *Server) latestFailure(ctx context.Context, experimentID uuid.UUID) *dom
 	return &domain.FailureReport{
 		Summary: fields["summary"], Effect: fields["effect"], Detail: fields["detail"],
 	}
+}
+
+// --- Managing one experiment, from its Hop's page ---
+
+// handleRefreshExperiment rebases every Arm onto main, rebuilds and rolls out.
+func (s *Server) handleRefreshExperiment(w http.ResponseWriter, r *http.Request) {
+	s.runExperimentAction(w, r, "refreshing", func(ctx context.Context, id uuid.UUID, log func(string)) error {
+		return s.RefreshExperimentArms(ctx, id, nil, log, log)
+	})
+}
+
+// handleRefreshExperimentArm does the same for one Arm.
+//
+// Both scopes, because both are real. A change to one Variation deserves one
+// rebuild; mainline moving deserves all of them, since every Arm is then being
+// compared against a control it no longer contains.
+func (s *Server) handleRefreshExperimentArm(w http.ResponseWriter, r *http.Request) {
+	armID, err := uuid.Parse(chi.URLParam(r, "armID"))
+	if err != nil {
+		http.Error(w, "invalid arm ID", http.StatusBadRequest)
+		return
+	}
+	s.runExperimentAction(w, r, "refreshing", func(ctx context.Context, id uuid.UUID, log func(string)) error {
+		return s.RefreshExperimentArms(ctx, id, &armID, log, log)
+	})
+}
+
+// handleSampleSplit sends a few unassigned requests and reports which Arm served
+// each.
+//
+// In the foreground, unlike start and stop. It takes seconds rather than
+// minutes, and the person who pressed it is standing there waiting for the
+// answer -- a background job whose result appears on a later reload would be a
+// worse version of running curl by hand.
+func (s *Server) handleSampleSplit(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	experimentID, err := uuid.Parse(chi.URLParam(r, "experimentID"))
+	if err != nil {
+		http.Error(w, "invalid experiment ID", http.StatusBadRequest)
+		return
+	}
+	exp, err := s.db.GetExperiment(ctx, experimentID)
+	if err != nil || exp == nil {
+		http.Error(w, "experiment not found", http.StatusNotFound)
+		return
+	}
+
+	host := ""
+	if pd, err := s.db.GetProjectDomain(ctx, exp.ProjectID); err == nil && pd != nil {
+		host = pd.ProdHost()
+	}
+
+	sampleCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	s.recordSplitSample(experimentID, s.SampleSplit(sampleCtx, exp, host))
+
+	http.Redirect(w, r, s.experimentReturnTo(ctx, exp)+"?sampled=1", http.StatusSeeOther)
+}
+
+// handleExperimentJSON reports one experiment in full, for a reader who would
+// rather have the data than the page.
+//
+// Project-scoped and behind the same authentication as everything else here.
+// Mendel's own /version is neither -- it is public and says nothing about any
+// project -- so putting per-project experiment state on it would publish which
+// projects exist and what they are running to whoever asks the load balancer.
+func (s *Server) handleExperimentJSON(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+	experimentID, err := uuid.Parse(chi.URLParam(r, "experimentID"))
+	if err != nil {
+		http.Error(w, "invalid experiment ID", http.StatusBadRequest)
+		return
+	}
+	exp, err := s.db.GetExperiment(ctx, experimentID)
+	if err != nil || exp == nil || exp.ProjectID != projectID {
+		http.Error(w, "experiment not found", http.StatusNotFound)
+		return
+	}
+
+	view := s.experimentViewFor(ctx, projectID, exp.HopID)
+	if view == nil {
+		http.Error(w, "experiment not found", http.StatusNotFound)
+		return
+	}
+
+	type armJSON struct {
+		Slug       string          `json:"slug"`
+		Name       string          `json:"name"`
+		Mainline   bool            `json:"mainline"`
+		Allocation int             `json:"allocation_weight"`
+		Build      domain.ArmBuild `json:"build"`
+		Reach      string          `json:"reach"`
+	}
+	out := struct {
+		ID     uuid.UUID `json:"id"`
+		HopID  uuid.UUID `json:"hop_id"`
+		Status string    `json:"status"`
+		Host   string    `json:"production_host"`
+
+		// Named so a reader can find the arm they are on without being told
+		// separately what to look for.
+		ArmHeader  string `json:"arm_header"`
+		ArmCookie  string `json:"arm_cookie"`
+		Blockers   []string `json:"blockers,omitempty"`
+		Checking   bool     `json:"readiness_checking"`
+		Arms       []armJSON `json:"arms"`
+	}{
+		ID: exp.ID, HopID: exp.HopID, Status: string(exp.Status), Host: view.ProdHost,
+		ArmHeader: ArmHeader, ArmCookie: assigner.CookieName,
+		Blockers: view.Blockers, Checking: view.Checking,
+	}
+	for _, a := range view.Arms {
+		out.Arms = append(out.Arms, armJSON{
+			Slug: a.Arm.Slug, Name: a.Name(), Mainline: a.Mainline(),
+			Allocation: a.Arm.AllocationWeight, Build: a.Build, Reach: a.Reach,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(out)
+}
+
+// experimentReturnTo is the Hop's page, which is where an experiment is managed
+// from. Derived from the experiment rather than passed in a form field, so a
+// redirect cannot be aimed anywhere else.
+func (s *Server) experimentReturnTo(ctx context.Context, exp *domain.Experiment) string {
+	return fmt.Sprintf("/p/%s/hops/%s", exp.ProjectID, exp.HopID)
 }

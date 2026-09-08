@@ -100,6 +100,18 @@ type HopDetailView struct {
 
 	Ribbon *RibbonView // Lifecycle position, next action, and what to do about it
 	Roadmap *MiniRoadmap  // The project roadmap, scrolled to this Hop
+
+	// Experiment is this Hop's live-traffic experiment, or nil if it has none.
+	//
+	// Managed here rather than from the settings tab. The settings tab answers
+	// "can this project run experiments at all" -- a cluster, a domain, a
+	// datastore, none of them about any particular experiment -- while
+	// everything about a running one is about this Hop: its Variations are the
+	// Arms, its branches are what they were built from, and the split being
+	// sampled is the split between them. Operating on it from settings meant
+	// choosing the Hop out of a dropdown first, which put the controls a page
+	// away from what they control.
+	Experiment *ExperimentView
 }
 
 func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
@@ -229,6 +241,7 @@ func (s *Server) handleHopDetail(w http.ResponseWriter, r *http.Request) {
 		Cost:                       costView,
 		Ribbon:                     ribbonView(domain.HopLifecycle(hop, rawVariations)),
 		Roadmap:                      s.buildMiniRoadmap(ctx, projectID, hop, uuid.Nil),
+		Experiment:                   s.experimentViewFor(ctx, projectID, hopID),
 	}
 
 	// Actions need the assembled view, so they are attached once it exists.
