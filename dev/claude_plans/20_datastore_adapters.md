@@ -182,6 +182,7 @@ now closed, and what is left of each is stated rather than implied.**
 | D61 | Re-gate on the suite version and on the datastore the adapter reports connecting to | A maintained list of repository files whose change forces re-gating | A list is inference from the repository where observation is available every run, must be maintained, and breaks silently on a different layout |
 | D62 | Rename the channel's demo path to the non-production path; the demo itself keeps its name | Rename both, or neither | The destination widened and the user-facing feature did not; they were only ever one word by accident |
 | D63 | Generation failure retries with the conformance failure as the fix, bounded by the cost model | Let a user supply an adapter; retry without a bound | The failure messages name requirements, which is what a fix can act on; and an unbounded retry is an unbounded agent spend |
+| D65 | Verification of an apply is scoped to the collections admission recorded, and the rest is an accepted risk | Read the whole catalogue before and after | Mendel is not the only writer, so a whole-catalogue diff attributes another writer's change to the migration and rolls back correct work — a false positive that fires when everything is working, to close a gap that only matters when an adapter misbehaves. The race cannot be closed either way, only narrowed (§13 §7) |
 | D64 | Five phases — probe, admit, apply, withdraw, restore — divided where Mendel must decide, or where time passes | Split admission into provision and verify; merge apply's cleanup with withdrawal | Nothing in admission needs a decision partway, and Probe already reports a provisioning failure sooner; apply's cleanup and a deliberate withdrawal share statements and not intent |
 
 ---
@@ -290,11 +291,31 @@ requirement it could not meet, which is D57.
 
 ---
 
-**O32 — Should verification of an apply read the whole catalogue?** §4's
-comparison covers the collections admission recorded and not a change elsewhere.
-A whole-catalogue read would close it and is a new interface method for a threat
-the deny-list and the admitted delta already narrow. Worth deciding on evidence
-from a generated adapter rather than in advance.
+**O32 — Should verification of an apply read the whole catalogue? — resolved:
+no, and the gap is an accepted risk** (D65).
+
+§4's comparison covers the collections admission recorded shapes for, and not a
+change somewhere else. The obvious fix is to read the whole catalogue before and
+after. It should not be built, and the reason is not cost.
+
+**Mendel is not the only writer of the user's database.** §13 §7 says so and
+designs around it. So a whole-catalogue comparison would attribute *everything*
+that changed between the two reads to the migration — including a change someone
+else made in that window — and the consequence of a false positive here is
+rolling back a migration that was correct. That is a worse failure than the gap
+it closes, and it is worse in the direction that matters, since the gap only
+matters if an adapter is misbehaving and the false positive fires when
+everything is working.
+
+It would not even be complete: a change that lands and reverts inside the window
+is invisible either way, so the race cannot be programmed around, only narrowed.
+
+This is the same window §13 §7 already accepts between re-reading the touched
+shapes and applying — *"that window is accepted rather than closed; the re-read
+shrinks it to the width of one migration"*. Scoping the comparison to the
+collections the migration claimed to touch is what keeps it attributable, and
+attributability is what makes a rollback on failure the right response rather
+than a coin toss.
 
 **O31 — Where do the phases divide? — resolved: five, and admission is one of
 them** (D64).

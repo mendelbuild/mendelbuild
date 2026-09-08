@@ -282,8 +282,16 @@ func (a *Applier) Apply(ctx context.Context, adm *Admission) error {
 //
 // What it covers, precisely, because the limit matters: the collections
 // admission recorded shapes for. A change to a collection this migration never
-// touched is outside it, and closing that needs a whole-catalogue reading the
-// interface does not offer.
+// touched is outside it, and that is deliberate rather than pending.
+//
+// Reading the whole catalogue before and after would close the gap and open a
+// worse one. Mendel is not the only writer of this database, so everything that
+// changed between the two reads would be attributed to the migration --
+// including someone else's change -- and the response to a mismatch is a
+// rollback. That is a false positive which fires while everything is working,
+// to catch a case that only arises when an adapter misbehaves. Scoping the
+// comparison to what the migration claimed to touch is what keeps a mismatch
+// attributable, and attributable is what makes rolling back the right answer.
 func (a *Applier) checkApplied(ctx context.Context, adm *Admission) error {
 	for c, before := range adm.Shapes {
 		now, err := a.Store.Shape(ctx, c)
