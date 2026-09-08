@@ -137,11 +137,23 @@ func TestPresentationOnlyExperimentNeedsNoDatastore(t *testing.T) {
 	if blockers := ExperimentBlockers(steps); len(blockers) != 0 {
 		t.Errorf("no blockers expected, got %v", blockers)
 	}
-	// And it does not ask about reaching a datastore that is not part of this.
-	for _, s := range steps {
-		if s.Name == "That datastore is reachable" {
-			t.Error("a presentation-only experiment was asked whether it can reach a datastore")
-		}
+
+	// The rung stays and says it is not needed, rather than disappearing.
+	//
+	// This changed when the ladder became one assessment of a functional area,
+	// and it changed deliberately. The datastore step above it already renders
+	// "Not needed: nothing in this experiment changes the schema" rather than
+	// vanishing, and the two behaving differently was an accident of one being
+	// written after an early return. The principle is the one the domain
+	// ladder's challenge-records step records: a ladder that changes length
+	// tells the reader the shape of the task changed when it did not. That
+	// argument does not care which direction the length moves in.
+	reach, found := ladderByName(steps)["That datastore is reachable"]
+	if !found {
+		t.Fatal("the rung should still be listed, saying it is not needed")
+	}
+	if reach.State != StepDone {
+		t.Errorf("a presentation-only experiment has nothing to reach, so this is done, got %q", reach.State)
 	}
 }
 

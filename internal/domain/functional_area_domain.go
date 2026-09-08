@@ -38,6 +38,8 @@ const (
 func domainConditions() []Condition {
 	return []Condition{{
 		ID:       CondBaseDomain,
+		DeclaredAt:  ScopeProject,
+		SatisfiedAt: ScopeProject,
 		Name:     "Give Mendel a domain you control",
 		Evidence: EvidenceAsked,
 		Remedy:   RemedyUser,
@@ -54,6 +56,8 @@ func domainConditions() []Condition {
 		},
 	}, {
 		ID:        CondStaticIP,
+		DeclaredAt:  ScopeProject,
+		SatisfiedAt: ScopeProject,
 		Name:      "Mendel reserves an address",
 		Evidence:  EvidenceDerived,
 		Remedy:    RemedyMendel,
@@ -70,6 +74,8 @@ func domainConditions() []Condition {
 		},
 	}, {
 		ID:        CondWildcardRecord,
+		DeclaredAt:  ScopeProject,
+		SatisfiedAt: ScopeProject,
 		Name:      "Create the wildcard A record",
 		Evidence:  EvidenceObserved,
 		Remedy:    RemedyUser,
@@ -77,6 +83,8 @@ func domainConditions() []Condition {
 		Evaluate:  evaluateWildcard,
 	}, {
 		ID:       CondChallengeRecords,
+		DeclaredAt:  ScopeProject,
+		SatisfiedAt: ScopeProject,
 		Name:     "Create the certificate record",
 		NameFor:  func(o Observations) string { return challengeStepName(len(o.ProjectDomain.Challenges)) },
 		Evidence: EvidenceObserved,
@@ -85,6 +93,8 @@ func domainConditions() []Condition {
 		Evaluate: evaluateChallenges,
 	}, {
 		ID:        CondCertificate,
+		DeclaredAt:  ScopeProject,
+		SatisfiedAt: ScopeProject,
 		Name:      "Certificate issued",
 		Evidence:  EvidenceObserved,
 		Remedy:    RemedyElsewhere,
@@ -97,14 +107,21 @@ func domainConditions() []Condition {
 //
 // Built once, because a malformed catalogue is a bug in this package and the
 // right time to find out is the first time anything touches it.
-var domainCatalogue = NewCatalogue(
-	append(domainConditions(), deployConditions()...),
-	append([]FunctionalArea{{
+var domainCatalogue = func() *Catalogue {
+	conditions := domainConditions()
+	conditions = append(conditions, deployConditions()...)
+	conditions = append(conditions, experimentConditions()...)
+
+	areas := []FunctionalArea{{
 		ID:       AreaNamedDemos,
 		Name:     "Serve deployments by name over https",
 		Requires: []ConditionID{CondBaseDomain, CondStaticIP, CondWildcardRecord, CondChallengeRecords, CondCertificate},
-	}}, deployAreas()...),
-)
+	}}
+	areas = append(areas, deployAreas()...)
+	areas = append(areas, experimentArea())
+
+	return NewCatalogue(conditions, areas)
+}()
 
 // Catalogue returns the functional areas Mendel knows about.
 func FunctionalAreas() *Catalogue { return domainCatalogue }

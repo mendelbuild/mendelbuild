@@ -79,11 +79,13 @@ type DomainStep struct {
 	Detail string
 
 	// Advisory marks a step that is worth doing and does not have to be done.
-	// Not every property is required-true: some are conditional on what is
-	// actually being attempted, and some are real concerns that are a poor
-	// reason to refuse to proceed. Without this the two are indistinguishable
-	// from a state, and a caller ends up matching on step names to tell them
-	// apart.
+	//
+	// No longer set by hand. It once carried two different things -- a real
+	// concern that is a poor reason to refuse, and a step that does not apply
+	// given what is being attempted -- and the second turned out not to be a
+	// severity at all: restated as a total predicate, a condition with nothing
+	// to prove is simply true. What is left is the first, which an area declares
+	// in Warns and which arrives here already decided.
 	Advisory bool
 }
 

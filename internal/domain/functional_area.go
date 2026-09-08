@@ -63,7 +63,13 @@ const (
 type Scope int
 
 const (
-	ScopeInstallation Scope = iota
+	// ScopeUnset is the zero value and is never valid. It exists because the
+	// alternative -- making the coarsest real scope the zero value -- let five
+	// conditions ship with scopes nobody had written, which happened to be
+	// coarsest and so passed the coherence check vacuously. A field that is
+	// wrong by omission and correct by accident is worse than one that fails.
+	ScopeUnset Scope = iota
+	ScopeInstallation
 	ScopeProject
 	ScopeChannel
 	ScopeHop
@@ -73,6 +79,8 @@ const (
 
 func (s Scope) String() string {
 	switch s {
+	case ScopeUnset:
+		return "unset"
 	case ScopeInstallation:
 		return "installation"
 	case ScopeProject:
@@ -183,6 +191,17 @@ type FunctionalArea struct {
 	ID       AreaID
 	Name     string
 	Requires []ConditionID
+
+	// Warns names conditions worth telling a reader about that do not gate
+	// anything. Production answering over http means the assignment cookie
+	// cannot be Secure -- real, permanent, and a poor reason to refuse to run an
+	// experiment.
+	//
+	// They are the same kind of thing as a requirement and are evaluated the
+	// same way; what differs is only what an unsatisfied one does. Keeping them
+	// out of Requires is what lets the matrix stay a grid of gates whose every
+	// cell is a gate, rather than a grid with footnotes in it.
+	Warns []ConditionID
 }
 
 // Observations is everything gathered for one evaluation.
@@ -208,6 +227,10 @@ type Observations struct {
 	Channel                     *ProjectDeploymentChannel
 	ChannelCombinationSupported bool
 	MissingChannelCredentials   []string
+
+	// Experiment is what Mendel found about the cluster, the production
+	// hostname and the verification datastore.
+	Experiment ExperimentObservation
 
 	// Requirements is what the code being deployed needs, already judged against
 	// the deployment in question by EvaluateRequirements -- which is where the
@@ -252,6 +275,10 @@ func BuildCatalogue(conditions []Condition, areas []FunctionalArea) (*Catalogue,
 		if strings.TrimSpace(cond.Name) == "" {
 			return nil, fmt.Errorf("condition %q has no name, and the name is what a reader sees", cond.ID)
 		}
+		if cond.DeclaredAt == ScopeUnset || cond.SatisfiedAt == ScopeUnset {
+			return nil, fmt.Errorf("condition %q does not say where it is declared and satisfied; "+
+				"those are frequently different and neither has a safe default", cond.ID)
+		}
 		c.conditions[cond.ID] = cond
 	}
 	for _, id := range sortedIDs(c.conditions) {
@@ -285,6 +312,15 @@ func BuildCatalogue(conditions []Condition, areas []FunctionalArea) (*Catalogue,
 		for _, id := range a.Requires {
 			if _, ok := c.conditions[id]; !ok {
 				return nil, fmt.Errorf("functional area %q requires %q, which does not exist", a.ID, id)
+			}
+		}
+		for _, id := range a.Warns {
+			if _, ok := c.conditions[id]; !ok {
+				return nil, fmt.Errorf("functional area %q warns on %q, which does not exist", a.ID, id)
+			}
+			if requires(a, id) {
+				return nil, fmt.Errorf("functional area %q both requires and warns on %q; "+
+					"a condition either gates or it does not", a.ID, id)
 			}
 		}
 		c.areas[a.ID] = a
@@ -406,6 +442,12 @@ type Assessment struct {
 	// the two cannot drift into telling a user different things.
 	Missing []string
 
+	// Warnings are the things worth saying that do not stop anything. An area
+	// can be available and still have them, which is the whole point: refusing
+	// to run over an unencrypted assignment cookie would be worse than saying so
+	// and running.
+	Warnings []Step
+
 	// Headline states where things stand in one line, and WaitingOn says whose
 	// move it is.
 	Headline  string
@@ -423,30 +465,34 @@ func (c *Catalogue) Assess(id AreaID, obs Observations) Assessment {
 		return Assessment{Area: id, Headline: "No such functional area", WaitingOn: ActorNobody}
 	}
 
-	findings := make(map[ConditionID]Finding, len(area.Requires))
+	wanted := append(append([]ConditionID{}, area.Requires...), area.Warns...)
+	findings := make(map[ConditionID]Finding, len(wanted))
 	a := Assessment{Area: id, Available: true}
 
-	for _, cid := range c.evaluationOrder(area.Requires) {
+	for _, cid := range c.evaluationOrder(wanted) {
 		cond := c.conditions[cid]
 		f := c.evaluate(cond, obs, findings)
 		findings[cid] = f
 
-		// Dependencies are evaluated to gate what follows; only what the area
-		// actually asks for is reported.
-		if !requires(area, cid) {
-			continue
-		}
 		name := cond.Name
 		if cond.NameFor != nil {
 			name = cond.NameFor(obs)
 		}
-		a.Steps = append(a.Steps, Step{Condition: cid, Name: name, Remedy: cond.Remedy, Finding: f})
-		if !f.Satisfied() {
-			a.Available = false
-			if f.Missing != "" {
-				a.Missing = append(a.Missing, f.Missing)
+		step := Step{Condition: cid, Name: name, Remedy: cond.Remedy, Finding: f}
+
+		switch {
+		case warns(area, cid):
+			// A warning is reported whatever it says, since "this is fine" is
+			// worth as much as the alternative once a reader is looking for it.
+			a.Warnings = append(a.Warnings, step)
+		case requires(area, cid):
+			a.Steps = append(a.Steps, step)
+			if !f.Satisfied() {
+				a.Available = false
+				a.Missing = append(a.Missing, reasonFor(step))
 			}
 		}
+		// Anything else was evaluated only to gate what follows.
 	}
 
 	a.Headline, a.WaitingOn = headline(a.Steps)
@@ -514,9 +560,45 @@ func (c *Catalogue) evaluationOrder(want []ConditionID) []ConditionID {
 	return out
 }
 
+// reasonFor is why an unsatisfied condition stops the area, and it always
+// answers.
+//
+// An evaluator writes the sentence for the case it knows about -- what is
+// absent and what would change it -- and there is nothing for it to say about
+// the cases where Mendel has not looked or could not tell. Those still owe the
+// reader something, so they are answered from the state here rather than left
+// to each evaluator to remember. The invariant that an unavailable area gives a
+// reason is then structural, which is the only way it stays true.
+func reasonFor(s Step) string {
+	if s.Missing != "" {
+		return s.Missing
+	}
+	switch s.State {
+	case CondUnchecked:
+		return s.Name + ": Mendel has not checked this yet, so it will not claim the answer either way."
+	case CondUndetermined:
+		return s.Name + ": Mendel looked and could not tell. That is a fact about Mendel rather than " +
+			"about your project, and the next check will try again."
+	case CondBlocked:
+		return s.Name + ": not startable until an earlier step is done."
+	case CondOffered:
+		return s.Name + ": Mendel can do this and is waiting to be told to."
+	}
+	return s.Name + " is not satisfied."
+}
+
 func requires(a FunctionalArea, id ConditionID) bool {
 	for _, r := range a.Requires {
 		if r == id {
+			return true
+		}
+	}
+	return false
+}
+
+func warns(a FunctionalArea, id ConditionID) bool {
+	for _, w := range a.Warns {
+		if w == id {
 			return true
 		}
 	}

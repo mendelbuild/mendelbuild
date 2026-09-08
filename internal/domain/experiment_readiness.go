@@ -110,110 +110,38 @@ type ExperimentObservation struct {
 
 // ExperimentReadiness is every property that must hold, in the order it makes
 // sense to establish them.
+//
+// One assessment of the "experiment" functional area, as DomainReadiness is of
+// its own. The conditions and their wording live in
+// functional_area_experiment.go; what is left here is the observation this is
+// judged against, and the rendering the page already expects.
 func ExperimentReadiness(obs ExperimentObservation) []ReadinessStep {
-	steps := make([]ReadinessStep, 0, 5)
+	a := FunctionalAreas().Assess(AreaExperiment, Observations{
+		ProjectDomain: &ProjectDomain{},
+		Experiment:    obs,
+	})
 
-	steps = append(steps, factStep(obs.GatewayAPI,
-		"Cluster can route per experiment arm",
-		"Gateway API is enabled on the cluster.",
-		"Gateway API is not enabled, so nothing can reconcile the routes an experiment needs. "+
-			"Being on GKE does not imply it; it is off until someone turns it on.",
-		"Mendel could not reach the cluster to check."))
-
-	steps = append(steps, factStep(obs.CookieMatching,
-		"A controller that can match an experiment cookie",
-		"Envoy Gateway is installed and can route by cookie.",
-		"Gateway API is on, but the only controller is GKE's, which matches headers exactly "+
-			"and so cannot pick one cookie out of the several a visitor carries. Mendel keeps "+
-			"GKE's gateway at the edge for TLS and the address, and puts one behind it that can "+
-			"match.",
-		"Mendel could not list the cluster's gateway controllers."))
-
-	steps = append(steps, factStep(obs.ProdHostname,
-		"Production answers at a name",
-		detailOr(obs.ProdHost, "Production has a hostname."),
-		"Production has no hostname. Mendel runs one gateway for all its deployments and "+
-			"tells their traffic apart by hostname, so without one there is no route to attach "+
-			"arm matching to. Set a production subdomain on the Domain tab.",
-		"Mendel could not read this project's domain settings."))
-
-	https := factStep(obs.ProdHTTPS,
-		"That name serves https",
-		"Traffic to production is encrypted, so the assignment cookie can be Secure.",
-		"Production answers over http only. An experiment can run, but its assignment cookie "+
-			"cannot be marked Secure, so it can be rewritten in transit and a participant could "+
-			"choose their own arm.",
-		"Mendel could not determine the certificate state.")
-	https.Advisory = true
-	steps = append(steps, https)
-
-	// An experiment that changes no schema is done here. Everything below is
-	// about proving a migration additive, and there is no migration.
-	if obs.SchemaChanges == FactFalse {
-		return append(steps, ReadinessStep{
-			Name:   datastoreStep,
-			State:  StepDone,
-			Detail: "Not needed: nothing in this experiment changes the schema.",
-		})
+	steps := make([]ReadinessStep, 0, len(a.Steps)+len(a.Warnings))
+	for _, s := range a.Steps {
+		steps = append(steps, readinessStep(s, false))
 	}
-
-	needed := obs.SchemaChanges == FactTrue
-
-	store := factStep(obs.VerifyDatastore,
-		datastoreStep,
-		"Migrations are proved additive here rather than against production.",
-		"No verification datastore. Whether a migration only adds is settled by running it and "+
-			"diffing, and doing that against production takes real locks on live tables.",
-		"Mendel could not read the stored connection.")
-	if !needed {
-		store.Advisory = true
-		if store.State == StepYourMove {
-			store.Detail = "Needed once a Variation changes the schema. Nothing has declared one yet."
-		}
+	// Warnings render on the same ladder and are marked rather than separated:
+	// a reader wants one list of what is true of their project, with the thing
+	// that does not stop them plainly labelled.
+	for _, s := range a.Warnings {
+		steps = append(steps, readinessStep(s, true))
 	}
-	steps = append(steps, store)
-
-	// Only worth asking once there is something to reach.
-	reach := ReadinessStep{
-		Name:   "That datastore is reachable",
-		State:  StepBlocked,
-		Detail: "Checked once a connection has been given.",
-	}
-	reach.Advisory = !needed
-	if obs.VerifyDatastore == FactTrue {
-		reach = factStep(obs.VerifyReachable,
-			"That datastore is reachable",
-			"Mendel connected to it and can read its structure.",
-			"Mendel could not connect, so nothing can be verified against it.",
-			"Not checked yet.")
-		reach.Advisory = !needed
-	}
-	steps = append(steps, reach)
-
 	return steps
 }
 
-// datastoreStep is named once, because three places have to agree about which
-// step is the conditional one.
-const datastoreStep = "A non-production datastore to verify against"
-
-// factStep renders one property, keeping "could not tell" distinct from "no".
-func factStep(f Fact, name, whenTrue, whenFalse, whenUnknown string) ReadinessStep {
-	switch f {
-	case FactTrue:
-		return ReadinessStep{Name: name, State: StepDone, Detail: whenTrue}
-	case FactFalse:
-		return ReadinessStep{Name: name, State: StepYourMove, Detail: whenFalse}
-	default:
-		return ReadinessStep{Name: name, State: StepChecking, Detail: whenUnknown}
+// readinessStep renders one condition in the ladder's vocabulary.
+func readinessStep(s Step, advisory bool) ReadinessStep {
+	return ReadinessStep{
+		Name:     s.Name,
+		State:    domainStepState(s),
+		Detail:   s.Detail,
+		Advisory: advisory,
 	}
-}
-
-func detailOr(value, fallback string) string {
-	if value != "" {
-		return value
-	}
-	return fallback
 }
 
 // ExperimentHeadline states where things stand and who is holding it up.
@@ -269,4 +197,13 @@ func (o ExperimentObservation) Fingerprint() string {
 	return fmt.Sprintf("%v/%v/%v/%v/%v/%v/%s",
 		o.GatewayAPI, o.CookieMatching, o.CanInstallController,
 		o.ProdHostname, o.ProdHTTPS, o.VerifyDatastore, o.ProdHost)
+}
+
+// detailOr prefers the observed value over a generic sentence, since a reader
+// looking at their own hostname learns more than one reading that they have one.
+func detailOr(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
 }

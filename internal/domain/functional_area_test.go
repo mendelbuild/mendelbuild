@@ -13,6 +13,7 @@ import (
 func satisfied(id ConditionID, name string) Condition {
 	return Condition{
 		ID: id, Name: name, Evidence: EvidenceDerived, Remedy: RemedyMendel,
+		DeclaredAt: ScopeProject, SatisfiedAt: ScopeProject,
 		Evaluate: func(Observations) Finding { return Finding{State: CondSatisfied, Detail: "yes"} },
 	}
 }
@@ -20,6 +21,7 @@ func satisfied(id ConditionID, name string) Condition {
 func unsatisfied(id ConditionID, name string) Condition {
 	return Condition{
 		ID: id, Name: name, Evidence: EvidenceAsked, Remedy: RemedyUser,
+		DeclaredAt: ScopeProject, SatisfiedAt: ScopeProject,
 		Evaluate: func(Observations) Finding {
 			return Finding{State: CondUnsatisfied, Detail: "no", Missing: name + " is missing"}
 		},
@@ -65,7 +67,8 @@ func TestDanglingReferencesAreRefused(t *testing.T) {
 // functional area works when nobody has looked.
 func TestNoEvaluatorIsUnimplementedRatherThanSatisfied(t *testing.T) {
 	c := NewCatalogue(
-		[]Condition{{ID: "a", Name: "Install the thing", Evidence: EvidenceProbed, Remedy: RemedyEither}},
+		[]Condition{{ID: "a", Name: "Install the thing", Evidence: EvidenceProbed, Remedy: RemedyEither,
+			DeclaredAt: ScopeProject, SatisfiedAt: ScopeProject}},
 		[]FunctionalArea{{ID: "x", Name: "X", Requires: []ConditionID{"a"}}},
 	)
 	a := c.Assess("x", Observations{})
@@ -102,6 +105,7 @@ func TestDoneOutranksBlocked(t *testing.T) {
 func TestUncheckedIsNotDemotedToBlocked(t *testing.T) {
 	later := Condition{
 		ID: "later", Name: "Later", Evidence: EvidenceObserved, Remedy: RemedyUser,
+		DeclaredAt: ScopeProject, SatisfiedAt: ScopeProject,
 		DependsOn: []ConditionID{"earlier"},
 		Evaluate:  func(Observations) Finding { return Finding{State: CondUnchecked, Detail: "Checking."} },
 	}
