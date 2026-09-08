@@ -160,6 +160,21 @@ const (
 	// participants see, which is a decision rather than a tidy-up.
 	ArmStale ArmFreshness = "stale"
 
+	// ArmBuildUnrecorded is an Arm that is serving traffic with no record of
+	// what it was built from.
+	//
+	// Not the same as never built, and the difference is the whole reason this
+	// type has four states rather than a bool. An empty SourceCommit means
+	// Mendel has no record; it does not mean no image exists, and the Arm
+	// answering requests is proof that one does. Reporting such an Arm as "not
+	// built yet -- starting the experiment builds it" describes the opposite of
+	// what is happening.
+	//
+	// Reachable in normal running, not only on rows that predate the columns:
+	// recording the build is deliberately not allowed to fail the build, since
+	// the image exists whether or not Mendel managed to write it down.
+	ArmBuildUnrecorded ArmFreshness = "unrecorded"
+
 	// ArmFreshnessUnknown is an Arm whose branch Mendel could not read. Reported
 	// as its own state rather than folded into stale, because "go rebuild this"
 	// is the wrong instruction when the truth is that Mendel could not look.
@@ -201,7 +216,12 @@ func short(sha string) string {
 // must not be reported as staleness: telling someone to rebuild an arm that is
 // already current wastes a build and, mid-experiment, changes what participants
 // see for no reason.
-func DescribeArmBuild(arm ExperimentArm, head string) ArmBuild {
+//
+// serving says whether this Arm is answering requests right now. It is what
+// separates an Arm nobody has built from one whose build went unrecorded, and
+// the caller knows it from the experiment's status -- which is why it is passed
+// rather than inferred here from an empty commit, the very thing in question.
+func DescribeArmBuild(arm ExperimentArm, head string, serving bool) ArmBuild {
 	b := ArmBuild{
 		SourceCommit: arm.SourceCommit,
 		HeadCommit:   head,
@@ -215,6 +235,11 @@ func DescribeArmBuild(arm ExperimentArm, head string) ArmBuild {
 		// about production, which is a different page's question.
 		b.Freshness = ArmCurrent
 		b.Detail = "Mainline runs whatever production runs; the experiment does not build it."
+	case arm.SourceCommit == "" && serving:
+		b.Freshness = ArmBuildUnrecorded
+		b.Detail = "Serving traffic, but Mendel has no record of what it was built from, so " +
+			"whether it includes your latest change cannot be said either way. Rebasing and " +
+			"rebuilding it will record what it is running."
 	case arm.SourceCommit == "":
 		b.Freshness = ArmNeverBuilt
 		b.Detail = "Not built yet. Starting the experiment builds it from its branch."

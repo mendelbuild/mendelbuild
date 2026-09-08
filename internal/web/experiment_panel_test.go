@@ -32,13 +32,13 @@ func hopPageWithExperiment(t *testing.T, status domain.ExperimentStatus,
 		ProdHost:   "app.pong.mendel.build",
 		Arms: []ArmView{{
 			Arm:   domain.ExperimentArm{ID: uuid.New(), Slug: domain.MainlineSlug, AllocationWeight: 50},
-			Build: domain.DescribeArmBuild(domain.ExperimentArm{Slug: domain.MainlineSlug}, ""),
+			Build: domain.DescribeArmBuild(domain.ExperimentArm{Slug: domain.MainlineSlug}, "", true),
 		}, {
 			Arm: domain.ExperimentArm{ID: armID, VariationID: &variationID, Slug: "fast-a1b2c3",
 				AllocationWeight: 50, SourceCommit: "aaaaaaaabbbbcccc", BuiltAt: &built},
 			Variation: &domain.Variation{ID: variationID, Name: "fast"},
 			Build: domain.DescribeArmBuild(domain.ExperimentArm{
-				VariationID: &variationID, SourceCommit: "aaaaaaaabbbbcccc"}, "ddddddddeeeeffff"),
+				VariationID: &variationID, SourceCommit: "aaaaaaaabbbbcccc"}, "ddddddddeeeeffff", true),
 			Reach: "curl -si -H 'Cookie: mendel_arm=fast-a1b2c3' https://app.pong.mendel.build/",
 		}},
 	}
@@ -180,5 +180,39 @@ func TestARunningExperimentIsNotToldAboutReadiness(t *testing.T) {
 	// stand in the way of.
 	if !strings.Contains(out, "/stop") {
 		t.Error("a running experiment cannot be stopped while readiness is unresolved")
+	}
+}
+
+// The state pong is in: a running experiment whose arms were built before
+// Mendel recorded builds at all.
+//
+// Asserted end to end rather than on the domain alone, because the thing that
+// misinforms is what the page says. "Not built yet -- starting the experiment
+// builds it from its branch" beside a badge reading "running" is the opposite
+// of what is happening, on the one page whose purpose is to say what visitors
+// are seeing.
+func TestArmsServingWithoutARecordedBuildDoNotClaimTheyWereNeverBuilt(t *testing.T) {
+	out, _, _, _ := hopPageWithExperiment(t, domain.ExperimentRunning, func(v *ExperimentView) {
+		for i := range v.Arms {
+			if v.Arms[i].Mainline() {
+				continue
+			}
+			bare := v.Arms[i].Arm
+			bare.SourceCommit, bare.Image, bare.BuiltAt = "", "", nil
+			v.Arms[i].Arm = bare
+			v.Arms[i].Build = domain.DescribeArmBuild(bare, "ddddddddeeeeffff", true)
+		}
+	})
+
+	if strings.Contains(out, "Not built yet") {
+		t.Error("an arm serving live traffic was described as not built yet")
+	}
+	if !strings.Contains(out, "Serving traffic") {
+		t.Error("the page does not say the arm is serving despite having no build record")
+	}
+	// It must not be presented as behind either. The stale badge is the one that
+	// says visitors are missing a change, and there is no evidence of that here.
+	if strings.Contains(out, ">\n                            stale") {
+		t.Error("an arm with no build record was badged stale")
 	}
 }

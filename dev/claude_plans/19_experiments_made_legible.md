@@ -102,20 +102,35 @@ verdict a minute behind is not a category of error, and a page that waits on a
 network call is. A look that fails is stored too, so a remote that is down costs
 one reader the timeout rather than every reader.
 
-**Four states, not two** (`domain.ArmFreshness`):
+**Five states, not two** (`domain.ArmFreshness`):
 
 | | |
 |---|---|
-| `never-built` | No image. A draft experiment, or a start that failed early. |
+| `never-built` | No image, and not serving. A draft experiment, or a start that failed early. |
 | `current` | Built from the commit the branch head names. |
 | `stale` | Built from something else. Visitors are not seeing the later change. |
 | `unknown` | Mendel could not read the branch. |
+| `unrecorded` | Serving, with no record of what it was built from. |
 
-The last is the one that matters, and it is the same distinction `Fact` exists
-for. Folding "could not look" into "stale" tells somebody to rebuild an Arm that
-is already current — which wastes a build and, mid-experiment, changes what its
-participants see for no reason at all. Folding it into "current" is worse: it
-reports an Arm up to date on the strength of never having checked.
+The last two are the ones that matter, and they are the same distinction `Fact`
+exists for. Folding "could not look" into "stale" tells somebody to rebuild an
+Arm that is already current — which wastes a build and, mid-experiment, changes
+what its participants see for no reason at all. Folding it into "current" is
+worse: it reports an Arm up to date on the strength of never having checked.
+
+`unrecorded` was missed on the first pass and is the same error one level down.
+An empty `source_commit` was read as "never built", but it means *Mendel has no
+record* — and an Arm answering requests is proof that an image exists. The page
+then said "Not built yet. Starting the experiment builds it from its branch"
+beside a badge reading `running`, which is the opposite of what was happening, on
+the one page whose purpose is to say what visitors are seeing.
+
+It is not only a migration artefact. Recording the build is deliberately not
+allowed to fail the build — the image exists whether or not Mendel managed to
+write it down — so any Arm whose `RecordArmBuild` write fails lands here in
+normal running. The two kinds of not-knowing are kept apart because their
+remedies differ: `unknown` waits on a remote, `unrecorded` is fixed by the
+rebuild button already sitting beside it, and the sentence says so.
 
 **Mainline is never judged.** It keeps the Deployment the ordinary production
 deploy made; rebuilding the control would make the comparison run against
@@ -306,7 +321,8 @@ rather than setting a boolean, so it tests the wiring between them.
   including mainline's `0`. Removing the quoting fails the test.
 - The Hop page renders with a running experiment and offers every route the
   experiment registers; mainline is offered no rebuild.
-- Unquoting, and folding unknown freshness into stale, both fail their tests.
+- Unquoting, and folding either kind of not-knowing into stale or current, all
+  fail their tests.
 - The branch-head cache serves warm entries without looking, answers from an aged
   entry while refreshing behind it, and sends exactly one of thirty-two
   concurrent readers to the remote.

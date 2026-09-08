@@ -44,12 +44,17 @@ func (s *Server) armBuildsFor(ctx context.Context, exp *domain.Experiment) map[u
 	builds := make(map[uuid.UUID]domain.ArmBuild, len(exp.Arms))
 	heads := s.branchHeadsFor(ctx, exp.ProjectID)
 
+	// Only a running experiment has Arms answering requests. Starting is
+	// excluded on purpose: an Arm with no commit part-way through a start has
+	// genuinely not been built yet, which is the state it should report.
+	serving := exp.Status == domain.ExperimentRunning
+
 	for _, arm := range exp.Arms {
 		head := ""
 		if branch, err := s.armBranch(ctx, exp, arm); err == nil {
 			head = heads[branch]
 		}
-		builds[arm.ID] = domain.DescribeArmBuild(arm, head)
+		builds[arm.ID] = domain.DescribeArmBuild(arm, head, serving)
 	}
 	return builds
 }
