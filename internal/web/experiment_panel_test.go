@@ -131,3 +131,54 @@ func TestUncheckedReadinessIsNotReported(t *testing.T) {
 		t.Error("the page does not say that readiness is still being established")
 	}
 }
+
+// The experiment reads at the width of the page, directly under the decision
+// ribbon.
+//
+// It was first placed in the sidebar column beside Cost, which is a third of the
+// page: the arms table was crushed to a few characters per cell, and the build
+// verdict -- the column that says whether visitors are seeing your latest change
+// -- wrapped to one word a line. A live experiment is the widest thing on this
+// page and the most consequential, not an aside.
+func TestTheExperimentIsFullWidthAndAboveTheColumns(t *testing.T) {
+	out, _, _, _ := hopPageWithExperiment(t, domain.ExperimentRunning, nil)
+
+	panel := strings.Index(out, "Live traffic")
+	columns := strings.Index(out, `<div class="split">`)
+	ribbon := strings.Index(out, "ribbon-headline")
+
+	if panel < 0 || columns < 0 {
+		t.Fatal("the page no longer has both an experiment panel and a two-column section")
+	}
+	if panel > columns {
+		t.Error("the experiment is inside or below the two-column section, so it renders " +
+			"at a third of the page width")
+	}
+	if ribbon >= 0 && panel < ribbon {
+		t.Error("the experiment is above the decision ribbon, which is the page's headline")
+	}
+}
+
+// A running experiment is not told that its start button is on the way.
+//
+// Readiness gates starting and nothing else. Rendered on a running experiment it
+// read "the start button appears once it knows" beside a stop button and a badge
+// saying "running" -- three claims, of which two were true.
+func TestARunningExperimentIsNotToldAboutReadiness(t *testing.T) {
+	out, _, _, _ := hopPageWithExperiment(t, domain.ExperimentRunning, func(v *ExperimentView) {
+		v.Checking = true
+		v.Blockers = []string{"Production answers at a name: Production has no hostname."}
+	})
+
+	if strings.Contains(out, "start button appears once it knows") {
+		t.Error("a running experiment was told its start button is still coming")
+	}
+	if strings.Contains(out, "Not yet, because of the project") {
+		t.Error("a running experiment was told it cannot start, which it already has")
+	}
+	// And it can still be stopped, which is the one thing readiness must never
+	// stand in the way of.
+	if !strings.Contains(out, "/stop") {
+		t.Error("a running experiment cannot be stopped while readiness is unresolved")
+	}
+}
