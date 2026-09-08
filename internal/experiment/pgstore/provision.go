@@ -27,6 +27,13 @@ import (
 // shapes, the experiment writes its own rows while it runs, and copying
 // production's data into a database Mendel may reset would put the user's
 // end-users' data somewhere nobody asked for it to be.
+//
+// Where this runs is not Mendel. It shells out to pg_dump and psql, which exist
+// for one engine, and an adapter runs alongside the datastore it adapts -- in
+// the project's own deployment channel, where the application already reaches
+// its database. That is what keeps a datastore-specific dependency out of
+// Mendel's image, and it is also the only arrangement that works at all for the
+// common case of a database on a private address Mendel cannot dial.
 
 // Provisioner makes verification databases on the server a Store is connected to.
 type Provisioner struct {
