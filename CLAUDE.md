@@ -85,6 +85,39 @@ Never the third option of assuming and finding out in production. Declining is a
 designed outcome here, not a failure — the same principle that lets Mendel
 refuse a Variation it cannot run safely.
 
+**Postgres is Mendel's own database and nothing else.** There is no reason to
+expect, and never a reason to require, that a user's project uses it. Say the
+same of Go, of Docker, of Kubernetes, of every choice visible from inside this
+repository.
+
+This does not fail in one obvious step. It fails in small reasonable ones, and
+all of these are recent:
+
+- A dependency added to Mendel's image so Mendel can run `pg_dump` against a
+  user's database — a tool that exists for one engine, installed as though it
+  were general.
+- An interface described as engine-neutral whose only implementation is
+  Postgres, and which was therefore only ever *specified* as "whatever Postgres
+  does". Its semantics went unexamined until a conformance suite made something
+  else have to satisfy them.
+- A proposal for "a generic SQL adapter", which sounds general and silently
+  excludes every datastore that is not SQL.
+- Saying "run the existing adapter" when only a Postgres one exists, which makes
+  a testing convenience read as a default.
+
+So a tell worth keeping: **if the name of a specific datastore, or a family of
+them, appears anywhere on a path that touches a user's project, stop.** Not
+because it is always wrong — an adapter has to be about something — but because
+it is the point at which to check whether the thing being written is one
+implementation behind a seam, or an assumption wearing a general name. The
+placeholder in a form, a package in a Dockerfile and a helper function all count.
+
+The same question, asked of anything: *what happens if this project is on
+MySQL, on Mongo, on DynamoDB, on a storage engine an infrastructure Hop built
+last week?* If the answer is "it breaks" or "it silently does something
+Postgres-shaped", it is not finished. If the answer is "Mendel says it cannot do
+this, and names what is missing", it is.
+
 ### Minimize User Repository Dependencies on Mendel
 
 User repositories should have **minimal to no awareness** of Mendel. This applies to:
