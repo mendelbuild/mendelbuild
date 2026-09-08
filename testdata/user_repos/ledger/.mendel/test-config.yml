@@ -1,0 +1,4 @@
+version: 1
+service: app
+test_command: go test ./...
+startup_timeout: 60

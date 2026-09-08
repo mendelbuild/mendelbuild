@@ -384,6 +384,33 @@ Two corollaries that have already cost time:
   sentence naming what is missing, and the declining code path and the checklist
   render *the same string*. `experiment.RequireForExperiments` is the model.
 
+### Fixture User Repositories
+
+`testdata/user_repos/` holds small self-contained repositories standing in for
+the thing Mendel works on, so the code paths that read a user's project can be
+exercised without seeding a whole Mendel project. `internal/testrepo` resolves
+them by name, the way `internal/testdb` resolves the database.
+
+Under `testdata/` because it is the one directory name the Go toolchain skips,
+so a fixture may carry its own source, Dockerfiles and configs without
+`go build ./...` trying to make sense of them.
+
+Each fixture is a case some decision turns on rather than another example:
+`ledger` where the whole path works, `notes` on a datastore Mendel has no
+adapter for so the **decline** is exercised, `pong` with no datastore so the
+simplest experiment is not made to satisfy the requirements of the hardest.
+
+**Add a fixture when a decision needs a repository to be true of, not when you
+want an example.** And when you add one, do not reach for the datastore this
+codebase happens to use — a fixture set where everything works tests everything
+except declining, which §13 is explicit is a designed outcome.
+
+They earn their keep by reading files that were written as files. A test that
+constructs its own input checks the parser against what its author expected a
+repository to look like; a fixture catches the spec drifting from what anyone
+would actually put in one. The first one written found that `device` is an
+assignment unit §13 §14 and §16 D45 both specify and the code does not have.
+
 ### Name New Concepts in Full
 
 For vocabulary that is not already core to Mendel — Hop, Variation, Arm,

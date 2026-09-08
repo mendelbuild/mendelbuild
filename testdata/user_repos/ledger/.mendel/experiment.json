@@ -1,0 +1,9 @@
+{
+  "assignment_unit": "user",
+  "assignment_key": {"source": "cookie", "name": "session_id"},
+  "migration": {
+    "up": "ALTER TABLE entries ADD COLUMN mendel_exp_settled_score INT;",
+    "down": "ALTER TABLE entries DROP COLUMN mendel_exp_settled_score;"
+  },
+  "dissonance": "The settlement score shown against past entries disappears."
+}

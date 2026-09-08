@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -122,6 +123,35 @@ func (g *Generator) hopWantsExperiment(ctx context.Context, hopID uuid.UUID) boo
 	return err == nil && hop != nil && hop.LiveExperiment
 }
 
+// ErrNoExperimentDeclared says a repository declared no live experiment, which
+// is the case for almost every Variation and is not a problem.
+var ErrNoExperimentDeclared = errors.New("no experiment declaration")
+
+// ReadDeclaredExperiment reads and checks a repository's .mendel/experiment.json.
+//
+// Separated from recording it so that reading a real repository is a thing a
+// test can do. What a declaration means is decided here; what it causes is
+// decided by the caller, and the two were entangled enough that the only way to
+// exercise the first was to have a database and a Variation for the second.
+func ReadDeclaredExperiment(workDir string) (*DeclaredExperiment, error) {
+	data, err := os.ReadFile(filepath.Join(workDir, ".mendel", "experiment.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrNoExperimentDeclared
+		}
+		return nil, fmt.Errorf("read experiment declaration: %w", err)
+	}
+
+	var decl DeclaredExperiment
+	if err := json.Unmarshal(data, &decl); err != nil {
+		return nil, fmt.Errorf("parse experiment declaration: %w", err)
+	}
+	if msg := decl.Validate(); msg != "" {
+		return nil, fmt.Errorf("invalid experiment declaration: %s", msg)
+	}
+	return &decl, nil
+}
+
 // saveExperimentDeclaration reads .mendel/experiment.json and records what it
 // says, creating the experiment and this Variation's Arm.
 //
@@ -131,24 +161,15 @@ func (g *Generator) hopWantsExperiment(ctx context.Context, hopID uuid.UUID) boo
 func (g *Generator) saveExperimentDeclaration(ctx context.Context, workDir string,
 	variation *domain.Variation, logger func(domain.LogLevel, string)) error {
 
-	path := filepath.Join(workDir, ".mendel", "experiment.json")
-	data, err := os.ReadFile(path)
+	decl, err := ReadDeclaredExperiment(workDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, ErrNoExperimentDeclared) {
 			return fmt.Errorf("no experiment declaration (this is fine)")
 		}
-		return fmt.Errorf("read experiment declaration: %w", err)
-	}
-
-	var decl DeclaredExperiment
-	if err := json.Unmarshal(data, &decl); err != nil {
-		return fmt.Errorf("parse experiment declaration: %w", err)
-	}
-	if msg := decl.Validate(); msg != "" {
 		// Loud rather than silent: a Variation that asked for live traffic and
 		// did not get it should say so where someone will read it.
-		logger(domain.LogLevelError, "Experiment declaration rejected: "+msg)
-		return fmt.Errorf("invalid experiment declaration: %s", msg)
+		logger(domain.LogLevelError, "Experiment declaration rejected: "+err.Error())
+		return err
 	}
 
 	projectID, err := g.db.GetProjectIDForVariation(ctx, variation.ID)

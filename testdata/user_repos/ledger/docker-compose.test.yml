@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    depends_on: [db]
+    environment:
+      DATABASE_URL: postgres://ledger:ledger@db:5432/ledger?sslmode=disable
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ledger
+      POSTGRES_PASSWORD: ledger
+      POSTGRES_DB: ledger

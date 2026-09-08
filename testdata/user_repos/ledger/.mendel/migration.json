@@ -1,0 +1,5 @@
+{
+  "up_instructions": "go run ./cmd/migrate up",
+  "down_instructions": "go run ./cmd/migrate down",
+  "notes": "Migrations live in db/migrations."
+}

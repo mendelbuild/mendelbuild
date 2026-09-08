@@ -1,0 +1,16 @@
+{
+  "requirements": [
+    {
+      "kind": "secret",
+      "name": "STRIPE_SECRET_KEY",
+      "description": "Charges the ledger settles against",
+      "console_url": "https://dashboard.stripe.com/apikeys"
+    },
+    {
+      "kind": "acknowledgement",
+      "name": "stripe-webhook",
+      "instructions": "Add {{deploy_url}}/webhooks/stripe to the endpoint list.",
+      "console_url": "https://dashboard.stripe.com/webhooks"
+    }
+  ]
+}

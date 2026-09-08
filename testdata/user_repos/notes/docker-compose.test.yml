@@ -1,0 +1,11 @@
+services:
+  app:
+    build: .
+    depends_on: [db]
+    environment:
+      DATABASE_URL: mysql://notes:notes@db:3306/notes
+  db:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: notes
+      MYSQL_DATABASE: notes

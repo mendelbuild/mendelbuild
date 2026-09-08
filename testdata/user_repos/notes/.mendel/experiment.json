@@ -1,0 +1,9 @@
+{
+  "assignment_unit": "user",
+  "assignment_key": {"source": "header", "name": "X-Notes-User"},
+  "migration": {
+    "up": "ALTER TABLE notes ADD COLUMN mendel_exp_rank INT;",
+    "down": "ALTER TABLE notes DROP COLUMN mendel_exp_rank;"
+  },
+  "dissonance": "Ranked notes go back to being ordered by date."
+}
