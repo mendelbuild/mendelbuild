@@ -372,9 +372,25 @@ archiving, which it has no reason to know.
    without both shapes is refused, since it describes a comparison that cannot
    be made.
 
-   What remains is the transport half — deploying the job through the
-   non-production path and accepting the report — which lands in files the
-   routing work is currently in.
+   **The receive half is built**: `adapter_invocations` records what was asked
+   and what came back, and `POST /adapters/report` accepts a result
+   authenticated by a per-invocation bearer token that is minted, never stored,
+   and expires. Four states are told apart — running, answered, failed,
+   abandoned — because three of them are not "no", and a page that collapses
+   them tells someone their datastore is unsuitable because a job was slow.
+
+   **The send half is rendered but not yet applied.** `adapter_manifest.go`
+   produces the Job and the Secret carrying its instruction, as pure functions
+   for the reason §16 gives for `k8sManifestFor`: the resources are readable and
+   testable without a cluster, and the things that have silently not worked on
+   GKE are at least visible in a test's output. Two properties are asserted
+   rather than intended — the cluster never retries a phase (`backoffLimit: 0`,
+   `restartPolicy: Never`), since applying a migration twice is not applying it
+   once; and the token is in a Secret rather than the pod spec, which is logged,
+   diffed and golden-tested.
+
+   What remains is applying it: building an adapter image, and the reconcile
+   loop that starts a probe and notices when one has gone quiet.
    Exercised with whatever adapter the test project's datastore needs — which
    adapter that is, is a fact about the test project, not a step here. If
    conformance passes across the boundary unchanged, the boundary is real.
