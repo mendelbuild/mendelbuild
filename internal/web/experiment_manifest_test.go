@@ -275,3 +275,69 @@ func TestEveryObjectNamesItsOwnNamespace(t *testing.T) {
 		}
 	}
 }
+
+// An Arm carries its own environment, and one Arm's does not leak into another.
+//
+// The first live experiment ran with none at all: EnvFrom was a field nothing
+// ever assigned, so both Arm pods logged "Google OAuth: NOT configured" while
+// mainline beside them had the secrets production was deployed with. That is not
+// a comparison -- the Arms differed from the control in a way nobody chose, and
+// sign-in was broken on them, so any result would have measured the missing
+// configuration rather than the change.
+func TestEachArmReadsItsOwnEnvironment(t *testing.T) {
+	d := experimentFixture()
+	d.Arms[1].EnvFrom = "\n        envFrom:\n        - secretRef:\n            name: exp-checkout-a-env"
+	// Arm b declares no requirements of its own, which is the ordinary case and
+	// must render a pod spec with no envFrom rather than one pointing at a
+	// Secret that was never applied.
+	manifest, err := d.Manifest()
+	if err != nil {
+		t.Fatalf("Manifest: %v", err)
+	}
+
+	armA := objectNamed(t, manifest, "exp-checkout-a")
+	if !strings.Contains(armA, "name: exp-checkout-a-env") {
+		t.Errorf("arm a should read its own Secret:\n%s", armA)
+	}
+
+	armB := objectNamed(t, manifest, "exp-checkout-b")
+	if strings.Contains(armB, "envFrom") {
+		t.Errorf("arm b declared no environment and must not name a Secret:\n%s", armB)
+	}
+	if strings.Contains(armB, "exp-checkout-a-env") {
+		t.Errorf("one arm's Secret reached another:\n%s", armB)
+	}
+}
+
+// The rendered manifest never carries a value, only the name of the Secret
+// holding it.
+//
+// Deliberate, and the reason applyEnvSecret is a separate call rather than more
+// lines in Manifest: this string is logged, diffed and golden-tested, and a
+// pure function that can be printed without leaking a credential is worth more
+// than one fewer round trip to the cluster.
+func TestTheManifestNamesSecretsWithoutCarryingThem(t *testing.T) {
+	d := experimentFixture()
+	d.Arms[1].EnvFrom = "\n        envFrom:\n        - secretRef:\n            name: exp-checkout-a-env"
+	manifest, err := d.Manifest()
+	if err != nil {
+		t.Fatalf("Manifest: %v", err)
+	}
+	if strings.Contains(manifest, "stringData") || strings.Contains(manifest, "kind: Secret") {
+		t.Errorf("the manifest should name Secrets, never render them:\n%s", manifest)
+	}
+}
+
+// objectNamed returns the one document in a manifest whose metadata.name
+// matches, so a test can assert about one object rather than about a haystack
+// where another object's text would satisfy the same Contains.
+func objectNamed(t *testing.T, manifest, name string) string {
+	t.Helper()
+	for _, doc := range strings.Split(manifest, "\n---\n") {
+		if strings.Contains(doc, "\n  name: "+name+"\n") {
+			return doc
+		}
+	}
+	t.Fatalf("no object named %s in:\n%s", name, manifest)
+	return ""
+}

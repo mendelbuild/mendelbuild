@@ -32,6 +32,16 @@ type ArmDeployment struct {
 
 	// Weight is this Arm's share of visitors who arrive without an assignment.
 	Weight int
+
+	// EnvFrom is the pod-spec fragment naming the Secret holding this Arm's
+	// environment, or "" when it needs none.
+	//
+	// Per Arm rather than per experiment, because a Variation declares its own
+	// requirements: one Arm's code may need a value that mainline's does not.
+	// The values themselves are never rendered here -- the Secret is applied
+	// separately and this only names it -- so a manifest can be logged, diffed
+	// and golden-tested without leaking anything.
+	EnvFrom string
 }
 
 // ExperimentGatewayClass is the class of the controller that does Arm matching.
@@ -70,8 +80,6 @@ type ExperimentDeployment struct {
 	// it on an http site means the browser never sends it back, so every request
 	// looks unassigned and nobody stays in an Arm.
 	Secure bool
-
-	EnvFrom string
 }
 
 // cookieMatch is the regular expression that recognises one Arm in a Cookie
@@ -181,7 +189,7 @@ spec:
   - port: 80
     targetPort: %[3]d
 ---
-`, name, arm.Image, hosting.ContainerPort, d.Name, arm.Slug, d.EnvFrom, hosting.Namespace)
+`, name, arm.Image, hosting.ContainerPort, d.Name, arm.Slug, arm.EnvFrom, hosting.Namespace)
 	}
 
 	// The Gateway that does the matching, and a stable Service in front of the

@@ -107,8 +107,14 @@ func (s *Server) StartExperiment(ctx context.Context, experimentID uuid.UUID,
 			return fmt.Errorf("building arm %s: %w", arm.Slug, err)
 		}
 		logMilestone("Built " + arm.Slug)
+
+		envFrom, err := s.applyArmEnvironment(ctx, exp, arm, pd.ProdHost(), session, logInfo)
+		if err != nil {
+			return fmt.Errorf("giving arm %s its environment: %w", arm.Slug, err)
+		}
+
 		deployment.Arms = append(deployment.Arms, ArmDeployment{
-			Slug: arm.Slug, Image: image, Weight: arm.AllocationWeight,
+			Slug: arm.Slug, Image: image, Weight: arm.AllocationWeight, EnvFrom: envFrom,
 		})
 	}
 
@@ -205,7 +211,7 @@ func (s *Server) StopExperiment(ctx context.Context, experimentID uuid.UUID,
 	logInfo("Removing the experiment's resources")
 	name := experimentResourceName(exp)
 	for _, scope := range []struct{ namespace, kinds string }{
-		{hosting.Namespace, "deployment,service,httproute,gateway"},
+		{hosting.Namespace, "deployment,service,httproute,gateway,secret"},
 		{ExperimentProxyNamespace, "referencegrant,healthcheckpolicy"},
 	} {
 		del := exec.CommandContext(ctx, "kubectl", "delete", scope.kinds,
@@ -222,6 +228,57 @@ func (s *Server) StopExperiment(ctx context.Context, experimentID uuid.UUID,
 	}
 	s.recordExperimentEvent(ctx, exp.ID, domain.EventKillSwitchPulled, reason)
 	return nil
+}
+
+// applyArmEnvironment gives an Arm the same environment production has, plus
+// whatever its own Variation declared, and returns the fragment its pod spec
+// needs to read it.
+//
+// An Arm with no environment is not a comparison. Both Arms of the first live
+// experiment logged "Google OAuth: NOT configured" because production's secrets
+// never reached them, so they differed from mainline in a way nobody chose and
+// sign-in did not work on either -- which would have confounded any result the
+// experiment produced. It also makes per-user assignment impossible, since that
+// needs somebody to be able to log in.
+//
+// The union, not one or the other. An Arm runs its Variation's branch, which is
+// mainline's code plus a change, so it needs everything production needs; and a
+// Variation that introduced a new requirement needs that too. Where both declare
+// the same name they are the same project-scoped value, so the union is not
+// ambiguous.
+func (s *Server) applyArmEnvironment(ctx context.Context, exp *domain.Experiment,
+	arm domain.ExperimentArm, prodHost string, session *gkeSession,
+	logInfo func(string)) (string, error) {
+
+	deployURL := prodHost
+	if deployURL != "" && !strings.HasPrefix(deployURL, "http") {
+		deployURL = "https://" + deployURL
+	}
+
+	merged, err := s.prodRequirementStatus(ctx, exp.ProjectID, deployURL)
+	if err != nil {
+		return "", err
+	}
+	own, err := s.variationRequirementStatus(ctx, exp.ProjectID, *arm.VariationID, deployURL)
+	if err != nil {
+		return "", err
+	}
+
+	values, err := s.appSecretsFor(ctx, exp.ProjectID, append(merged, own...))
+	if err != nil {
+		return "", err
+	}
+	if len(values) == 0 {
+		// Not a failure, and not silence either: an Arm that needs nothing and
+		// an Arm whose values are missing look identical in the cluster, and the
+		// log is the only place the difference is visible.
+		logInfo("Arm " + arm.Slug + " needs no configured values")
+		return "", nil
+	}
+
+	logInfo(fmt.Sprintf("Giving arm %s the %d value(s) production runs with", arm.Slug, len(values)))
+	return session.applyEnvSecret(ctx, experimentArmResource(exp, arm)+"-env", values,
+		map[string]string{"mendel-experiment": experimentResourceName(exp)})
 }
 
 // buildArmImage checks out the Variation's branch and builds it.

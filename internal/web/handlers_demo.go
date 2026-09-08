@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -958,6 +959,71 @@ func (g *gkeSession) kubectl(ctx context.Context, args ...string) *exec.Cmd {
 	return cmd
 }
 
+// applyEnvSecret puts an app's required values in a Secret and returns the
+// envFrom fragment a pod spec needs to read them.
+//
+// Shared by the ordinary deploy and by each experiment Arm, because an Arm that
+// does not get the same environment is not comparable to the mainline it is
+// being measured against. It differs from mainline in a way nobody chose, and
+// the difference -- sign-in that silently does not work -- confounds whatever
+// the experiment was actually asking.
+//
+// The manifest holding the values is written outside any checked-out repository
+// and deleted once applied, so they never sit in a working tree. Returns "" when
+// there is nothing to inject, which is a pod spec with no envFrom rather than
+// one pointing at an empty Secret.
+func (g *gkeSession) applyEnvSecret(ctx context.Context, secretName string,
+	values map[string]string, labels map[string]string) (string, error) {
+
+	if len(values) == 0 {
+		return "", nil
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\n", secretName)
+	if len(labels) > 0 {
+		// Labelled so teardown finds it by the same query it finds everything
+		// else an experiment made, without knowing what each object is.
+		sb.WriteString("  labels:\n")
+		for _, k := range sortedKeys(labels) {
+			fmt.Fprintf(&sb, "    %s: %s\n", k, labels[k])
+		}
+	}
+	sb.WriteString("type: Opaque\nstringData:\n")
+	for _, name := range sortedKeys(values) {
+		// Block scalar: the value is copied verbatim, whatever it contains.
+		fmt.Fprintf(&sb, "  %s: |-\n    %s\n", name, strings.ReplaceAll(values[name], "\n", "\n    "))
+	}
+
+	secretFile, err := os.CreateTemp("", "mendel-secret-*.yaml")
+	if err != nil {
+		return "", fmt.Errorf("failed to create secret manifest: %w", err)
+	}
+	secretPath := secretFile.Name()
+	defer os.Remove(secretPath)
+	if _, err := secretFile.WriteString(sb.String()); err != nil {
+		secretFile.Close()
+		return "", fmt.Errorf("failed to write secret manifest: %w", err)
+	}
+	secretFile.Close()
+
+	if output, err := g.kubectl(ctx, "apply", "-f", secretPath).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("failed to apply secret: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return fmt.Sprintf("\n        envFrom:\n        - secretRef:\n            name: %s", secretName), nil
+}
+
+// sortedKeys keeps a rendered manifest stable across runs, so re-applying an
+// unchanged environment is a no-op rather than a pod restart.
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // ensureNamespace creates Mendel's namespace if the user's cluster lacks it.
 func (g *gkeSession) ensureNamespace(ctx context.Context) error {
 	check := exec.CommandContext(ctx, "kubectl", "get", "namespace", g.namespace)
@@ -1034,38 +1100,13 @@ func (s *Server) deployToGKE(
 	}
 
 	// Put the app's required values in a Secret the Deployment reads from.
-	// The manifest holding them is written outside workDir and deleted once
-	// applied, so the values never sit in the checked-out repository.
-	envFrom := ""
 	if len(appSecrets) > 0 {
-		secretName := deploymentName + "-env"
-		logInfo(fmt.Sprintf("Creating Secret %s with %d required value(s)...", secretName, len(appSecrets)))
-
-		var sb strings.Builder
-		fmt.Fprintf(&sb, "apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\ntype: Opaque\nstringData:\n", secretName)
-		for name, value := range appSecrets {
-			// Block scalar: the value is copied verbatim, whatever it contains.
-			fmt.Fprintf(&sb, "  %s: |-\n    %s\n", name, strings.ReplaceAll(value, "\n", "\n    "))
-		}
-
-		secretFile, err := os.CreateTemp("", "mendel-secret-*.yaml")
-		if err != nil {
-			return "", fmt.Errorf("failed to create secret manifest: %w", err)
-		}
-		secretPath := secretFile.Name()
-		defer os.Remove(secretPath)
-		if _, err := secretFile.WriteString(sb.String()); err != nil {
-			secretFile.Close()
-			return "", fmt.Errorf("failed to write secret manifest: %w", err)
-		}
-		secretFile.Close()
-
-		secretCmd := session.kubectl(ctx, "apply", "-f", secretPath)
-		if output, err := secretCmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("failed to apply secret: %s: %w", strings.TrimSpace(string(output)), err)
-		}
-
-		envFrom = fmt.Sprintf("\n        envFrom:\n        - secretRef:\n            name: %s", secretName)
+		logInfo(fmt.Sprintf("Creating Secret %s-env with %d required value(s)...",
+			deploymentName, len(appSecrets)))
+	}
+	envFrom, err := session.applyEnvSecret(ctx, deploymentName+"-env", appSecrets, nil)
+	if err != nil {
+		return "", err
 	}
 
 	// A hostname only exists if the project has a domain to build one from, and
