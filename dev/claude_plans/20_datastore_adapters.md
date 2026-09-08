@@ -163,6 +163,7 @@ Both predate this design and are true of the hand-written adapter.
 | D61 | Re-gate on the suite version and on the datastore the adapter reports connecting to | A maintained list of repository files whose change forces re-gating | A list is inference from the repository where observation is available every run, must be maintained, and breaks silently on a different layout |
 | D62 | Rename the channel's demo path to the non-production path; the demo itself keeps its name | Rename both, or neither | The destination widened and the user-facing feature did not; they were only ever one word by accident |
 | D63 | Generation failure retries with the conformance failure as the fix, bounded by the cost model | Let a user supply an adapter; retry without a bound | The failure messages name requirements, which is what a fix can act on; and an unbounded retry is an unbounded agent spend |
+| D64 | Five phases — probe, admit, apply, withdraw, restore — divided where Mendel must decide, or where time passes | Split admission into provision and verify; merge apply's cleanup with withdrawal | Nothing in admission needs a decision partway, and Probe already reports a provisioning failure sooner; apply's cleanup and a deliberate withdrawal share statements and not intent |
 
 ---
 
@@ -270,17 +271,49 @@ requirement it could not meet, which is D57.
 
 ---
 
-## 6a. Still open
+**O31 — Where do the phases divide? — resolved: five, and admission is one of
+them** (D64).
 
-**O31 — What does a phase boundary look like, exactly?** D59 makes the unit of
-invocation a phase rather than a method, and names one: verify-and-shape. Whether
-admission is one phase or two, and whether apply and rollback are each their own,
-is not settled and wants writing down before the protocol is fixed.
+A phase ends where **Mendel must decide something that changes what happens
+next**, or where **a gap opens that no connection survives**. Not at method
+boundaries.
+
+| Phase | Does | Triggered by |
+|---|---|---|
+| Probe | Capabilities, engine and version, can-provision. No migration. | The settings page and its refresh |
+| Admit | Provision the sandbox, deny-list, verify speculatively, shape *both* stores, identity | A Variation declaring a migration |
+| Apply | Re-check drift, run the up migration | Experiment start |
+| Withdraw | Archive, then run the down migration | Teardown, kill switch, an allocation change |
+| Restore | Load an archive back | A person, rarely |
+
+**Admission is one phase.** Everything after `VerifySpeculatively` depends only
+on `delta.Added`, which the adapter itself produced, so the shapes and identities
+are gathered in the same breath and handed back together. There is no moment
+where Mendel has to look, judge, and send the adapter somewhere new. Splitting
+provisioning out was considered — so that "this credential cannot create a
+database" costs no verification attempt — and Probe already answers that earlier
+and more cheaply.
+
+**Probe is the phase most easily missed and the most useful.** It is the only one
+that runs when no experiment exists, which is exactly when the experiments page
+needs an answer, and it is what D57's condition reports.
+
+**Apply and Withdraw are separate because days pass between them**, not because
+one is chosen over the other. No job stays open across an experiment's lifetime.
+
+One precision to keep, since the two are easy to conflate: **the down migration
+runs in two phases for two different reasons.** Apply runs it as *cleanup* when a
+statement fails partway — immediate, in the same job, no archive. Withdraw runs
+it as *deliberate reversal* — later, archive first. Same statements, different
+intent, and merging them would have the more dangerous path learn about
+archiving, which it has no reason to know.
 
 ## 7. Build order
 
 1. **The boundary, with an adapter that already passes.** The instruction and
-   result formats, the job deploy, the outbound report, and O31's phases.
+   result formats, the job deploy, the outbound report, and D64's phases —
+   Probe first, since it is the cheapest, needs no migration, and is the one a
+   page is already waiting on.
    Exercised with whatever adapter the test project's datastore needs — which
    adapter that is, is a fact about the test project, not a step here. If
    conformance passes across the boundary unchanged, the boundary is real.
