@@ -264,3 +264,37 @@ func TestGatewayErrorsAreNotServing(t *testing.T) {
 		}
 	}
 }
+
+// Teardown must reach everything an experiment created, including what it put in
+// the controller's namespace.
+//
+// An experiment reaches across a boundary twice: the grant that lets the
+// production route reference the proxy, and the health check that keeps the load
+// balancer believing the proxy is up. Deleting only from mendel-apps left both
+// behind on every stop, and they accumulated — two orphaned pairs were found on
+// a real cluster.
+func TestTeardownReachesBothNamespaces(t *testing.T) {
+	src, err := os.ReadFile("experiment_lifecycle.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+
+	for _, kind := range []string{"referencegrant", "healthcheckpolicy"} {
+		if !strings.Contains(body, kind) {
+			t.Errorf("teardown does not delete %s, which the experiment creates", kind)
+		}
+	}
+	if !strings.Contains(body, "ExperimentProxyNamespace, \"referencegrant") {
+		t.Error("teardown does not reach the controller's namespace, where two of the objects live")
+	}
+
+	// Found by label, so both objects must carry one. The health check policy did
+	// not, so even deleting the right kind in the right namespace would have
+	// missed it.
+	policy := body[strings.Index(body, "kind: HealthCheckPolicy"):]
+	policy = policy[:strings.Index(policy, "spec:")]
+	if !strings.Contains(policy, "mendel-experiment:") {
+		t.Error("the health check policy carries no experiment label, so teardown cannot find it")
+	}
+}

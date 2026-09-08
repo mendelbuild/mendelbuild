@@ -138,7 +138,7 @@ func (s *Server) StartExperiment(ctx context.Context, experimentID uuid.UUID,
 	// is correct of Envoy and fatal here. Envoy has a readiness endpoint on a
 	// port of its own; the check is pointed at that instead.
 	logMilestone("Teaching the edge gateway how to health check the proxy")
-	if err := session.healthCheckProxy(ctx, proxy); err != nil {
+	if err := session.healthCheckProxy(ctx, proxy, experimentResourceName(exp)); err != nil {
 		return err
 	}
 
@@ -196,14 +196,25 @@ func (s *Server) StopExperiment(ctx context.Context, experimentID uuid.UUID,
 
 	// Everything the experiment created carries its label, so teardown finds
 	// what it made without knowing what each object is.
+	//
+	// Two namespaces and two sets of kinds, because an experiment reaches into
+	// the controller's namespace: the grant that lets the production route cross
+	// the boundary, and the health check that keeps the load balancer believing
+	// the proxy is up. Deleting only from mendel-apps left both behind on every
+	// stop, and they accumulated.
 	logInfo("Removing the experiment's resources")
 	name := experimentResourceName(exp)
-	del := exec.CommandContext(ctx, "kubectl", "delete",
-		"deployment,service,httproute,gateway", "-n", hosting.Namespace,
-		"-l", "mendel-experiment="+name, "--ignore-not-found")
-	del.Env = session.env
-	if out, err := del.CombinedOutput(); err != nil {
-		logInfo("Some resources were left behind: " + strings.TrimSpace(string(out)))
+	for _, scope := range []struct{ namespace, kinds string }{
+		{hosting.Namespace, "deployment,service,httproute,gateway"},
+		{ExperimentProxyNamespace, "referencegrant,healthcheckpolicy"},
+	} {
+		del := exec.CommandContext(ctx, "kubectl", "delete", scope.kinds,
+			"-n", scope.namespace, "-l", "mendel-experiment="+name, "--ignore-not-found")
+		del.Env = session.env
+		if out, err := del.CombinedOutput(); err != nil {
+			logInfo("Some resources were left behind in " + scope.namespace + ": " +
+				strings.TrimSpace(string(out)))
+		}
 	}
 
 	if err := s.db.SetExperimentStatus(ctx, exp.ID, domain.ExperimentStopped); err != nil {
@@ -330,12 +341,14 @@ func (g *gkeSession) routeBackendNamespace(ctx context.Context, route string) (s
 // load balancer GKE provisions, and Gateway API has no portable way to describe
 // one. It is applied here rather than rendered with the rest because it names
 // the proxy Service, whose name Envoy chooses.
-func (g *gkeSession) healthCheckProxy(ctx context.Context, proxyService string) error {
+func (g *gkeSession) healthCheckProxy(ctx context.Context, proxyService, experimentName string) error {
 	manifest := fmt.Sprintf(`apiVersion: networking.gke.io/v1
 kind: HealthCheckPolicy
 metadata:
   name: %[1]s
   namespace: %[2]s
+  labels:
+    mendel-experiment: %[4]s
 spec:
   default:
     config:
@@ -347,7 +360,7 @@ spec:
     group: ""
     kind: Service
     name: %[1]s
-`, proxyService, ExperimentProxyNamespace, envoyReadinessPort)
+`, proxyService, ExperimentProxyNamespace, envoyReadinessPort, experimentName)
 
 	cmd := exec.CommandContext(ctx, "kubectl", "apply", "--server-side", "-f", "-")
 	cmd.Env = g.env
