@@ -206,3 +206,114 @@ func (f fakeStore) Dump(context.Context, experiment.DumpQuery) ([]map[string]any
 	return nil, nil
 }
 func (f fakeStore) Load(context.Context, string, []string, []map[string]any) error { return nil }
+
+// --- What reaches production is compared against what was admitted ---
+
+// noLock stands in for the Mendel-side lock, which orders Mendel against itself
+// and has nothing to do with what these check.
+type noLock struct{}
+
+func (noLock) Acquire(context.Context, string) (func(), error) { return func() {}, nil }
+
+// A migration is verified against a copy and then handed to the adapter against
+// production. Until Apply checked, the second half rested entirely on the
+// adapter doing the same thing twice -- which is the one part of this machinery
+// Mendel may not have written.
+type lyingStore struct {
+	experiment.Datastore
+
+	// applied is what the store pretends the collection looks like after the
+	// migration, regardless of what the migration said.
+	applied experiment.TableSchema
+	before  experiment.TableSchema
+	execs   int
+}
+
+func (l *lyingStore) Kind() string { return "lying" }
+func (l *lyingStore) Capabilities() experiment.Capabilities {
+	return experiment.Capabilities{StructuralDiff: true, SpeculativeApply: true}
+}
+func (l *lyingStore) Split(change string) []string { return []string{change} }
+func (l *lyingStore) Exec(context.Context, string) error {
+	l.execs++
+	return nil
+}
+func (l *lyingStore) Shape(_ context.Context, _ string) (experiment.TableSchema, error) {
+	if l.execs == 0 {
+		return l.before, nil
+	}
+	return l.applied, nil
+}
+func (l *lyingStore) Identity(context.Context, string) ([]string, error) {
+	return []string{"id"}, nil
+}
+
+func admissionFor(added []experiment.Object, before experiment.TableSchema) *experiment.Admission {
+	return &experiment.Admission{
+		Migration: experiment.Migration{Up: "ALTER TABLE orders ADD COLUMN mendel_exp_x INT", Down: "x"},
+		Delta:     experiment.Delta{Added: added},
+		Shapes:    map[string]experiment.TableSchema{"orders": before},
+	}
+}
+
+// An adapter that does something other than the admitted migration is caught,
+// and what it did is undone.
+func TestApplyRefusesWhatWasNotAdmitted(t *testing.T) {
+	before := experiment.TableSchema{"id": "integer", "total": "integer"}
+	store := &lyingStore{
+		before: before,
+		// The admitted column, and one nobody asked for.
+		applied: experiment.TableSchema{
+			"id": "integer", "total": "integer",
+			"mendel_exp_x": "integer", "surprise": "text",
+		},
+	}
+	a := &experiment.Applier{Store: store, Lock: noLock{}}
+
+	err := a.Apply(t.Context(), admissionFor(
+		[]experiment.Object{{Kind: experiment.ObjectField, Collection: "orders", Name: "mendel_exp_x"}},
+		before,
+	))
+	if err == nil {
+		t.Fatal("applying something other than what was admitted must be refused")
+	}
+	if !strings.Contains(err.Error(), "not do what was admitted") {
+		t.Errorf("the error should say the migration did not do what was admitted, got %v", err)
+	}
+}
+
+// And one that silently does less is caught too: an experiment would otherwise
+// run against a schema it does not have.
+func TestApplyRefusesAMigrationThatDidNothing(t *testing.T) {
+	before := experiment.TableSchema{"id": "integer", "total": "integer"}
+	store := &lyingStore{before: before, applied: before}
+	a := &experiment.Applier{Store: store, Lock: noLock{}}
+
+	err := a.Apply(t.Context(), admissionFor(
+		[]experiment.Object{{Kind: experiment.ObjectField, Collection: "orders", Name: "mendel_exp_x"}},
+		before,
+	))
+	if err == nil {
+		t.Fatal("a migration that added nothing it was admitted to add must be refused")
+	}
+	if !strings.Contains(err.Error(), "did not add") {
+		t.Errorf("the error should name what is missing, got %v", err)
+	}
+}
+
+// The honest case still works, or the check is worse than no check.
+func TestApplyAcceptsWhatWasAdmitted(t *testing.T) {
+	before := experiment.TableSchema{"id": "integer", "total": "integer"}
+	store := &lyingStore{
+		before:  before,
+		applied: experiment.TableSchema{"id": "integer", "total": "integer", "mendel_exp_x": "integer"},
+	}
+	a := &experiment.Applier{Store: store, Lock: noLock{}}
+
+	if err := a.Apply(t.Context(), admissionFor(
+		[]experiment.Object{{Kind: experiment.ObjectField, Collection: "orders", Name: "mendel_exp_x"}},
+		before,
+	)); err != nil {
+		t.Fatalf("a migration that did exactly what it was admitted to do was refused: %v", err)
+	}
+}

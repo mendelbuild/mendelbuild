@@ -131,21 +131,40 @@ adapter's implementation rather than something Mendel performs.
 
 ---
 
-## 4. What is still not verified, independent of all this
+## 4. What Mendel used to take on trust
 
 Worth recording here because this document is about not trusting things, and
-these are two places Mendel currently does.
+these were the two places Mendel did.
 
-- **`Apply` writes to production unchecked.** It splits the migration, calls
-  `Exec` per statement, and never re-reads the catalogue to compare what
-  happened against the `Delta` admission recorded. Whatever the adapter actually
-  did, Mendel would not know. The mechanism to fix it already exists — the same
-  read-apply-read-compare admission uses.
-- **`Load` restores rows with nothing checking where they landed.** The
-  catalogue diff is about structure and says nothing about a restore that
-  reinstated an archive into the wrong place.
+Both predated this design and were true of the hand-written adapter. **Both are
+now closed, and what is left of each is stated rather than implied.**
 
-Both predate this design and are true of the hand-written adapter.
+- **`Apply` compared nothing.** It split the migration, called `Exec` per
+  statement, and never looked again — so what reached production rested entirely
+  on the adapter doing the same thing twice. `checkApplied` now re-reads the
+  shape of every collection admission recorded and requires it to be the
+  admitted shape plus exactly the admitted additions, rolling back when it is
+  not. It catches a migration that did *more* than it was admitted for and one
+  that did *less*; a lying adapter in the tests is refused for both.
+
+  **What it does not cover:** a collection this migration never touched.
+  Admission records shapes only for what the change said it would touch, so a
+  change somewhere else is outside the comparison. Closing that needs a
+  whole-catalogue read the interface does not offer, and inventing one for a
+  threat the deny-list and the delta already narrow is not obviously the right
+  trade — recorded here rather than fixed (O32).
+
+- **`Load` restored rows with nothing checking where they landed.** The worst
+  place for an unchecked write, since it happens after the data was dropped and
+  the thing that would reveal a failure is gone. `checkRestored` reads back with
+  the query the archive was taken with and counts.
+
+  **A count, not a value-by-value diff.** Diffing would catch more and would
+  mean holding the archive and its restored twin in memory together, for the
+  largest thing this machinery moves. A count catches what actually happens:
+  wrote nothing, wrote somewhere else, wrote some of it. Fewer than archived is
+  an error; more is not, since a collection legitimately holds rows the
+  experiment never touched.
 
 ---
 
@@ -270,6 +289,12 @@ rather than an open-ended loop. After the bound, Mendel declines and names the
 requirement it could not meet, which is D57.
 
 ---
+
+**O32 — Should verification of an apply read the whole catalogue?** §4's
+comparison covers the collections admission recorded and not a change elsewhere.
+A whole-catalogue read would close it and is a new interface method for a threat
+the deny-list and the admitted delta already narrow. Worth deciding on evidence
+from a generated adapter rather than in advance.
 
 **O31 — Where do the phases divide? — resolved: five, and admission is one of
 them** (D64).

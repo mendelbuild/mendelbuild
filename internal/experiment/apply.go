@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"hash/fnv"
 	"strings"
 
@@ -257,6 +258,58 @@ func (a *Applier) Apply(ctx context.Context, adm *Admission) error {
 			return applyErr
 		}
 	}
+
+	if err := a.checkApplied(ctx, adm); err != nil {
+		if cleanupErr := a.runDown(ctx, adm); cleanupErr != nil {
+			return fmt.Errorf("%w (and cleanup failed: %v)", err, cleanupErr)
+		}
+		return err
+	}
+	return nil
+}
+
+// checkApplied confirms production now looks the way admission said it would.
+//
+// Until this existed, nothing checked. The migration was verified against a
+// copy and then handed to Exec against production on the understanding that the
+// same statements do the same thing -- an understanding resting entirely on the
+// adapter, which is the one part of this machinery Mendel may not have written.
+//
+// It is §13 §4.1's argument about the classifier, one level down. A classifier
+// will be wrong, so containment does not depend on it; an adapter may be wrong,
+// so what reached production is compared against what was admitted rather than
+// assumed from it.
+//
+// What it covers, precisely, because the limit matters: the collections
+// admission recorded shapes for. A change to a collection this migration never
+// touched is outside it, and closing that needs a whole-catalogue reading the
+// interface does not offer.
+func (a *Applier) checkApplied(ctx context.Context, adm *Admission) error {
+	for c, before := range adm.Shapes {
+		now, err := a.Store.Shape(ctx, c)
+		if err != nil {
+			return fmt.Errorf("re-read shape of %s after applying: %w", c, err)
+		}
+		// What should be there is what was there plus what the admitted delta
+		// adds, so stripping the additions back off should return the shape
+		// admission recorded.
+		if diff := describeShapeDiff(before, withoutAdded(now, c, adm.Delta.Added)); diff != "" {
+			return fmt.Errorf("applying this migration did not do what was admitted: %s now %s. "+
+				"It was verified against a copy and has been rolled back here", c, diff)
+		}
+		// And everything the delta promised has to be present, or the migration
+		// silently did less than it was admitted for and the experiment would
+		// run against a schema it does not have.
+		for _, o := range adm.Delta.Added {
+			if o.Collection != c || o.Name == "" || o.Kind != ObjectField {
+				continue
+			}
+			if _, ok := now[o.Name]; !ok {
+				return fmt.Errorf("applying this migration did not add %s, which it was admitted "+
+					"to add; it has been rolled back", o)
+			}
+		}
+	}
 	return nil
 }
 
@@ -377,10 +430,20 @@ func (a *Applier) archive(ctx context.Context, adm *Admission) (*Archive, error)
 // Restore puts an archive back. It is what makes the archive a backup rather
 // than a belief, and the round trip is exercised before an experiment runs so
 // its first use is never in anger.
+// Restore puts an archive back, and checks that it landed.
+//
+// Load is the other place production is written through the adapter, and it was
+// the other place nothing looked afterwards. A restore that silently wrote
+// nothing, or wrote to the wrong collection, would report success over the only
+// copy of data that had already been dropped -- the worst moment for an
+// unchecked write, since the thing that would reveal it is gone.
 func (a *Applier) Restore(ctx context.Context, arch *Archive) error {
 	for c, records := range arch.Collections {
 		if err := a.Store.Load(ctx, c, nil, records); err != nil {
 			return fmt.Errorf("restore into %s: %w", c, err)
+		}
+		if err := a.checkRestored(ctx, c, nil, nil, records); err != nil {
+			return err
 		}
 	}
 	for c, records := range arch.Fields {
@@ -391,6 +454,71 @@ func (a *Applier) Restore(ctx context.Context, arch *Archive) error {
 		if err := a.Store.Load(ctx, c, id, records); err != nil {
 			return fmt.Errorf("restore fields of %s: %w", c, err)
 		}
+		if err := a.checkRestored(ctx, c, id, restoredFields(records, id), records); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// restoredFields is what an archived record carries beyond its identity: the
+// experiment's own fields, which is what the archive was scoped to and so what
+// reading it back has to be scoped to as well.
+func restoredFields(records []map[string]any, identity []string) []string {
+	isIdentity := make(map[string]bool, len(identity))
+	for _, id := range identity {
+		isIdentity[id] = true
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, r := range records {
+		for k := range r {
+			if !isIdentity[k] && !seen[k] {
+				seen[k] = true
+				out = append(out, k)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// checkRestored reads back what was just written and counts it.
+//
+// A count rather than a comparison of every value, and the choice is worth
+// stating. Diffing each record would catch more and would mean holding the
+// archive and its restored twin in memory together -- for the largest thing
+// this machinery moves. A count catches the failures that actually happen:
+// wrote nothing, wrote somewhere else, wrote some of it.
+//
+// Fewer than expected is the error. More is not: a collection may legitimately
+// hold rows that were never archived, since an experiment's rows are a subset
+// of what is there.
+func (a *Applier) checkRestored(ctx context.Context, collection string, identity, fields []string, records []map[string]any) error {
+	want := len(records)
+	if want == 0 {
+		return nil
+	}
+	// Read it back the way it was archived. A whole collection is counted
+	// whole; a set of fields is counted where those fields are present, which
+	// is the query the archive was taken with and so the only one whose answer
+	// is comparable to it.
+	if identity != nil && len(fields) == 0 {
+		return nil
+	}
+	back, err := a.Store.Dump(ctx, DumpQuery{
+		Collection: collection,
+		Whole:      identity == nil,
+		Identity:   identity,
+		Fields:     fields,
+	})
+	if err != nil {
+		return fmt.Errorf("read %s back after restoring it: %w", collection, err)
+	}
+	if len(back) < want {
+		return fmt.Errorf("restoring %s put back %d of %d records. The archive is still held, and "+
+			"this is reported rather than retried because a restore that wrote some of its records "+
+			"has already changed what a second attempt would land on", collection, len(back), want)
 	}
 	return nil
 }
