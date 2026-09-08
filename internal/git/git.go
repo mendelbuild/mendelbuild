@@ -543,3 +543,39 @@ func isGitHubAuthError(stderr, remoteURL string) bool {
 	}
 	return false
 }
+
+// RemoteHeads reports the commit each branch on the remote currently points at.
+//
+// One network call and no clone, because the question -- is this arm running the
+// branch's latest code -- is asked on every page render and answering it by
+// fetching a working tree per arm would make the page cost a repository.
+//
+// A branch missing from the result is a branch that does not exist on the
+// remote, which is a different thing from a call that failed; the error is
+// returned rather than folded into an empty map, so a caller can tell "there is
+// no such branch" from "Mendel could not look" and say so.
+func RemoteHeads(ctx context.Context, repoURL, authToken string) (map[string]string, error) {
+	if authToken != "" {
+		repoURL = embedAuthToken(repoURL, authToken)
+	}
+
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--heads", repoURL)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-remote: %w: %s", err, stderr.String())
+	}
+
+	heads := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		sha, ref, found := strings.Cut(strings.TrimSpace(line), "\t")
+		if !found {
+			continue
+		}
+		heads[strings.TrimPrefix(ref, "refs/heads/")] = sha
+	}
+	return heads, nil
+}

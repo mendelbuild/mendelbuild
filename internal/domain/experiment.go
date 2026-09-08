@@ -118,9 +118,119 @@ type ExperimentArm struct {
 	DeclaredMigrationUp   string `json:"declared_migration_up,omitempty"`
 	DeclaredMigrationDown string `json:"declared_migration_down,omitempty"`
 
+	// What this Arm was built from, recorded at build time.
+	//
+	// Without it, "this arm is running code from before your last change" is
+	// undetectable. With it, staleness is a comparison against the branch head
+	// rather than a memory of whether somebody restarted the experiment.
+	//
+	// SourceCommit empty means never built. That is not the same as built from
+	// an unknown commit, and BuiltAt is a pointer for the same reason: a zero
+	// time reads as 1970 rather than as never.
+	SourceCommit string     `json:"source_commit,omitempty"`
+	Image        string     `json:"image,omitempty"`
+	BuiltAt      *time.Time `json:"built_at,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
+
+// ArmFreshness is how an Arm's build stands against its branch.
+//
+// Three values and not a bool, for the reason Fact is three: an Arm Mendel could
+// not check is not an Arm that is up to date, and showing the first as the second
+// is how somebody concludes their change is live when it is not.
+type ArmFreshness string
+
+const (
+	// ArmNeverBuilt is an Arm with no image yet -- a draft experiment, or one
+	// whose start failed before it got here.
+	ArmNeverBuilt ArmFreshness = "never-built"
+
+	// ArmCurrent is an Arm built from the commit its branch head names.
+	ArmCurrent ArmFreshness = "current"
+
+	// ArmStale is an Arm built from something else. Mendel does not act on this
+	// by itself: rebuilding an Arm that is serving traffic changes what
+	// participants see, which is a decision rather than a tidy-up.
+	ArmStale ArmFreshness = "stale"
+
+	// ArmFreshnessUnknown is an Arm whose branch Mendel could not read. Reported
+	// as its own state rather than folded into stale, because "go rebuild this"
+	// is the wrong instruction when the truth is that Mendel could not look.
+	ArmFreshnessUnknown ArmFreshness = "unknown"
+)
+
+// ArmBuild is what Mendel knows about one Arm's build and how it stands.
+//
+// Assembled for a reader rather than stored: the columns record what happened,
+// and the branch head is looked up when somebody asks.
+type ArmBuild struct {
+	Freshness ArmFreshness `json:"freshness"`
+
+	// SourceCommit is what the running image was built from, HeadCommit what the
+	// branch names now. Either may be empty, and which one is says something
+	// different: no source means never built, no head means Mendel could not read
+	// the branch.
+	SourceCommit string     `json:"source_commit,omitempty"`
+	HeadCommit   string     `json:"head_commit,omitempty"`
+	Image        string     `json:"image,omitempty"`
+	BuiltAt      *time.Time `json:"built_at,omitempty"`
+
+	// Detail is the sentence a reader is shown, written once here so the page and
+	// any refusal say the same thing.
+	Detail string `json:"detail"`
+}
+
+// Short renders a commit the length a person reads.
+func short(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
+}
+
+// DescribeArmBuild judges a build against a branch head.
+//
+// head is empty when Mendel could not read the branch, which is the case that
+// must not be reported as staleness: telling someone to rebuild an arm that is
+// already current wastes a build and, mid-experiment, changes what participants
+// see for no reason.
+func DescribeArmBuild(arm ExperimentArm, head string) ArmBuild {
+	b := ArmBuild{
+		SourceCommit: arm.SourceCommit,
+		HeadCommit:   head,
+		Image:        arm.Image,
+		BuiltAt:      arm.BuiltAt,
+	}
+	switch {
+	case arm.IsMainline():
+		// Mainline is not built by the experiment -- it keeps the Deployment the
+		// ordinary production deploy made. Asking whether it is stale is asking
+		// about production, which is a different page's question.
+		b.Freshness = ArmCurrent
+		b.Detail = "Mainline runs whatever production runs; the experiment does not build it."
+	case arm.SourceCommit == "":
+		b.Freshness = ArmNeverBuilt
+		b.Detail = "Not built yet. Starting the experiment builds it from its branch."
+	case head == "":
+		b.Freshness = ArmFreshnessUnknown
+		b.Detail = "Built from " + short(arm.SourceCommit) + ". Mendel could not read the branch, " +
+			"so whether that is still its head is unknown -- not out of date, unchecked."
+	case head == arm.SourceCommit:
+		b.Freshness = ArmCurrent
+		b.Detail = "Built from " + short(head) + ", which is the head of its branch."
+	default:
+		b.Freshness = ArmStale
+		b.Detail = "Serving " + short(arm.SourceCommit) + ", but its branch is now at " +
+			short(head) + ". Visitors in this arm are not seeing the later change."
+	}
+	return b
+}
+
+// Stale reports whether this build is behind, for a caller that needs to decide
+// rather than to render. Unknown is not stale.
+func (b ArmBuild) Stale() bool { return b.Freshness == ArmStale }
 
 // IsMainline reports whether this Arm is the control.
 func (a ExperimentArm) IsMainline() bool { return a.VariationID == nil }

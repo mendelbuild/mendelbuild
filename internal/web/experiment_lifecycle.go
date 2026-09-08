@@ -102,11 +102,11 @@ func (s *Server) StartExperiment(ctx context.Context, experimentID uuid.UUID,
 			continue
 		}
 
-		image, err := s.buildArmImage(ctx, exp, arm, session, logInfo)
+		image, commit, err := s.buildArmImage(ctx, exp, arm, session, false, logInfo)
 		if err != nil {
 			return fmt.Errorf("building arm %s: %w", arm.Slug, err)
 		}
-		logMilestone("Built " + arm.Slug)
+		logMilestone("Built " + arm.Slug + " from " + commit[:min(7, len(commit))])
 
 		envFrom, err := s.applyArmEnvironment(ctx, exp, arm, pd.ProdHost(), session, logInfo)
 		if err != nil {
@@ -281,10 +281,17 @@ func (s *Server) applyArmEnvironment(ctx context.Context, exp *domain.Experiment
 		map[string]string{"mendel-experiment": experimentResourceName(exp)})
 }
 
-// buildArmImage checks out the Variation's branch and builds it.
-func (s *Server) buildArmImage(ctx context.Context, exp *domain.Experiment,
-	arm domain.ExperimentArm, session *gkeSession, logInfo func(string)) (string, error) {
+// armBranch names the branch an Arm's Variation lives on.
+//
+// Derived the same way code generation derives it, because the two must agree:
+// an Arm built from a branch nobody is writing to would be permanently, silently
+// current.
+func (s *Server) armBranch(ctx context.Context, exp *domain.Experiment,
+	arm domain.ExperimentArm) (string, error) {
 
+	if arm.VariationID == nil {
+		return "", fmt.Errorf("mainline has no branch of its own")
+	}
 	variation, err := s.db.GetVariation(ctx, *arm.VariationID)
 	if err != nil || variation == nil {
 		return "", fmt.Errorf("variation not found")
@@ -293,31 +300,108 @@ func (s *Server) buildArmImage(ctx context.Context, exp *domain.Experiment,
 	if err != nil || hop == nil {
 		return "", fmt.Errorf("hop not found")
 	}
-	repo, err := s.db.GetRepositoryByProject(ctx, exp.ProjectID)
-	if err != nil || repo == nil || repo.URL == nil {
-		return "", fmt.Errorf("this project has no repository URL")
-	}
+	return fmt.Sprintf("mendel/%s/%s",
+		sanitizeBranchName(hop.Name), sanitizeBranchName(variation.Name)), nil
+}
 
-	var repoConfig struct {
-		AuthToken string `json:"auth_token"`
+// repoAccess is what reaching a project's repository takes.
+type repoAccess struct {
+	URL        string
+	AuthToken  string
+	MainBranch string
+}
+
+func (s *Server) repoAccessFor(ctx context.Context, projectID uuid.UUID) (repoAccess, error) {
+	repo, err := s.db.GetRepositoryByProject(ctx, projectID)
+	if err != nil || repo == nil || repo.URL == nil {
+		return repoAccess{}, fmt.Errorf("this project has no repository URL")
+	}
+	var cfg struct {
+		MainBranch string `json:"main_branch"`
+		AuthToken  string `json:"auth_token"`
 	}
 	if repo.Config != nil {
-		json.Unmarshal(repo.Config, &repoConfig)
+		json.Unmarshal(repo.Config, &cfg)
+	}
+	if cfg.MainBranch == "" {
+		cfg.MainBranch = "main"
+	}
+	return repoAccess{URL: *repo.URL, AuthToken: cfg.AuthToken, MainBranch: cfg.MainBranch}, nil
+}
+
+// buildArmImage checks out the Variation's branch, optionally rebases it onto
+// main, and builds it -- recording what it was built from.
+//
+// The commit is recorded after the build succeeds, never before. A row written
+// up front and left in place when the build failed would have the Arm claiming
+// to serve code that was never produced, which is the same shape as reporting an
+// action as the state of the world.
+func (s *Server) buildArmImage(ctx context.Context, exp *domain.Experiment,
+	arm domain.ExperimentArm, session *gkeSession, rebase bool,
+	logInfo func(string)) (image, commit string, err error) {
+
+	branch, err := s.armBranch(ctx, exp, arm)
+	if err != nil {
+		return "", "", err
+	}
+	access, err := s.repoAccessFor(ctx, exp.ProjectID)
+	if err != nil {
+		return "", "", err
 	}
 
 	workDir, err := os.MkdirTemp("", "mendel-arm-*")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer os.RemoveAll(workDir)
 
-	branch := fmt.Sprintf("mendel/%s/%s", sanitizeBranchName(hop.Name), sanitizeBranchName(variation.Name))
 	logInfo("Cloning " + branch)
-	if err := git.NewClient(workDir).Clone(ctx, *repo.URL, branch, repoConfig.AuthToken); err != nil {
-		return "", fmt.Errorf("could not clone %s: %w", branch, err)
+	client := git.NewClient(workDir)
+	if err := client.Clone(ctx, access.URL, branch, access.AuthToken); err != nil {
+		return "", "", fmt.Errorf("could not clone %s: %w", branch, err)
 	}
 
-	return session.buildImage(ctx, experimentArmResource(exp, arm), workDir)
+	if rebase {
+		// Onto main, so an Arm is compared against a mainline that has moved
+		// rather than against the one it was branched from. A conflict aborts
+		// the rebase and leaves the branch as it was -- the build does not
+		// continue from a half-resolved tree.
+		logInfo("Rebasing " + branch + " onto " + access.MainBranch)
+		if err := client.RebaseOnto(ctx, access.MainBranch, access.AuthToken); err != nil {
+			return "", "", fmt.Errorf("could not rebase %s onto %s, so it was left as it was: %w",
+				branch, access.MainBranch, err)
+		}
+		// Pushed, so the branch a later staleness check reads is the branch that
+		// was built. Without this the rebase would live only in a temporary
+		// directory and every subsequent check would report the Arm stale
+		// against the un-rebased head it had just moved past.
+		if err := client.Push(ctx, access.AuthToken); err != nil {
+			return "", "", fmt.Errorf("rebased %s but could not push it: %w", branch, err)
+		}
+	}
+
+	commit, err = client.GetCurrentCommit(ctx)
+	if err != nil {
+		// Not fatal to the build, and not quietly zero either. An empty commit
+		// reads as "never built" everywhere else, which would be a lie about an
+		// image that exists -- so this is the one case that refuses rather than
+		// records something untrue.
+		return "", "", fmt.Errorf("built nothing: could not read the commit of %s: %w", branch, err)
+	}
+
+	image, err = session.buildImage(ctx, experimentArmResource(exp, arm), workDir)
+	if err != nil {
+		return "", "", err
+	}
+
+	if err := s.db.RecordArmBuild(ctx, arm.ID, commit, image); err != nil {
+		// The image exists whether or not Mendel managed to write this down, so
+		// the build is not failed over it. But an unrecorded build is an Arm
+		// that will report itself never built while serving traffic, which is
+		// worth saying out loud.
+		logInfo("Built " + arm.Slug + " but could not record what it was built from: " + err.Error())
+	}
+	return image, commit, nil
 }
 
 // applyManifest sends a rendered manifest to the cluster.

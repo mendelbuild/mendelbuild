@@ -1254,6 +1254,17 @@ CREATE TABLE experiment_arms (
     declared_migration_up TEXT NOT NULL DEFAULT '',
     declared_migration_down TEXT NOT NULL DEFAULT '',
 
+    -- What this Arm was built from. Without it, "this arm is running code from
+    -- before your last change" is undetectable, and staleness can only be
+    -- guessed at from whether somebody remembers restarting the experiment.
+    --
+    -- Empty means never built, which is not the same as built from an unknown
+    -- commit; built_at is NULL for the same reason, since a zero timestamp reads
+    -- as 1970 rather than as never.
+    source_commit TEXT NOT NULL DEFAULT '',
+    image TEXT NOT NULL DEFAULT '',
+    built_at TIMESTAMPTZ,
+
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 

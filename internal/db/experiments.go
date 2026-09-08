@@ -173,7 +173,8 @@ func (db *DB) SetExperimentDissonance(ctx context.Context, id uuid.UUID, descrip
 func (db *DB) GetExperimentArms(ctx context.Context, experimentID uuid.UUID) ([]domain.ExperimentArm, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT id, experiment_id, variation_id, slug, allocation_weight, deployment_name,
-		       declared_migration_up, declared_migration_down, created_at, updated_at
+		       declared_migration_up, declared_migration_down,
+		       source_commit, image, built_at, created_at, updated_at
 		FROM experiment_arms WHERE experiment_id = $1
 		ORDER BY variation_id IS NOT NULL, slug
 	`, experimentID)
@@ -187,12 +188,29 @@ func (db *DB) GetExperimentArms(ctx context.Context, experimentID uuid.UUID) ([]
 		var a domain.ExperimentArm
 		if err := rows.Scan(&a.ID, &a.ExperimentID, &a.VariationID, &a.Slug,
 			&a.AllocationWeight, &a.DeploymentName, &a.DeclaredMigrationUp,
-			&a.DeclaredMigrationDown, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			&a.DeclaredMigrationDown, &a.SourceCommit, &a.Image, &a.BuiltAt,
+			&a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// RecordArmBuild says what an Arm was built from, at the moment it was built.
+//
+// Written after the build succeeds rather than before it starts, because the
+// row is a claim about an image that exists. Recording the intended commit up
+// front and leaving it there when the build failed is the same mistake as
+// reporting an action as the state of the world: the arm would claim to be
+// serving code it had never managed to produce.
+func (db *DB) RecordArmBuild(ctx context.Context, armID uuid.UUID, commit, image string) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE experiment_arms
+		SET source_commit = $2, image = $3, built_at = NOW(), updated_at = NOW()
+		WHERE id = $1
+	`, armID, commit, image)
+	return err
 }
 
 // SetArmAllocation changes how traffic is shared, for every Arm at once.
