@@ -84,6 +84,38 @@ type Fixture struct {
 	// archive cannot be restored, so admission refuses -- and an adapter that
 	// reported one anyway would turn that refusal into silent data loss.
 	CollectionWithoutIdentity string
+
+	// CompositeIdentityCollection is keyed by more than one field. Reporting
+	// one of two is worse than reporting none: admission would accept, and the
+	// archive would restore rows to the wrong place.
+	CompositeIdentityCollection string
+	CompositeIdentityFields     []string
+
+	// NonAdditiveChange modifies something that already exists, and is NOT one
+	// the deny-list catches.
+	//
+	// This is the affirmative judgment, and the most important sample in this
+	// struct. The deny-list handles what is categorically destructive; every
+	// other change is admitted or refused on what VerifySpeculatively observed
+	// it do. An adapter that reports this one as additive would have Mendel
+	// admit a migration that reinterprets data mainline is still writing, and
+	// nothing downstream would catch it.
+	NonAdditiveChange string
+
+	// CreateCollectionChange adds a whole collection, and CreatedCollection is
+	// what it is called. A field and a collection are different ObjectKinds, and
+	// admission archives and namespaces them differently.
+	CreateCollectionChange string
+	CreatedCollection      string
+
+	// AddIndexChange adds an index, and AddedIndex is its name.
+	AddIndexChange string
+	AddedIndex     string
+
+	// PartiallyFailingChange has a first statement that succeeds and a second
+	// that does not.
+	PartiallyFailingChange string
+	PartiallyFailingField  string
 }
 
 // Run checks an adapter against the contract.
@@ -215,6 +247,194 @@ func Run(t *testing.T, f Fixture) {
 		}
 	})
 
+	// Run against both store forms, and this is not thoroughness for its own
+	// sake. Answering "what does this change do" on a disposable store and on
+	// one that matters are frequently two implementations -- apply and keep
+	// versus apply and roll back -- and a suite that exercises one leaves the
+	// other unverified while appearing to cover it. A deliberately broken
+	// adapter passed this check until it ran against both.
+	for _, form := range f.storeForms() {
+		t.Run("A change that is not purely additive is reported as such, on "+form.name, func(t *testing.T) {
+			if f.NonAdditiveChange == "" {
+				t.Skip("no non-additive sample supplied")
+			}
+			s := form.new(t)
+			if !s.Capabilities().StructuralDiff {
+				t.Skip("adapter reports it cannot describe structural change")
+			}
+			if reasons := s.Forbidden(f.NonAdditiveChange); len(reasons) != 0 {
+				t.Fatalf("the sample is caught by the deny-list (%v), so it cannot exercise the "+
+					"affirmative judgment. Supply one the deny-list does not catch.", reasons)
+			}
+			delta, err := s.VerifySpeculatively(t.Context(), f.NonAdditiveChange)
+			if err != nil {
+				t.Fatalf("VerifySpeculatively: %v", err)
+			}
+			if delta.PurelyAdditive() {
+				t.Errorf("a change that modifies an existing object was reported as purely additive.\n"+
+					"The deny-list catches what is categorically destructive; everything else is "+
+					"admitted on what this method observed. An adapter that misses a modification "+
+					"here has Mendel admit a migration that reinterprets data mainline is still "+
+					"writing, and nothing downstream catches it.")
+			}
+			if strings.TrimSpace(delta.Describe()) == "" {
+				t.Error("a non-additive delta must describe itself; the refusal quotes it to the user")
+			}
+		})
+
+		t.Run("The Delta names what was added, on "+form.name, func(t *testing.T) {
+			s := form.new(t)
+			if !s.Capabilities().StructuralDiff {
+				t.Skip("adapter reports it cannot describe structural change")
+			}
+			delta, err := s.VerifySpeculatively(t.Context(), f.AdditiveChange)
+			if err != nil {
+				t.Fatalf("VerifySpeculatively: %v", err)
+			}
+			if !namesField(delta.Added, f.Collection, f.AddedField) {
+				t.Errorf("the Delta does not name %s.%s among %v", f.Collection, f.AddedField, delta.Added)
+			}
+		})
+	}
+
+	t.Run("Delta distinguishes a collection from a field", func(t *testing.T) {
+		if f.CreateCollectionChange == "" {
+			t.Skip("no create-collection sample supplied")
+		}
+		s := f.NewStore(t)
+		if !s.Capabilities().StructuralDiff {
+			t.Skip("adapter reports it cannot describe structural change")
+		}
+		delta, err := s.VerifySpeculatively(t.Context(), f.CreateCollectionChange)
+		if err != nil {
+			t.Fatalf("VerifySpeculatively: %v", err)
+		}
+		var found bool
+		for _, o := range delta.Added {
+			if o.Kind == experiment.ObjectCollection && o.Collection == f.CreatedCollection {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("creating %s did not produce an ObjectCollection in %v.\n"+
+				"Admission treats the two differently: a whole collection is archived entirely "+
+				"and a field only where it is set, and the namespace rule reads a different name "+
+				"for each.", f.CreatedCollection, delta.Added)
+		}
+	})
+
+	t.Run("Delta names an added index", func(t *testing.T) {
+		if f.AddIndexChange == "" {
+			t.Skip("no add-index sample supplied")
+		}
+		s := f.NewStore(t)
+		if !s.Capabilities().StructuralDiff {
+			t.Skip("adapter reports it cannot describe structural change")
+		}
+		delta, err := s.VerifySpeculatively(t.Context(), f.AddIndexChange)
+		if err != nil {
+			t.Fatalf("VerifySpeculatively: %v", err)
+		}
+		var found bool
+		for _, o := range delta.Added {
+			if o.Kind == experiment.ObjectIndex && o.Name == f.AddedIndex {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("adding index %s did not produce an ObjectIndex in %v.\n"+
+				"An index an experiment created has to be named so the namespace rule can check "+
+				"it and rollback can drop it.", f.AddedIndex, delta.Added)
+		}
+	})
+
+	t.Run("A composite identity is reported in full", func(t *testing.T) {
+		if f.CompositeIdentityCollection == "" {
+			t.Skip("no composite-key collection supplied")
+		}
+		got, err := f.NewStore(t).Identity(t.Context(), f.CompositeIdentityCollection)
+		if err != nil {
+			t.Fatalf("Identity: %v", err)
+		}
+		if len(got) != len(f.CompositeIdentityFields) {
+			t.Errorf("Identity(%s) = %v, want all of %v.\n"+
+				"Half a key is worse than none: admission accepts, and the archive restores rows "+
+				"to the wrong place or refuses to restore at all.",
+				f.CompositeIdentityCollection, got, f.CompositeIdentityFields)
+		}
+	})
+
+	t.Run("A change that fails partway leaves nothing applied", func(t *testing.T) {
+		if f.PartiallyFailingChange == "" || f.NewLiveStore == nil {
+			t.Skip("no partially-failing sample, or no non-disposable store")
+		}
+		s := f.NewLiveStore(t)
+		if !s.Capabilities().SpeculativeApply {
+			t.Skip("adapter cannot apply speculatively")
+		}
+		if _, err := s.VerifySpeculatively(t.Context(), f.PartiallyFailingChange); err == nil {
+			t.Fatal("a change whose second statement is invalid should not verify cleanly")
+		}
+		shape, err := s.Shape(t.Context(), f.Collection)
+		if err != nil {
+			t.Fatalf("Shape: %v", err)
+		}
+		if _, leaked := shape[f.PartiallyFailingField]; leaked {
+			t.Errorf("%s survived a change that failed partway.\n"+
+				"Finding out what a change does has to be all or nothing, or a migration Mendel "+
+				"refused has still half-happened to the datastore it refused against.",
+				f.PartiallyFailingField)
+		}
+	})
+
+	t.Run("Forbidden decides without executing", func(t *testing.T) {
+		s := f.NewStore(t)
+		before, err := s.Shape(t.Context(), f.Collection)
+		if err != nil {
+			t.Fatalf("Shape before: %v", err)
+		}
+		for _, change := range f.DestructiveChanges {
+			_ = s.Forbidden(change)
+		}
+		after, err := s.Shape(t.Context(), f.Collection)
+		if err != nil {
+			t.Fatalf("Shape after: %v", err)
+		}
+		if len(before) != len(after) {
+			t.Errorf("asking Forbidden about %d destructive changes altered the structure "+
+				"(%d fields became %d).\n"+
+				"It runs before anything is executed precisely so that a categorically destructive "+
+				"change never reaches the step that would run it.",
+				len(f.DestructiveChanges), len(before), len(after))
+		}
+	})
+
+	t.Run("Two stores of the same structure report the same Shape", func(t *testing.T) {
+		a, b := f.NewStore(t), f.NewStore(t)
+		if !a.Capabilities().StructuralDiff {
+			t.Skip("adapter reports it cannot describe structural change")
+		}
+		shapeA, err := a.Shape(t.Context(), f.Collection)
+		if err != nil {
+			t.Fatalf("Shape: %v", err)
+		}
+		shapeB, err := b.Shape(t.Context(), f.Collection)
+		if err != nil {
+			t.Fatalf("Shape: %v", err)
+		}
+		if len(shapeA) != len(shapeB) {
+			t.Fatalf("the same structure reported %d fields and %d", len(shapeA), len(shapeB))
+		}
+		for field, typeA := range shapeA {
+			if typeB, ok := shapeB[field]; !ok || typeA != typeB {
+				t.Errorf("field %s reported as %q and %q across two stores of identical structure.\n"+
+					"Admission compares the verification datastore against production with exactly "+
+					"this, and declines when they differ -- so any instability here is a difference "+
+					"Mendel invents and then refuses an experiment over.", field, typeA, typeB)
+			}
+		}
+	})
+
 	t.Run("Shape reflects what Exec did", func(t *testing.T) {
 		s := f.NewStore(t)
 		if !s.Capabilities().StructuralDiff {
@@ -275,6 +495,29 @@ func Run(t *testing.T, f Fixture) {
 		if err != nil {
 			t.Fatalf("Dump: %v", err)
 		}
+		if len(before) == 0 {
+			t.Fatal("the fixture collection must carry rows for the round trip to mean anything")
+		}
+
+		// A field-scoped dump is what an archive actually is: the rows that
+		// took part, not the table. §13 rests an admission criterion on that
+		// being bounded by experiment traffic rather than table size, so an
+		// adapter that ignores Fields and returns everything turns a small
+		// archive into a copy of production.
+		if err := s.Exec(t.Context(), f.AdditiveChange); err != nil {
+			t.Fatalf("Exec: %v", err)
+		}
+		scoped, err := s.Dump(t.Context(), experiment.DumpQuery{
+			Collection: f.Collection, Identity: id, Fields: []string{f.AddedField},
+		})
+		if err != nil {
+			t.Fatalf("Dump scoped to a field: %v", err)
+		}
+		if len(scoped) != 0 {
+			t.Errorf("dumping %s.%s returned %d rows before anything wrote to it, want 0.\n"+
+				"An archive is bounded by the participants, which is what makes its size "+
+				"estimable at admission.", f.Collection, f.AddedField, len(scoped))
+		}
 		if err := s.Load(t.Context(), f.Collection, id, before); err != nil {
 			t.Errorf("Load could not put back what Dump produced: %v.\n"+
 				"Rollback archives an Arm's data and restores it, so a dump this adapter cannot "+
@@ -297,6 +540,22 @@ func Run(t *testing.T, f Fixture) {
 				"decline from a failure, got %v", err)
 		}
 	})
+}
+
+// storeForm is one way of getting the datastore under test. There are two
+// because an adapter frequently implements the same contract twice, and the
+// suite is worth nothing on the half it does not reach.
+type storeForm struct {
+	name string
+	new  func(*testing.T) experiment.Datastore
+}
+
+func (f Fixture) storeForms() []storeForm {
+	forms := []storeForm{{name: "a disposable store", new: f.NewStore}}
+	if f.NewLiveStore != nil {
+		forms = append(forms, storeForm{name: "a store that matters", new: f.NewLiveStore})
+	}
+	return forms
 }
 
 func namesField(added []experiment.Object, collection, field string) bool {
