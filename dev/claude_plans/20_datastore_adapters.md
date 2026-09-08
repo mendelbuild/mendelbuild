@@ -360,6 +360,21 @@ archiving, which it has no reason to know.
    result formats, the job deploy, the outbound report, and D64's phases —
    Probe first, since it is the cheapest, needs no migration, and is the one a
    page is already waiting on.
+
+   **The contract is written** (`internal/experiment/adapter.go`): the
+   `Instruction` Mendel hands a job, the `Result` it reports, and per-phase
+   payloads for probe and admit. Both directions validate, because both are
+   read from something Mendel did not write — an instruction is checked before
+   a deployment is paid for, and a result is checked rather than believed.
+   Three things it makes structural: silence, failure and a negative answer are
+   three states rather than two; a stale reply naming an earlier invocation is
+   refused rather than acted on; and an admission report that names a collection
+   without both shapes is refused, since it describes a comparison that cannot
+   be made.
+
+   What remains is the transport half — deploying the job through the
+   non-production path and accepting the report — which lands in files the
+   routing work is currently in.
    Exercised with whatever adapter the test project's datastore needs — which
    adapter that is, is a fact about the test project, not a step here. If
    conformance passes across the boundary unchanged, the boundary is real.
