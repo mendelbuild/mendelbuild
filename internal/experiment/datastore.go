@@ -221,3 +221,50 @@ func RequireForExperiments(verify, live Datastore) error {
 	}
 	return nil
 }
+
+// Provisioner makes the short-lived databases migrations are verified against.
+//
+// Separate from Datastore because they are different things: a Datastore is one
+// database, and a Provisioner is the server it was made on. Bolting Provision
+// onto Datastore would mean every adapter answering a question about a server it
+// may only have one database's worth of access to.
+//
+// It exists because asking a person for a verification database does not work,
+// for two reasons that only compound. Admit compares the copy against
+// production and declines when the touched collections disagree, so a blank
+// database is refused and what is actually needed is a structural copy that
+// stays current as production's schema moves. And the isolation wanted is per
+// experiment: two experiments verifying against one database can collide on
+// names, where a database each cannot. Nobody can hand-provision a
+// schema-current database per experiment, so Mendel makes them.
+type Provisioner interface {
+	// Kind names the datastore for messages a person reads: "postgres".
+	Kind() string
+
+	// CanProvision reports whether this credential may actually create a
+	// database, by attempting it rather than by reasoning about the grant.
+	//
+	// Asked the same way §16 asks the cluster whether Mendel may install a
+	// controller, and for the same reason: privileges are a union of things
+	// granted in different places, and the only reliable question is the one the
+	// server answers.
+	CanProvision(ctx context.Context) error
+
+	// Provision creates a database whose structure matches the one this
+	// Provisioner was opened against, and returns a disposable Datastore over it
+	// together with the means to drop it.
+	//
+	// The structure is copied rather than the data: what admission compares is
+	// shapes, and an experiment's own rows are written during the experiment.
+	// Copying production's data into a database Mendel may reset would also put
+	// the user's end-users' data somewhere nobody asked for it to be.
+	Provision(ctx context.Context, name string) (store Datastore, drop func(context.Context) error, err error)
+}
+
+// ErrCannotProvision is returned when an adapter cannot make databases at all,
+// as opposed to being refused permission to make this one.
+//
+// A designed outcome like ErrUnsupportedDatastore: the user can supply a
+// verification datastore by hand instead, and Mendel says which of the two
+// situations it is in rather than reporting one as the other.
+var ErrCannotProvision = errors.New("this datastore cannot provision a verification database")

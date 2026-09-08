@@ -524,6 +524,7 @@ Recorded with what was rejected, for audit.
 | D18 | Allocation derived from MDE and duration, mainline carries the brunt | Even split across Arms | Minimises exposure while still reaching significance |
 | D19 | Mainline deploys during an experiment: carry on and annotate | Invalidate and restart | Unrelated merges are constant; restarting means nothing ever finishes |
 | D20 | Tier 1 assigns by a Mendel-set cookie; `user`/`tenant` wait for Tier 2 | Read an app-supplied user key in Tier 1 | No login-transition case to handle; the assigner is a hash and a Set-Cookie |
+| D53 | Mendel provisions a verification database per experiment, on a server the project already has | Ask the user for a throwaway database; provision a managed instance | A blank database fails admission, and a schema-current one per experiment is not something a person can supply; a managed instance assumes an engine that has one, which the user's project may not |
 
 ---
 
@@ -605,6 +606,49 @@ connection from the repository and the environment it already injects. Where
 that is not discoverable, it asks — through the same `requirements.json`
 mechanism that already collects secrets, which is exactly the shape of question
 it was built for.
+
+**The verification datastore is Mendel's to make, not the user's to supply —
+amended (D53).** This document and §16 both describe a "non-production datastore
+Mendel may reset" as something a project provides, and the first implementation
+asked for a connection string. That is the wrong shape for two reasons, and the
+second only became visible once the sandboxing was thought through.
+
+It cannot be any database. `Applier.Admit` compares the verification datastore
+against production and declines when the touched collections disagree, so a
+blank database fails immediately. What is needed is a *structural copy* of
+production, kept current as production's schema moves — which is not a thing to
+ask a person for once and forget.
+
+And the isolation wanted is **per experiment**, not per project. Two experiments
+verifying against one shared copy can collide on names, and the `mendel_exp_`
+prefix exists to make additions commutative in *production*, where they
+genuinely share a database; on the verification side there is no reason to share
+at all. A database per experiment is created, used and dropped, which also makes
+teardown a `DROP DATABASE` rather than a reversal.
+
+Together those settle it: nobody can hand-provision a schema-current database
+per experiment, so asking is not a workable primary path. What a project supplies
+— or, better, what Mendel discovers from the connection it already injects — is a
+**server it may create databases on**. Mendel creates each sandbox on it.
+
+Two things follow that are worth stating rather than discovering:
+
+- **The remedy is `either`, exactly as the controller install is.** `CREATE
+  DATABASE` is a privilege the application's own credential frequently lacks, so
+  Mendel probes by attempting it and falls back to asking for a credential that
+  can. Inferring from a role name is the mistake §16 D22a already records.
+- **A managed instance is not the fallback.** Provisioning Cloud SQL would work
+  for Postgres and MySQL and for nothing else, and the user's project may have
+  converged on a datastore with no managed equivalent at all. A sibling database
+  on the server the application already uses is the only path that does not
+  assume the engine — which is this document's own first principle, and the
+  reason the `Datastore` interface exists.
+
+The copy itself is per-adapter, because it has to be: Postgres has `pg_dump
+--schema-only`, another engine has something else, and an adapter that cannot
+replicate a structure says so and declines rather than approximating. Replaying
+the application's own migrations was considered and set aside — `.mendel/migration.json`
+is prose written for a person, not a contract Mendel can execute.
 
 One wrinkle to design around rather than assume away: the credential the
 *application* uses is usually not privileged enough to `CREATE ROLE` or `GRANT`,

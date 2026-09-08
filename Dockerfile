@@ -9,8 +9,16 @@ RUN CGO_ENABLED=0 go build -ldflags="-X main.Version=${VERSION} -X main.BuildTim
 
 FROM alpine:3.19
 
-# Base tools
-RUN apk add --no-cache ca-certificates git docker-cli docker-cli-compose bash curl python3 py3-pip
+# Base tools.
+#
+# postgresql-client is pg_dump and psql, which the experiment machinery drives to
+# copy production's structure into a verification database. Reading the catalogue
+# and regenerating DDL instead is a partial reimplementation of pg_dump that gets
+# constraints, sequences and custom types subtly wrong -- and subtly wrong there
+# means admission comparing a copy against production and finding a difference it
+# invented. Same call as flyctl and kubectl below: drive the real tool.
+RUN apk add --no-cache ca-certificates git docker-cli docker-cli-compose bash curl python3 py3-pip \
+    postgresql-client
 
 # Install flyctl (Fly.io CLI)
 RUN curl -L https://fly.io/install.sh | FLYCTL_INSTALL=/usr/local sh
