@@ -81,9 +81,26 @@ build failed would have the Arm claiming to serve code that was never produced,
 which is the same shape as reporting an action as the state of the world.
 
 Staleness is then a comparison against the branch head, read with **one
-`ls-remote` for the whole repository** rather than a clone per Arm — the question
-is asked on every page render, and answering it by fetching a working tree would
-make a page cost a repository.
+`ls-remote` for the whole repository** rather than a clone per Arm, and **cached
+off the render path**.
+
+The first version got the second half wrong. It put the `ls-remote` inside
+`handleHopDetail`, so every load of the page made a network call to the user's
+git host — on a page that is otherwise a database read — and a slow remote made
+the page slow. The comment above it said "the question is asked on every render
+of the page", which was the argument for one call instead of several and should
+have been the argument for none.
+
+It is now a TTL cache with a background refresh, the same arrangement the domain
+and experiment observations use, with one deliberate difference: a cold entry is
+looked up in the *foreground* under a five-second timeout. Those pages poll a
+status endpoint until their cache fills; the Hop page has none, so a cold entry
+would report every Arm unchecked until somebody reloaded — the state a reader is
+least able to act on, offered at exactly the moment they came to look. An aged
+entry answers from what it has while the refresh happens behind it: a staleness
+verdict a minute behind is not a category of error, and a page that waits on a
+network call is. A look that fails is stored too, so a remote that is down costs
+one reader the timeout rather than every reader.
 
 **Four states, not two** (`domain.ArmFreshness`):
 
@@ -231,6 +248,19 @@ So the settings tab keeps readiness and becomes an index. The Hop page gains the
 arms, their allocation and freshness, the reach command for each, start, stop,
 refresh at both scopes, the sample and the JSON link.
 
+**At the width of the page, directly under the decision ribbon.** It was first
+dropped into the sidebar column beside Cost, which is a third of the page: the
+arms table was crushed to a few characters a cell and the build verdict — the
+column that says whether visitors are seeing your latest change — wrapped to one
+word a line. A live experiment is the widest thing on this page and the most
+consequential, not an aside. The test asserts the ordering against the two-column
+section rather than the rendering, since that is the property that was wrong.
+
+One piece of copy went with it. The readiness note read "the start button appears
+once it knows" on a *running* experiment, beside a stop button and a badge saying
+"running" — three claims of which two were true. Readiness gates starting and
+nothing else, so it is shown only where that is what is being decided.
+
 The blockers are repeated on the Hop page **from the same conditions and as the
 same strings**, per D39: if the two can differ they will, and the checklist stops
 being the answer to "why can't I".
@@ -251,6 +281,14 @@ A test pinning the wording would have passed. This is the fourth instance of the
 family those checks describe and the first one caught by a test rather than by
 somebody noticing.
 
+**A column had never been written.** `experiment_arms.deployment_name` was added
+in 047 to record "what was deployed for an Arm", with a setter no caller ever
+called, so every row held `''` for the table's whole life. Adding `image` beside
+it in 049 made it visible: two columns answering one question, one of them always
+empty. It is dropped in 050, and what an Arm's objects are called stays derived —
+`experimentArmResource` computes it, and both the teardown and the rollout call
+that rather than reading a column.
+
 **Three tests moved rather than being deleted.** Start being refused until the
 cluster can route, no button while an action is in flight, and a failure rendered
 with its cause behind a disclosure are all still true and still worth asserting —
@@ -269,6 +307,11 @@ rather than setting a boolean, so it tests the wiring between them.
 - The Hop page renders with a running experiment and offers every route the
   experiment registers; mainline is offered no rebuild.
 - Unquoting, and folding unknown freshness into stale, both fail their tests.
+- The branch-head cache serves warm entries without looking, answers from an aged
+  entry while refreshing behind it, and sends exactly one of thirty-two
+  concurrent readers to the remote.
+- The experiment panel renders at the same width as the two-column section below
+  it, and above it, with no horizontal overflow.
 
 Not verified against the live cluster. The experiment on pong is serving real
 traffic and stopping it is not a convenience for testing — so the arm headers,
@@ -292,7 +335,8 @@ From doc 18 §8, unchanged:
 
 And one this added:
 
-- **Staleness is not watched.** It is computed when somebody looks at the page.
+- **Staleness is not watched.** It is computed when somebody looks at the page,
+  and now cached for a minute after that.
   An experiment left running for two weeks does not notice its own arms going
   behind, and nothing tells anybody. That is deliberate for now — Mendel acting
   on staleness unprompted is the thing §3.1 declines to do — but *noticing* and

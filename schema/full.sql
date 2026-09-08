@@ -1245,9 +1245,6 @@ CREATE TABLE experiment_arms (
 
     allocation_weight INTEGER NOT NULL DEFAULT 0,
 
-    -- Filled once the Arm is deployed; empty before that.
-    deployment_name TEXT NOT NULL DEFAULT '',
-
     -- What this Arm proposes, before anything has judged it. A verdict needs the
     -- user's datastore to reach, so the migration has to survive the gap between
     -- code generation writing it and admission ruling on it.

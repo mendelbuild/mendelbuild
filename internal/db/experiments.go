@@ -128,10 +128,10 @@ func (db *DB) CreateExperimentArm(ctx context.Context, a *domain.ExperimentArm) 
 	}
 	return db.Pool.QueryRow(ctx, `
 		INSERT INTO experiment_arms (id, experiment_id, variation_id, slug, allocation_weight,
-		                             deployment_name, declared_migration_up, declared_migration_down)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		                             declared_migration_up, declared_migration_down)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
 		RETURNING created_at, updated_at
-	`, a.ID, a.ExperimentID, a.VariationID, a.Slug, a.AllocationWeight, a.DeploymentName,
+	`, a.ID, a.ExperimentID, a.VariationID, a.Slug, a.AllocationWeight,
 		a.DeclaredMigrationUp, a.DeclaredMigrationDown,
 	).Scan(&a.CreatedAt, &a.UpdatedAt)
 }
@@ -147,14 +147,14 @@ func (db *DB) UpsertExperimentArm(ctx context.Context, a *domain.ExperimentArm) 
 	}
 	return db.Pool.QueryRow(ctx, `
 		INSERT INTO experiment_arms (id, experiment_id, variation_id, slug, allocation_weight,
-		                             deployment_name, declared_migration_up, declared_migration_down)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		                             declared_migration_up, declared_migration_down)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
 		ON CONFLICT (experiment_id, slug) DO UPDATE SET
 			declared_migration_up = EXCLUDED.declared_migration_up,
 			declared_migration_down = EXCLUDED.declared_migration_down,
 			updated_at = NOW()
 		RETURNING id, created_at, updated_at
-	`, a.ID, a.ExperimentID, a.VariationID, a.Slug, a.AllocationWeight, a.DeploymentName,
+	`, a.ID, a.ExperimentID, a.VariationID, a.Slug, a.AllocationWeight,
 		a.DeclaredMigrationUp, a.DeclaredMigrationDown,
 	).Scan(&a.ID, &a.CreatedAt, &a.UpdatedAt)
 }
@@ -172,7 +172,7 @@ func (db *DB) SetExperimentDissonance(ctx context.Context, id uuid.UUID, descrip
 // GetExperimentArms returns an experiment's Arms, mainline first.
 func (db *DB) GetExperimentArms(ctx context.Context, experimentID uuid.UUID) ([]domain.ExperimentArm, error) {
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id, experiment_id, variation_id, slug, allocation_weight, deployment_name,
+		SELECT id, experiment_id, variation_id, slug, allocation_weight,
 		       declared_migration_up, declared_migration_down,
 		       source_commit, image, built_at, created_at, updated_at
 		FROM experiment_arms WHERE experiment_id = $1
@@ -187,7 +187,7 @@ func (db *DB) GetExperimentArms(ctx context.Context, experimentID uuid.UUID) ([]
 	for rows.Next() {
 		var a domain.ExperimentArm
 		if err := rows.Scan(&a.ID, &a.ExperimentID, &a.VariationID, &a.Slug,
-			&a.AllocationWeight, &a.DeploymentName, &a.DeclaredMigrationUp,
+			&a.AllocationWeight, &a.DeclaredMigrationUp,
 			&a.DeclaredMigrationDown, &a.SourceCommit, &a.Image, &a.BuiltAt,
 			&a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
@@ -233,14 +233,6 @@ func (db *DB) SetArmAllocation(ctx context.Context, weights map[uuid.UUID]int) e
 		}
 	}
 	return tx.Commit(ctx)
-}
-
-// SetArmDeployment records what was deployed for an Arm.
-func (db *DB) SetArmDeployment(ctx context.Context, armID uuid.UUID, deploymentName string) error {
-	_, err := db.Pool.Exec(ctx,
-		`UPDATE experiment_arms SET deployment_name = $2, updated_at = NOW() WHERE id = $1`,
-		armID, deploymentName)
-	return err
 }
 
 // --- Admissions ---

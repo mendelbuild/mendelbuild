@@ -109,8 +109,13 @@ type ExperimentArm struct {
 	VariationID  *uuid.UUID `json:"variation_id,omitempty"` // nil is mainline.
 	Slug         string     `json:"slug"`
 
-	AllocationWeight int    `json:"allocation_weight"`
-	DeploymentName   string `json:"deployment_name"`
+	AllocationWeight int `json:"allocation_weight"`
+
+	// What an Arm's objects are named is derived, not stored:
+	// experimentArmResource computes it from the experiment and the slug, and
+	// the teardown and rollout paths both call that. A deployment_name column
+	// existed alongside it until migration 050, was never written by anything,
+	// and was a second and emptier answer to a question already answered.
 
 	// What this Arm proposes, before anything has judged it. Admission needs the
 	// user's datastore to reach a verdict, so the migration has to survive the
