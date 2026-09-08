@@ -158,42 +158,137 @@ Both predate this design and are true of the hand-written adapter.
 | D56 | Generation may be dynamic; no human merge step | Generate a change for review | The review step existed only to keep untrusted code out of Mendel's process, and D54 removes that reason |
 | D57 | A datastore's fitness is a Functional Area Condition, `probed`, and its failure names the requirement | `ErrUnsupportedDatastore` naming the engine | "Mendel wrote an adapter and it failed the requirement that finding out what a change does leaves no trace" tells a user something; "unsupported datastore" does not |
 | D58 | No datastore-specific dependency in Mendel's image | Install the tools for the engines we expect | It is an assumption wearing the shape of a dependency, and the adapter carries its own tooling wherever it runs |
+| D59 | An adapter is a job that reads a JSON instruction and reports a JSON result outbound | An HTTP service Mendel calls | A service needs an inbound path to something holding database credentials, which undoes the reason the adapter is in the channel; a job needs only outbound, which the cluster already has |
+| D60 | One adapter per admission | A long-lived adapter shared across experiments | Teardown becomes the absence of anything rather than an operation that can fail; revisit when there is a measured performance problem |
+| D61 | Re-gate on the suite version and on the datastore the adapter reports connecting to | A maintained list of repository files whose change forces re-gating | A list is inference from the repository where observation is available every run, must be maintained, and breaks silently on a different layout |
+| D62 | Rename the channel's demo path to the non-production path; the demo itself keeps its name | Rename both, or neither | The destination widened and the user-facing feature did not; they were only ever one word by accident |
+| D63 | Generation failure retries with the conformance failure as the fix, bounded by the cost model | Let a user supply an adapter; retry without a bound | The failure messages name requirements, which is what a fix can act on; and an unbounded retry is an unbounded agent spend |
 
 ---
 
-## 6. Open questions
+## 6. Resolved
 
-**O26 — What is the protocol?** The interface has ten methods, two of which move
-rows. Something narrow and boring — a small HTTP surface with a JSON body —
-seems right, but `Dump` streaming a large archive over it is the case that
-decides whether that holds.
+**O26 — What is the protocol? — resolved: JSON, carried by a job rather than
+served by a service** (D59).
 
-**O27 — How long does an adapter live?** Per admission is cleanest and costs a
-deployment each time. Long-lived is cheaper and means a running deployment in
-the user's namespace holding a database connection between experiments, which is
-a thing to justify rather than default into.
+The review asked for HTTP and JSON, and floated an alternative: rather than a
+service answering method calls, an adapter invoked with instructions that runs,
+leaves its output somewhere, and exits. The second is right, and for a reason
+neither half of the question stated.
 
-**O28 — What re-gates a cached adapter?** An adapter that passed the suite should
-record which version of the suite it passed, so hardening the suite re-gates
-rather than grandfathers. Same discipline as versioned rate cards.
+**A service in the user's cluster would need an inbound path.** Mendel would
+have to reach it, which means a LoadBalancer or an Ingress — exposing a process
+holding database credentials to the internet. That is the reachability problem
+of §1 in reverse, and it undoes the reason for putting the adapter in the
+channel at all: if a production database is not reachable from Mendel, neither
+should the thing holding its credentials be.
 
-**O29 — Does the adapter deploy through the *demo* path or a third one?**
-It is not a demo and not production. Reusing the demo path is cheapest and makes
-an experiment depend on demo validation, which may or may not be the dependency
-we want in the matrix.
+A job needs only **outbound** connectivity, which the cluster already has and
+which every other thing Mendel deploys already uses. It is also the shape of
+everything else here — a deploy is a job, a test run is `up`, `exec`, `down` —
+rather than a new operational kind.
 
-**O30 — What happens when generation fails repeatedly?** A conservative decline,
-clearly. Whether Mendel retries, and whether a user can supply an adapter
-themselves, is unsettled.
+The two halves of the question are not opposed, because HTTP was the transport
+and JSON the format. Keep the format: an adapter reads a JSON instruction and
+writes a JSON result, which stays inspectable, diffable and pasteable into a bug
+report. Drop the transport.
+
+Where the result goes has a precedent to copy rather than invent: §13 §10.2 has
+deployed code POST to Mendel with a per-deployment bearer token, identity
+resolved server-side from the token and never from the payload (D10). An
+adapter reports its results the same way.
+
+One consequence to design for. A job cannot be a chatty sequence of method
+calls, and admission *is* a sequence — what to shape depends on what the delta
+said was added. So the unit of invocation is a phase rather than a method:
+"verify this migration and return the delta **and the shapes of everything it
+touched**". The adapter knows what it added, so gathering the shapes needs no
+judgment; Mendel still does all the judging, on data it was handed.
+
+**O27 — How long does an adapter live? — resolved: per admission**, until there
+is a performance problem worth measuring (D60). It composes with D59, since a
+job is per-invocation by nature, and it makes teardown the absence of anything
+rather than an operation that can fail.
+
+**O28 — What re-gates a cached adapter? — resolved, and it is two things.**
+
+The review suggested a list of files in the user's repository whose modification
+forces re-gating: the datastore's files matter, a stylesheet does not. The
+instinct is right — most changes are irrelevant and re-gating on all of them
+would be useless — but the list is inference from the repository where direct
+observation is available and cheaper.
+
+Two different things invalidate an adapter, and they are worth separating (D61):
+
+- **The suite changed.** An adapter records which version of the conformance
+  suite it passed. Hardening the suite re-gates every cached adapter rather than
+  grandfathering it, which is the same discipline versioned rate cards are under
+  and the reason those are never rewritten.
+- **The datastore is no longer the one the adapter was written for.** Not
+  observed from files: the adapter is invoked per admission anyway, so it can
+  report what it actually connected to — engine and version — and a change
+  regenerates. That is the same "ask, do not infer" rule as
+  `SelfSubjectAccessReview` and as probing `CREATE DATABASE` by attempting it.
+
+A file list would have to be maintained, would silently stop working when a
+repository is laid out differently, and answers a question the adapter can
+answer directly every time it runs.
+
+Note what does *not* re-gate: the schema changing. An adapter is about the
+engine, not the structure, and schema drift is already caught by `checkDrift`
+and the shape comparison at admission.
+
+**O29 — Which path does the adapter deploy through? — resolved: the existing
+non-production path, renamed** (D62).
+
+Reuse rather than a third path: it is validated, it deploys into the namespace
+Mendel owns, and its validation is already a Functional Area Condition an
+experiment can depend on.
+
+The rename is worth doing with it, and it is narrower than it first looks. What
+widens is the *deployment target* — the path is no longer only for demos, so
+`IsDemoValidated` and `channel.demo-path-validated` become non-production ones.
+What does not widen is the **demo** itself: a demo of a Variation is a thing a
+user looks at and asks for by that name, and renaming it would churn user-facing
+copy to no purpose. The noun for the destination and the noun for the feature
+are different nouns, and only the first was overloaded.
+
+**O30 — What happens when generation fails? — resolved: retry with a fix, and
+users do not write adapters** (D63).
+
+The same shape as a failed demo, which already has
+`UpdateDemoInstanceWithSuggestedFix` and a retry that feeds the failure back in.
+The input to the fix is the conformance failure, which is why those messages
+name the requirement rather than the observation — "finding out what a change
+does must leave no trace" is something to act on, where "expected 2 got 3" is
+not.
+
+Retries are bounded like any other agent run: each is an agent call and a
+deployment, so the budget machinery in `internal/codegen/budget.go` applies
+rather than an open-ended loop. After the bound, Mendel declines and names the
+requirement it could not meet, which is D57.
 
 ---
+
+## 6a. Still open
+
+**O31 — What does a phase boundary look like, exactly?** D59 makes the unit of
+invocation a phase rather than a method, and names one: verify-and-shape. Whether
+admission is one phase or two, and whether apply and rollback are each their own,
+is not settled and wants writing down before the protocol is fixed.
 
 ## 7. Build order
 
-1. **The boundary, with an adapter that already passes.** Protocol, deploy,
-   drive, tear down. Exercised with whatever adapter the test project's datastore
-   needs — which adapter that is, is a fact about the test project, not a step
-   here. If conformance passes over the wire unchanged, the boundary is real.
+1. **The boundary, with an adapter that already passes.** The instruction and
+   result formats, the job deploy, the outbound report, and O31's phases.
+   Exercised with whatever adapter the test project's datastore needs — which
+   adapter that is, is a fact about the test project, not a step here. If
+   conformance passes across the boundary unchanged, the boundary is real.
+
+   The conformance suite is what makes this checkable: it takes a
+   `experiment.Datastore`, and a remote adapter is one, so the same twenty-two
+   checks run against the job-backed implementation with no new assertions to
+   write.
 
 2. **Verification of the apply** (§4), which is right regardless and closes a
    gap that exists now.
