@@ -241,6 +241,13 @@ affected.
 
 ## 8. What is not built
 
+Three of these are built now; see
+[19_experiments_made_legible.md](19_experiments_made_legible.md). Arms get an
+environment, an arm records what it was built from and can be brought up to
+date, and every response names the arm that served it. The list is left as it
+was written, because what it says about the state of the product at the end of
+that session is the point of it.
+
 - **Per-user assignment (D47).** What exists is the device path: Mendel's cookie
   identifies a browser. Two people sharing one see the same arm; one person on
   two devices sees two. Pong has Google OAuth and a session, so it is a good
