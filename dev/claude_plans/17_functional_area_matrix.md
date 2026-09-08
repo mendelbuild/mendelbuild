@@ -1,9 +1,10 @@
 # The Functional Area Matrix — Design
 
-Status: **steps 1, 2, 3 and 5 built; step 4 deferred.** §9 records what is done and
-what building it corrected. The machinery is
-`internal/domain/functional_area.go`, the first area is
-`functional_area_domain.go`, and `DomainReadiness` is now one assessment of it.
+Status: **steps 1 to 5 built; step 6 is what remains.** §9 records what is done
+and what building it corrected. The machinery is
+`internal/domain/functional_area.go`; the areas are in `functional_area_domain.go`
+and `functional_area_deploy.go`; `DomainReadiness` is one assessment of it, and
+the demo and production gates decline with its own sentences.
 
 Companion to [13_live_traffic_experiments.md](13_live_traffic_experiments.md)
 and [16_experiment_routing.md](16_experiment_routing.md), which between them
