@@ -141,7 +141,7 @@ func TestDetailPagesCarryABreadcrumb(t *testing.T) {
 	needsCrumb := []string{
 		"hop_detail.html",
 		"variation_detail.html",
-		"okr_editor.html",
+		"setup_okrs.html",
 		"input_request_credential.html",
 		"input_request_hosting.html",
 		"input_request_roadmap.html",

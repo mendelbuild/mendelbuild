@@ -39,7 +39,8 @@ Key Results:
 - 2 to 3 per objective. Each must be checkable: a reader must be able to say yes or no.
 - target_units carries the number, the unit, and the comparison: ">= 100 completed signups", "< 200ms p99", ">= 80%".
 - Prefer things this project can actually measure. A brand-new product has no users yet, so "50000 monthly actives" is not a key result, it is a wish. Say so in open_questions if the brief implies traction that does not exist.
-- Every target_date falls between today and the deadline. Spread them: some things are true early, some at the end.
+- Do not give key results dates. Every one of them is due at the end of the planning cycle, and Mendel sets that date itself.
+  This is a planning cycle, not a sequence of deadlines. What tells you mid-cycle whether the work is going well is that each key result can be measured every week -- which is required above -- not that some of them fall due earlier. A staggered due date is a milestone, and a milestone is a Hop on the roadmap rather than a key result.
 
 Budget and deadline:
 - Take the user's figures as given. Do not talk them up or down.

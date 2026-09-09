@@ -16,11 +16,24 @@
 </div>
 {{else}}
 <div class="page-head">
-    <span class="page-kind">Getting started</span>
+    {{if .Approved}}
+    {{/* Only once approved. Before that this screen is the setup flow itself,
+         with the ribbon above it saying where in that flow you are; afterwards
+         it is reached from the strategy page and needs the way back. */}}
+    <nav class="breadcrumb">
+        <a href="/p/{{$.ProjectID}}/strategy">Strategy</a>
+        <span class="breadcrumb-sep">/</span>
+        <span>Objectives &amp; key results</span>
+    </nav>
+    {{end}}
+    <span class="page-kind">{{if .Approved}}Objectives{{else}}Getting started{{end}}</span>
     <h1 class="page-title">{{.Strategy.Name}}</h1>
     <p class="page-lede">
-        Here is what Mendel understood you to be asking for. Edit anything that is
-        wrong, then approve it &mdash; nothing gets planned or built until you do.
+        {{if .Approved}}What this project is trying to achieve, and how it will know
+        it has. Edit anything here &mdash; every Hop on the roadmap exists to move
+        one of these.
+        {{else}}Here is what Mendel understood you to be asking for. Edit anything that is
+        wrong, then approve it &mdash; nothing gets planned or built until you do.{{end}}
     </p>
 </div>
 {{end}}
@@ -161,9 +174,19 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
 </div>
 {{end}}
 
-<form method="POST" action="/p/{{$.ProjectID}}/setup/okrs/approve" data-approve-form>
+<form method="POST" action="/p/{{$.ProjectID}}/{{if .Approved}}okr/save{{else}}setup/okrs/approve{{end}}" data-approve-form>
     <div class="card">
         <h2 class="card-title">Objectives</h2>
+        {{if .CycleEnd}}
+        {{/* One cycle, one due date. What says mid-cycle whether the work is
+             going well is that each key result can be measured weekly, not that
+             some of them fall due earlier; a staggered date is a milestone, and
+             a milestone is a Hop. */}}
+        <p class="text-sm subtle prose">
+            Every key result below is due <strong>{{.CycleEnd.Format "2 Jan 2006"}}</strong>,
+            the end of this planning cycle.
+        </p>
+        {{end}}
 
         {{if .Objectives}}
         {{range $i, $o := .Objectives}}
@@ -209,12 +232,6 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
                                    value="{{.TargetUnit}}" placeholder="completions" aria-label="Unit">
                         </span>
                     </div>
-                    <div class="field">
-                        <label for="kr_{{.ID}}_date">By</label>
-                        <span class="hint">When this should be true.</span>
-                        <input type="date" id="kr_{{.ID}}_date" name="kr_{{.ID}}_date"
-                               value="{{if .TargetDate}}{{.TargetDate.Format "2006-01-02"}}{{end}}">
-                    </div>
                 </div>
                 {{if .TuneFeedback}}
                 <p class="tune">
@@ -224,29 +241,71 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
                 {{end}}
             </div>
             {{end}}
+
+            {{/* Adding is a blank row that is saved if it is filled in, rather
+                 than a button that posts on its own. One save, one round trip,
+                 and edits elsewhere on the page are not lost to it. */}}
+            <div class="draft-kr draft-kr-new">
+                <div class="field">
+                    <label for="new_kr_{{.Objective.ID}}_desc">Add a key result</label>
+                    <span class="hint">Leave blank if there is nothing to add.</span>
+                    <input type="text" id="new_kr_{{.Objective.ID}}_desc"
+                           name="new_kr_{{.Objective.ID}}_desc"
+                           placeholder="What will you measure?">
+                </div>
+                <div class="field">
+                    <span class="target-fields">
+                        <select name="new_kr_{{.Objective.ID}}_comparator" class="target-comparator" aria-label="Comparison">
+                            <option value="at_least">at least</option>
+                            <option value="at_most">at most</option>
+                            <option value="done">done, or not</option>
+                        </select>
+                        <input type="text" inputmode="decimal" name="new_kr_{{.Objective.ID}}_value"
+                               class="target-value" placeholder="100" aria-label="Target number">
+                        <input type="text" name="new_kr_{{.Objective.ID}}_unit" class="target-unit"
+                               placeholder="completions" aria-label="Unit">
+                    </span>
+                </div>
+            </div>
         </div>
         {{end}}
         {{end}}
 
+        <div class="draft-objective draft-objective-new">
+            <div class="field field-tight">
+                <label for="new_objective">Add an objective</label>
+                <span class="hint">
+                    Leave blank if there is nothing to add. You can give it key
+                    results once it has been saved.
+                </span>
+                <input type="text" id="new_objective" name="new_objective"
+                       placeholder="Who ends up better off, and how?">
+            </div>
+        </div>
+
         <div class="actions">
-            <button type="submit" class="btn btn-primary" data-submit>Approve and plan the work</button>
-            <a href="/p/{{$.ProjectID}}/okr" class="btn btn-secondary">Open the full OKR editor</a>
+            <button type="submit" class="btn btn-primary" data-submit>
+                {{if .Approved}}Save changes{{else}}Approve and plan the work{{end}}
+            </button>
         </div>
         <p class="text-sm subtle prose">
-            Approving draws up a roadmap &mdash; a sequence of Hops that advance
+            {{if .Approved}}Hops already on the roadmap keep pointing at the
+            objectives they were drawn for. Changing an objective here does not
+            redraw them.
+            {{else}}Approving draws up a roadmap &mdash; a sequence of Hops that advance
             these objectives &mdash; and puts it in your Input Needed queue for
-            review. You can still change objectives afterwards in the OKR editor.
+            review. You can still change objectives afterwards.{{end}}
         </p>
 
         {{else}}
         <p class="empty">
-            No objectives were drafted. Ask Mendel to try again below, or write
-            them yourself in the <a href="/p/{{$.ProjectID}}/okr">OKR editor</a>.
+            No objectives yet. Add one above, or ask Mendel to draft them below.
         </p>
         {{end}}
     </div>
 </form>
 
+{{if not .Approved}}
 <form method="POST" action="/p/{{$.ProjectID}}/setup/okrs/revise" data-revise-form>
     <div class="card">
         <h2 class="card-title">Not quite right?</h2>
@@ -266,6 +325,7 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
         </span>
     </div>
 </form>
+{{end}}
 
 <script>
 // Both submits here wait on a model call. Disable the button and say so rather

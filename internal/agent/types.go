@@ -343,7 +343,6 @@ type DraftedKeyResult struct {
 	TargetComparator string  `json:"target_comparator" desc:"How this is judged. 'at_least' for something that should grow, 'at_most' for something that should shrink, and 'done' only when there is genuinely no number -- a launch, a certification. Prefer a number: 'done' cannot say whether the work is going well until it flips, so it gives no warning while there is still time to act."`
 	TargetValue      float64 `json:"target_value" desc:"The number to compare against. Just the number: no unit, no symbol, no thousands separator. Use 1 when target_comparator is 'done'."`
 	TargetUnit       string  `json:"target_unit" desc:"What the number counts, for display: 'users', '%', 'ms p99', 'signups per week'. Carries any qualifier, since only the number is compared. Empty when target_comparator is 'done'."`
-	TargetDate  string `json:"target_date" desc:"When this should be hit, YYYY-MM-DD. Must fall on or before the deadline and on or after today. Empty only if the user gave no deadline."`
 }
 
 // DraftedObjective is one objective and the key results that measure it.

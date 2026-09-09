@@ -487,11 +487,25 @@ func TestSetupScreenEditsRoundTrip(t *testing.T) {
 		`name="kr_` + krID.String() + `_comparator"`,
 		`name="kr_` + krID.String() + `_value"`,
 		`name="kr_` + krID.String() + `_unit"`,
-		`name="kr_` + krID.String() + `_date"`,
+
+		// The blank rows: adding is a field that is saved if it is filled in,
+		// so a missing name here is an add button that silently does nothing.
+		`name="new_kr_` + objID.String() + `_desc"`,
+		`name="new_kr_` + objID.String() + `_comparator"`,
+		`name="new_kr_` + objID.String() + `_value"`,
+		`name="new_kr_` + objID.String() + `_unit"`,
+		`name="new_objective"`,
 	} {
 		if !strings.Contains(body, name) {
 			t.Errorf("review form is missing the field %s, so those edits would be dropped on approval", name)
 		}
+	}
+
+	// No per-row date field: every key result is due at the end of the cycle,
+	// which the page states once. A date input here would offer a choice the
+	// save path no longer reads.
+	if strings.Contains(body, `name="kr_`+krID.String()+`_date"`) {
+		t.Error("the review form still offers a per-key-result date, which nothing saves")
 	}
 }
 

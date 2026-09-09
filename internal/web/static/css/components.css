@@ -1387,6 +1387,19 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
     margin: var(--sp-3) 0;
 }
 .draft-kr .field { margin-bottom: var(--sp-3); }
+/* The blank row at the foot of a list. Dashed rather than solid so it reads as
+   somewhere to type rather than as another item already there. */
+.draft-kr-new, .draft-objective-new {
+    border: 1px dashed var(--line-strong);
+    background: none;
+}
+.draft-kr-new { border-radius: var(--radius-sm); padding: var(--sp-3) var(--sp-4); margin: var(--sp-3) 0 0; }
+.draft-objective-new {
+    border-left-width: 1px;
+    border-radius: var(--radius-sm);
+    padding: var(--sp-3) var(--sp-4);
+    margin-bottom: var(--sp-5);
+}
 .draft-kr .field:last-child { margin-bottom: 0; }
 
 /* A score the tuner gave this line, shown before approval rather than after:

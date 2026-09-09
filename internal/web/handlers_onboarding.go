@@ -66,6 +66,21 @@ type SetupOKRView struct {
 	DraftFailed  bool
 	DraftError   string
 	PollSeconds  int // How soon the waiting page should re-check
+
+	// Approved switches this screen between the two jobs it does. Before
+	// approval it is the review: draft notes, considerations, a redraft box and
+	// a button that sets the project in motion. After, it is the OKR editor,
+	// and the same fields save in place.
+	//
+	// One screen rather than two because there were two, and the second could
+	// do three things the first could not -- nest objectives, share a key
+	// result between them, and add or remove rows -- of which the first two
+	// were used by nobody and were invisible everywhere except that editor.
+	Approved bool
+
+	// The end of the planning cycle, which is when every key result is due.
+	// Shown once rather than as a date field on each row.
+	CycleEnd *time.Time
 }
 
 // SetupConsiderationView is one Strategic Consideration as the review screen
@@ -279,7 +294,9 @@ func (s *Server) draftStrategy(ctx context.Context, projectID, strategyID uuid.U
 				TargetComparator: kr.TargetComparator,
 				TargetValue:      kr.TargetValue,
 				TargetUnit:       kr.TargetUnit,
-				TargetDate:       parseTargetDate(kr.TargetDate, deadline),
+				// Every key result in a cycle is due at the end of it. The
+				// agent is not asked for a date and has none to give.
+				TargetDate: deadline,
 			})
 		}
 		objectives = append(objectives, o)
@@ -318,18 +335,6 @@ func (s *Server) draftStrategy(ctx context.Context, projectID, strategyID uuid.U
 	// are vague before they approve them rather than after.
 	s.tuneStrategyOKRs(ctx, strategyID)
 	return nil
-}
-
-// parseTargetDate reads a YYYY-MM-DD target date from the agent, falling back
-// to the deadline when it is missing or unparseable. A key result with no date
-// is not a milestone, so guessing the deadline beats leaving it blank.
-func parseTargetDate(raw string, deadline *time.Time) *time.Time {
-	if raw != "" {
-		if t, err := time.Parse("2006-01-02", raw); err == nil {
-			return &t
-		}
-	}
-	return deadline
 }
 
 // syncDraftBudget keeps a single funding source in step with the draft: the
@@ -477,13 +482,6 @@ func (s *Server) renderSetupOKRs(ctx context.Context, w http.ResponseWriter, r *
 	}
 	strategy := strategies[0]
 
-	// Once approved this screen has nothing left to ask. Send people on to the
-	// queue rather than letting them approve twice.
-	if strategy.OKRsApproved() {
-		http.Redirect(w, r, fmt.Sprintf("/p/%s/inputs", projectID), http.StatusSeeOther)
-		return
-	}
-
 	state, err := s.db.GetOnboardingState(ctx, projectID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -501,6 +499,7 @@ func (s *Server) renderSetupOKRs(ctx context.Context, w http.ResponseWriter, r *
 		Drafting:    state.Drafting,
 		DraftFailed: state.DraftFailed,
 		PollSeconds: setupPollSeconds,
+		Approved:    strategy.OKRsApproved(),
 	}
 	if view.DraftFailed {
 		stale := strategy.DraftStatus == domain.StrategyDraftDrafting
@@ -511,7 +510,11 @@ func (s *Server) renderSetupOKRs(ctx context.Context, w http.ResponseWriter, r *
 	// not written yet or are the leftovers of a previous attempt, and rendering
 	// stale rows under a "here is your draft" heading would be a lie.
 	if !view.Drafting && !view.DraftFailed {
-		objectives, err := s.db.GetRootObjectives(ctx, strategy.ID)
+		// Every objective, not only the roots. Nothing can nest one any more,
+		// so the two queries agree -- and if something ever does, this screen
+		// shows it rather than losing it silently, which is what the old
+		// review screen did to anything the full editor nested.
+		objectives, err := s.db.GetObjectivesByStrategy(ctx, strategy.ID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -527,6 +530,7 @@ func (s *Server) renderSetupOKRs(ctx context.Context, w http.ResponseWriter, r *
 
 		if sources, err := s.db.GetFundingSourcesByStrategy(ctx, strategy.ID); err == nil && len(sources) > 0 {
 			view.Funding = &sources[0]
+			view.CycleEnd = sources[0].PeriodEnd
 		}
 	}
 
@@ -684,9 +688,6 @@ func (s *Server) currentDraft(ctx context.Context, strategy *domain.Strategy) *a
 				TargetValue:      kr.TargetValue,
 				TargetUnit:       kr.TargetUnit,
 			}
-			if kr.TargetDate != nil {
-				d.TargetDate = kr.TargetDate.Format("2006-01-02")
-			}
 			o.KeyResults = append(o.KeyResults, d)
 		}
 		draft.Objectives = append(draft.Objectives, o)
@@ -818,18 +819,9 @@ func (s *Server) saveOKREdits(ctx context.Context, strategy *domain.Strategy, r 
 			if targetErr != nil {
 				return targetErr
 			}
-			rawDate := strings.TrimSpace(r.FormValue("kr_" + kr.ID.String() + "_date"))
-
-			var target *time.Time
-			if rawDate != "" {
-				if t, err := time.Parse("2006-01-02", rawDate); err == nil {
-					target = &t
-				}
-			}
-
 			unchanged := krDesc == kr.Description &&
 				comparator == kr.TargetComparator && value == kr.TargetValue &&
-				unit == kr.TargetUnit && sameDay(target, kr.TargetDate)
+				unit == kr.TargetUnit
 			if unchanged {
 				continue
 			}
@@ -838,22 +830,74 @@ func (s *Server) saveOKREdits(ctx context.Context, strategy *domain.Strategy, r 
 			edited.TargetComparator = comparator
 			edited.TargetValue = value
 			edited.TargetUnit = unit
-			edited.TargetDate = target
 			if err := s.db.UpdateKeyResult(ctx, &edited); err != nil {
 				return err
 			}
 		}
+
+		if err := s.addKeyResultFromForm(ctx, strategy, obj.ID, r); err != nil {
+			return err
+		}
 	}
-	return nil
+
+	return s.addObjectiveFromForm(ctx, strategy, r)
 }
 
-// sameDay compares two optional dates by calendar day, which is the precision
-// the review screen's date inputs actually carry.
-func sameDay(a, b *time.Time) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
+// addKeyResultFromForm creates the key result typed into an objective's blank
+// row, if anything was typed there. Its target date is the cycle's, like every
+// other key result's.
+func (s *Server) addKeyResultFromForm(ctx context.Context, strategy *domain.Strategy,
+	objectiveID uuid.UUID, r *http.Request) error {
+
+	field := "new_kr_" + objectiveID.String() + "_"
+	desc := strings.TrimSpace(r.FormValue(field + "desc"))
+	if desc == "" {
+		return nil
 	}
-	return a.Format("2006-01-02") == b.Format("2006-01-02")
+
+	comparator, value, unit, err := keyResultTargetFields(
+		r.FormValue(field+"comparator"), r.FormValue(field+"value"), r.FormValue(field+"unit"))
+	if err != nil {
+		return err
+	}
+
+	kr := &domain.KeyResult{
+		ID: uuid.New(), StrategyID: strategy.ID, Description: desc,
+		TargetComparator: comparator, TargetValue: value, TargetUnit: unit,
+		TargetDate: s.cycleEnd(ctx, strategy.ID),
+	}
+	if err := s.db.CreateKeyResult(ctx, kr); err != nil {
+		return err
+	}
+	return s.db.LinkKeyResultToObjective(ctx, objectiveID, kr.ID)
+}
+
+// addObjectiveFromForm creates the objective typed into the blank row at the
+// foot of the list, if anything was typed there.
+//
+// Single level: nothing here sets a parent. The column stays, and so do the
+// queries that read it, so a richer OKR model remains an addition rather than a
+// migration -- but nothing in the product creates depth today, and the screens
+// that would have had to show it never did.
+func (s *Server) addObjectiveFromForm(ctx context.Context, strategy *domain.Strategy, r *http.Request) error {
+	desc := strings.TrimSpace(r.FormValue("new_objective"))
+	if desc == "" {
+		return nil
+	}
+	return s.db.CreateObjective(ctx, &domain.Objective{
+		ID: uuid.New(), StrategyID: strategy.ID, Description: desc,
+	})
+}
+
+// cycleEnd is when key results in this strategy are due: the end of the funding
+// period. Nil when there is no budget yet, which leaves a key result undated
+// rather than inventing a deadline for it.
+func (s *Server) cycleEnd(ctx context.Context, strategyID uuid.UUID) *time.Time {
+	sources, err := s.db.GetFundingSourcesByStrategy(ctx, strategyID)
+	if err != nil || len(sources) == 0 {
+		return nil
+	}
+	return sources[0].PeriodEnd
 }
 
 // ensureRepositoryRequest files the "connect a repository" ask into the input
@@ -1097,4 +1141,54 @@ func considerationViews(ctx context.Context, s *Server, strategyID uuid.UUID,
 		views = append(views, v)
 	}
 	return views
+}
+
+// handleSaveOKRs applies edits to an approved strategy's OKRs.
+//
+// The same form as the review screen, saved in place instead of approving:
+// after approval there is nothing left to approve, and a redraft would replace
+// objectives the roadmap was drawn against.
+func (s *Server) handleSaveOKRs(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	strategies, err := s.db.GetStrategiesByProject(ctx, projectID)
+	if err != nil || len(strategies) == 0 {
+		http.Error(w, "no strategy found", http.StatusNotFound)
+		return
+	}
+	strategy := strategies[0]
+
+	// Before approval the same form belongs to the approve handler, which does
+	// this and then sets the project in motion. Saving here instead would leave
+	// a project that had reviewed its objectives without ever approving them.
+	if !strategy.OKRsApproved() {
+		s.handleApproveSetupOKRs(w, r)
+		return
+	}
+
+	if err := s.saveOKREdits(ctx, &strategy, r); err != nil {
+		s.renderSetupOKRs(ctx, w, r, projectID, "Could not save your edits: "+err.Error())
+		return
+	}
+
+	// Newly written lines have no score yet. Scoring them is a model call, so
+	// it runs detached on its own context -- the request's is cancelled the
+	// moment the redirect is written, and the score is worth having on the next
+	// render rather than worth waiting for on this one.
+	go func() {
+		bg, cancel := context.WithTimeout(context.Background(), setupTimeout)
+		defer cancel()
+		s.tuneStrategyOKRs(bg, strategy.ID)
+	}()
+
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/okr", projectID), http.StatusSeeOther)
 }

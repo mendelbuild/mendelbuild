@@ -735,17 +735,12 @@ func (s *Server) setupRoutes() {
 		r.Post("/setup/okrs/revise", s.handleReviseSetupOKRs)
 		r.Post("/setup/okrs/redraft", s.handleRedraftSetupOKRs)
 
-		// OKR Editor routes
-		r.Get("/okr", s.handleOKREditor)
-		r.Get("/okr/objectives/{objectiveID}", s.handleObjectiveDetail)
-		r.Post("/okr/objectives", s.handleCreateObjective)
-		r.Post("/okr/objectives/{objectiveID}", s.handleUpdateObjective)
-		r.Post("/okr/objectives/{objectiveID}/delete", s.handleDeleteObjective)
-		r.Post("/okr/key-results", s.handleCreateKeyResult)
-		r.Post("/okr/key-results/{keyResultID}", s.handleUpdateKeyResult)
-		r.Post("/okr/key-results/{keyResultID}/delete", s.handleDeleteKeyResult)
-		r.Post("/okr/objectives/{objectiveID}/link-kr", s.handleLinkKeyResult)
-		r.Post("/okr/objectives/{objectiveID}/unlink-kr/{keyResultID}", s.handleUnlinkKeyResult)
+		// The OKR editor. One screen, which before approval is the review that
+		// sets the project in motion and afterwards edits in place -- rather
+		// than the two it was, whose second could nest objectives and share a
+		// key result between them, both invisible on every other page.
+		r.Get("/okr", s.handleSetupOKRs)
+		r.Post("/okr/save", s.handleSaveOKRs)
 
 		// Hop routes
 		r.Get("/hops/{hopID}", s.handleHopDetail)
@@ -806,7 +801,6 @@ func (s *Server) setupRoutes() {
 				r.Use(s.requireLiveProject)
 				r.Get("/projects/{projectID}/strategy", s.apiGetStrategy)
 				r.Get("/projects/{projectID}/hops/{hopID}/evaluate", s.apiEvaluateVariations)
-				r.Post("/projects/{projectID}/okr/tune", s.apiTuneOKRs)
 			})
 			r.Get("/demos/{demoID}/status", s.apiGetDemoStatus)
 
