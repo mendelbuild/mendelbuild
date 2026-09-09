@@ -103,7 +103,7 @@ func TestEachInvocationGetsItsOwnNames(t *testing.T) {
 // The instruction survives being a YAML block, since it is multi-line JSON and a
 // mangled one is a job that cannot parse what it was asked.
 func TestTheInstructionSurvivesBeingASecret(t *testing.T) {
-	instr := ProbeInstructionFor("inv-1", "https://mendel.example/adapters/report", "tok")
+	instr := ProbeInstructionFor("inv-1", "https://mendel.example/adapters/report", "tok", "DATABASE_URL")
 	raw, err := json.MarshalIndent(instr, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal: %v", err)

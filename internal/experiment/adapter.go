@@ -86,6 +86,19 @@ type Instruction struct {
 	ReportTo string `json:"report_to"`
 	Token    string `json:"token"`
 
+	// DatastoreEnv names the environment variable holding the connection to the
+	// project's datastore.
+	//
+	// The name and not the value: the job is given production's environment, so
+	// the connection is already there, and putting it in the instruction as well
+	// would copy a credential into a second place for no gain.
+	//
+	// Mendel knows the name because Mendel wrote the application (§13 §15), and
+	// where it does not, that is a `secret` requirement like any other rather
+	// than something for the adapter to guess. An adapter that guessed would
+	// find the wrong database on a project with two.
+	DatastoreEnv string `json:"datastore_env"`
+
 	// Migration is the change under consideration. Absent for probe.
 	Migration *Migration `json:"migration,omitempty"`
 
@@ -120,6 +133,11 @@ func (i *Instruction) Validate() string {
 	if strings.TrimSpace(i.ReportTo) == "" || strings.TrimSpace(i.Token) == "" {
 		return "an instruction needs somewhere to report to and a token to report with; " +
 			"a job that cannot answer is a deployment paid for and thrown away"
+	}
+	if strings.TrimSpace(i.DatastoreEnv) == "" {
+		return "an instruction must name the environment variable holding the datastore " +
+			"connection; an adapter that guessed would find the wrong database on a project " +
+			"with more than one"
 	}
 
 	needsMigration := i.Phase == PhaseAdmit || i.Phase == PhaseApply || i.Phase == PhaseWithdraw

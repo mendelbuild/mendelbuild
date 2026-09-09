@@ -180,11 +180,12 @@ func indentBlock(s string, spaces int) string {
 // Probe takes no migration and no sandbox: it asks what the datastore is and
 // what it can do, which is the only question that has an answer before any
 // experiment exists (§20 D64).
-func ProbeInstructionFor(invocationID, reportTo, token string) *experiment.Instruction {
+func ProbeInstructionFor(invocationID, reportTo, token, datastoreEnv string) *experiment.Instruction {
 	return &experiment.Instruction{
 		Phase:        experiment.PhaseProbe,
 		InvocationID: invocationID,
 		ReportTo:     reportTo,
 		Token:        token,
+		DatastoreEnv: datastoreEnv,
 	}
 }

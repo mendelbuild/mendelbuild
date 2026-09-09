@@ -63,6 +63,7 @@ func TestTheProbeExchangeClosesWithoutInfrastructure(t *testing.T) {
 		InvocationID: "inv-loop",
 		ReportTo:     "https://mendel.example/adapters/report",
 		Token:        "minted-per-invocation",
+		DatastoreEnv: "DATABASE_URL",
 	}
 	if why := instruction.Validate(); why != "" {
 		t.Fatalf("the instruction is not usable: %s", why)
@@ -81,7 +82,7 @@ func TestTheProbeExchangeClosesWithoutInfrastructure(t *testing.T) {
 	// stops a late reply from an earlier run being read as this one's answer.
 	stale := &experiment.Instruction{
 		Phase: experiment.PhaseProbe, InvocationID: "inv-earlier",
-		ReportTo: "https://x", Token: "t",
+		ReportTo: "https://x", Token: "t", DatastoreEnv: "DATABASE_URL",
 	}
 	if why := report.Validate(stale); why == "" {
 		t.Error("a report answering another invocation should not validate against this one")
@@ -92,7 +93,7 @@ func TestTheProbeExchangeClosesWithoutInfrastructure(t *testing.T) {
 func TestAFailedRunReportsWithoutConcluding(t *testing.T) {
 	instruction := &experiment.Instruction{
 		Phase: experiment.PhaseProbe, InvocationID: "inv-1",
-		ReportTo: "https://x", Token: "t",
+		ReportTo: "https://x", Token: "t", DatastoreEnv: "DATABASE_URL",
 	}
 	report := experiment.FailedReport(instruction, "could not resolve the datastore host")
 

@@ -14,6 +14,7 @@ func probeInstruction() *experiment.Instruction {
 		InvocationID: "inv-1",
 		ReportTo:     "https://mendel.example/adapters/report",
 		Token:        "t",
+		DatastoreEnv: "DATABASE_URL",
 	}
 }
 
@@ -163,7 +164,7 @@ func TestACompletedProbeCarriesWhatItFound(t *testing.T) {
 func TestAnAdmissionReportMustBeInternallyConsistent(t *testing.T) {
 	instr := &experiment.Instruction{
 		Phase: experiment.PhaseAdmit, InvocationID: "inv-1",
-		ReportTo: "https://x", Token: "t", Sandbox: "s",
+		ReportTo: "https://x", Token: "t", Sandbox: "s", DatastoreEnv: "DATABASE_URL",
 		Migration: &experiment.Migration{Up: "u", Down: "d"},
 	}
 	added := []experiment.Object{{Kind: experiment.ObjectField, Collection: "orders", Name: "mendel_exp_x"}}

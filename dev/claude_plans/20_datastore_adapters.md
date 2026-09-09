@@ -182,6 +182,8 @@ now closed, and what is left of each is stated rather than implied.**
 | D61 | Re-gate on the suite version and on the datastore the adapter reports connecting to | A maintained list of repository files whose change forces re-gating | A list is inference from the repository where observation is available every run, must be maintained, and breaks silently on a different layout |
 | D62 | Rename the channel's demo path to the non-production path; the demo itself keeps its name | Rename both, or neither | The destination widened and the user-facing feature did not; they were only ever one word by accident |
 | D63 | Generation failure retries with the conformance failure as the fix, bounded by the cost model | Let a user supply an adapter; retry without a bound | The failure messages name requirements, which is what a fix can act on; and an unbounded retry is an unbounded agent spend |
+| D66 | An adapter image is built into the project's own registry, by the path that already builds its application images | A Mendel-owned registry the projects pull from | It needs no cross-project pull grants and no publishing of project-specific generated code, and it leaves one path for hand-written and generated adapters alike |
+| D67 | Mendel ships a cross-compiled static binary and a Dockerfile, not source | `gcloud builds submit` over Mendel's own source | Nothing of Mendel's is built inside someone else's project, the build context is one file, and the result is a distroless image with no shell around a live database credential |
 | D65 | Verification of an apply is scoped to the collections admission recorded, and the rest is an accepted risk | Read the whole catalogue before and after | Mendel is not the only writer, so a whole-catalogue diff attributes another writer's change to the migration and rolls back correct work — a false positive that fires when everything is working, to close a gap that only matters when an adapter misbehaves. The race cannot be closed either way, only narrowed (§13 §7) |
 | D64 | Five phases — probe, admit, apply, withdraw, restore — divided where Mendel must decide, or where time passes | Split admission into provision and verify; merge apply's cleanup with withdrawal | Nothing in admission needs a decision partway, and Probe already reports a provisioning failure sooner; apply's cleanup and a deliberate withdrawal share statements and not intent |
 
@@ -389,8 +391,30 @@ archiving, which it has no reason to know.
    once; and the token is in a Secret rather than the pod spec, which is logged,
    diffed and golden-tested.
 
-   What remains is applying it: building an adapter image, and the reconcile
-   loop that starts a probe and notices when one has gone quiet.
+   **The adapter binary exists** (`cmd/mendel-adapter`), and where its image
+   gets built turned out not to need a decision about Mendel's registry: the
+   image belongs in the *project's* registry, built by the Cloud Build path that
+   already builds that project's application images. Their cluster pulls from
+   there by construction. That avoids a Mendel-owned registry, cross-project
+   pull grants, and publishing project-specific generated code — and it leaves
+   **one path**, since a hand-written adapter and a generated one are built
+   identically and differ only in where the source came from (D66).
+
+   Mendel supplies a cross-compiled static binary and a three-line Dockerfile
+   rather than its own source, so nothing of Mendel's is built inside someone
+   else's project (D67). The image is `distroless/static`, which matters beyond
+   size: the adapter holds a database credential while it runs, and an image
+   with no shell is one fewer thing to reach for if anything else ends up in
+   that pod.
+
+   The scaffolding is Mendel's and the adapter is not. A generated adapter
+   supplies an `experiment.Datastore` and inherits the main, the reporting and
+   the error handling unchanged — which keeps the generated surface to the part
+   conformance actually checks, and keeps the part handling a bearer token out
+   of it.
+
+   What remains is the reconcile loop: starting a probe when there is no fresh
+   one, and noticing when a job has gone quiet.
    Exercised with whatever adapter the test project's datastore needs — which
    adapter that is, is a fact about the test project, not a step here. If
    conformance passes across the boundary unchanged, the boundary is real.
