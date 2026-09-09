@@ -137,24 +137,59 @@ spec:
 %s`, j.Name, hosting.Namespace, AdapterJobTimeout, j.Image, j.InstructionSecret, j.EnvFrom), nil
 }
 
+// JobOwner is the Job a Secret belongs to, so the cluster collects one with the
+// other.
+//
+// Nothing here would otherwise delete a Secret. The Job cleans itself up --
+// activeDeadlineSeconds stops it and ttlSecondsAfterFinished removes it -- but a
+// Secret is an ordinary object that stays until something deletes it, and one
+// per invocation with probes refreshing on a schedule accumulates without bound.
+// Each holds a bearer token that is dead after AdapterTokenTTL, which limits the
+// harm and does nothing about the litter.
+//
+// An ownerReference rather than a sweeper, because it is Kubernetes doing the
+// work and it covers every way the Job can go away, including someone deleting
+// it by hand. A sweeper only covers the paths it was written for.
+type JobOwner struct {
+	Name string
+	UID  string
+}
+
 // adapterInstructionSecret renders the Secret carrying one instruction.
 //
 // Separate from the Job so the Job's manifest can be logged and diffed freely.
 // The instruction contains the bearer token, which is the one thing in this
 // exchange that must not end up somewhere it can be read later.
-func adapterInstructionSecret(name string, instruction []byte) string {
+//
+// The owner is applied afterwards rather than at creation, and the ordering is
+// forced: the Secret has to exist before the Job's pod starts or the container
+// cannot resolve its environment, and the Job's UID does not exist until the Job
+// does. So the sequence is Secret, then Job, then patch the Secret with the
+// owner -- which is why owner is optional here rather than required.
+func adapterInstructionSecret(name string, instruction []byte, owner *JobOwner) string {
+	ownerRef := ""
+	if owner != nil {
+		ownerRef = fmt.Sprintf(`
+  ownerReferences:
+  - apiVersion: batch/v1
+    kind: Job
+    name: %s
+    uid: %s
+    controller: true
+    blockOwnerDeletion: false`, owner.Name, owner.UID)
+	}
 	return fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
   name: %s
   namespace: %s
   labels:
-    mendel-adapter: "true"
+    mendel-adapter: "true"%s
 type: Opaque
 stringData:
   instruction: |
 %s
-`, name, hosting.Namespace, indentBlock(string(instruction), 4))
+`, name, hosting.Namespace, ownerRef, indentBlock(string(instruction), 4))
 }
 
 // AdapterInstructionSecretName is what one invocation's Secret is called.

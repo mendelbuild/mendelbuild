@@ -413,6 +413,26 @@ archiving, which it has no reason to know.
    conformance actually checks, and keeps the part handling a bearer token out
    of it.
 
+   **Nothing an invocation creates outlives its own window**, which is worth
+   stating because two of the three mechanisms are the cluster's rather than
+   Mendel's. A Job stops at `activeDeadlineSeconds` and is removed
+   `ttlSecondsAfterFinished` later; its Secret carries an `ownerReference` to
+   the Job, so the cluster collects one with the other. That last is not
+   cosmetic — a Secret is an ordinary object that stays until something deletes
+   it, one per invocation with probes refreshing on a schedule, each holding a
+   bearer token. An ownerReference rather than a sweeper because Kubernetes does
+   the work and it covers every way the Job can go away, including someone
+   deleting it by hand.
+
+   The ordering is forced and worth writing down: the Secret has to exist before
+   the Job's pod starts or the container cannot resolve its environment, and the
+   Job's UID does not exist until the Job does. So it is Secret, then Job, then
+   patch the Secret with its owner.
+
+   A job also cannot outlive its own token — `AdapterJobTimeout` is shorter than
+   `AdapterTokenTTL`, asserted by a test, so running out of time is what stops a
+   job rather than discovering its credential has expired.
+
    What remains is the reconcile loop: starting a probe when there is no fresh
    one, and noticing when a job has gone quiet.
    Exercised with whatever adapter the test project's datastore needs — which

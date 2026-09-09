@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bhs/mendelbuild/internal/db"
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/bhs/mendelbuild/internal/experiment"
 )
@@ -108,7 +109,7 @@ func TestTheInstructionSurvivesBeingASecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	secret := adapterInstructionSecret(AdapterInstructionSecretName("inv-1"), raw)
+	secret := adapterInstructionSecret(AdapterInstructionSecretName("inv-1"), raw, nil)
 
 	if !strings.Contains(secret, "kind: Secret") {
 		t.Fatal("not a Secret")
@@ -212,5 +213,60 @@ func TestAProbeThatAnsweredIsRead(t *testing.T) {
 	}
 	if !strings.Contains(got.Why, "may not create a database") {
 		t.Errorf("the reason should reach the reader, got %q", got.Why)
+	}
+}
+
+// --- Nothing an invocation creates outlives its own window ---
+
+// The Job stops itself and then removes itself. Without both, a run that hangs
+// holds a pod open indefinitely, and a run that finishes leaves one behind for
+// every probe ever taken.
+func TestAJobStopsAndThenRemovesItself(t *testing.T) {
+	m, err := adapterJobManifest(probeJob())
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(m, "activeDeadlineSeconds:") {
+		t.Error("without a deadline a hung adapter holds a pod until someone notices")
+	}
+	if !strings.Contains(m, "ttlSecondsAfterFinished:") {
+		t.Error("without a TTL every probe ever taken leaves a finished Job behind")
+	}
+}
+
+// A Secret is an ordinary object and stays until something deletes it. One per
+// invocation, with probes refreshing on a schedule, accumulates without bound --
+// each holding a bearer token. The Job's ownerReference is what has the cluster
+// collect one with the other.
+func TestTheInstructionSecretIsCollectedWithItsJob(t *testing.T) {
+	raw := []byte(`{"phase":"probe"}`)
+
+	orphan := adapterInstructionSecret("s", raw, nil)
+	if strings.Contains(orphan, "ownerReferences") {
+		t.Error("the pre-Job form has no owner to name yet")
+	}
+
+	owned := adapterInstructionSecret("s", raw, &JobOwner{Name: "mendel-adapter-inv-1", UID: "uid-123"})
+	for _, want := range []string{"ownerReferences", "kind: Job", "mendel-adapter-inv-1", "uid-123"} {
+		if !strings.Contains(owned, want) {
+			t.Errorf("the owned form should carry %q:\n%s", want, owned)
+		}
+	}
+	// blockOwnerDeletion would make deleting the Job wait on this Secret, which
+	// is backwards: the Secret is the incidental thing.
+	if !strings.Contains(owned, "blockOwnerDeletion: false") {
+		t.Error("a Secret must not hold up the deletion of the Job that owns it")
+	}
+}
+
+// A job must not outlive the credential it was given, or a pod goes on running
+// with a token it can no longer use -- which reads as an adapter that failed
+// rather than one that was cut off.
+func TestAJobCannotOutliveItsToken(t *testing.T) {
+	jobLife := time.Duration(AdapterJobTimeout) * time.Second
+	if jobLife >= db.AdapterTokenTTL {
+		t.Errorf("a job may run for %s and its token is good for %s. The job has to be the "+
+			"shorter of the two, so that running out of time is what stops it rather than "+
+			"discovering its credential has expired.", jobLife, db.AdapterTokenTTL)
 	}
 }
