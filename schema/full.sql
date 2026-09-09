@@ -25,8 +25,20 @@ CREATE TABLE projects (
     brief TEXT,
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- When the project was retired, and by whom [added in 052]. Retiring marks
+    -- the row rather than removing it: everything hanging off a project is
+    -- evidence about money already spent, and an administrator can reverse the
+    -- decision. Every read path filters on deleted_at IS NULL.
+    --
+    -- The foreign key on deleted_by is added below, beneath the users table it
+    -- points at, since that table is declared after this one.
+    deleted_at TIMESTAMPTZ,
+    deleted_by UUID
 );
+
+CREATE INDEX idx_projects_live ON projects (name) WHERE deleted_at IS NULL;
 
 --------------------------------------------------------------------------------
 -- PROJECT CREDENTIALS
@@ -63,6 +75,11 @@ CREATE TABLE users (
 
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_google_id ON users(google_id);
+
+-- Who retired a project [added in 052]. Declared here rather than on the
+-- projects table because that table comes first in this file.
+ALTER TABLE projects ADD CONSTRAINT projects_deleted_by_fkey
+    FOREIGN KEY (deleted_by) REFERENCES users(id);
 
 -- Project membership links users to projects with roles [added in 022]
 CREATE TABLE project_members (

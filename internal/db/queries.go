@@ -33,7 +33,7 @@ func (db *DB) LoadStrategy(ctx context.Context, input *domain.StrategyInput) (uu
 
 	// Upsert project (check if exists first since name isn't unique-constrained)
 	var projectID uuid.UUID
-	err = tx.QueryRow(ctx, `SELECT id FROM projects WHERE name = $1`, input.Project).Scan(&projectID)
+	err = tx.QueryRow(ctx, `SELECT id FROM projects WHERE name = $1 AND deleted_at IS NULL`, input.Project).Scan(&projectID)
 	if err != nil {
 		// Doesn't exist, create it
 		projectID = uuid.New()
@@ -240,7 +240,7 @@ func (db *DB) GetProject(ctx context.Context, id uuid.UUID) (*domain.Project, er
 	var p domain.Project
 	err := db.Pool.QueryRow(ctx, `
 		SELECT id, name, config, brief, created_at, updated_at
-		FROM projects WHERE id = $1
+		FROM projects WHERE id = $1 AND deleted_at IS NULL
 	`, id).Scan(&p.ID, &p.Name, &p.Config, &p.Brief, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -253,7 +253,7 @@ func (db *DB) GetProjectByName(ctx context.Context, name string) (*domain.Projec
 	var p domain.Project
 	err := db.Pool.QueryRow(ctx, `
 		SELECT id, name, config, brief, created_at, updated_at
-		FROM projects WHERE name = $1
+		FROM projects WHERE name = $1 AND deleted_at IS NULL
 	`, name).Scan(&p.ID, &p.Name, &p.Config, &p.Brief, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -779,13 +779,20 @@ func (db *DB) GetVariationsByHop(ctx context.Context, hopID uuid.UUID) ([]domain
 }
 
 // GetHopsWithCreatingVariations returns hops that have variations in "creating" status.
+//
+// Retired projects are not swept. Deleting a project has to stop it spending:
+// an agent charge filed against a project no page in the app lists is money
+// nobody can see, let alone stop.
 func (db *DB) GetHopsWithCreatingVariations(ctx context.Context) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT DISTINCT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria,
 		       h.requires_demo, h.requires_production, h.live_experiment, h.status, h.created_at, h.updated_at
 		FROM hops h
 		JOIN variations v ON v.hop_id = h.id
+		JOIN strategies s ON s.id = h.strategy_id
+		JOIN projects p ON p.id = s.project_id
 		WHERE v.status = 'creating'
+		  AND p.deleted_at IS NULL
 		ORDER BY h.created_at ASC
 	`)
 	if err != nil {
@@ -1034,13 +1041,18 @@ func (db *DB) GetInputRequestBySubjectAndKind(ctx context.Context, subjectType s
 // hops to handle cases where status was updated but input request wasn't created.
 // Also excludes hops that have an unresolved variation_review input request (user is still
 // proposing/reviewing additional variations).
+//
+// Skips retired projects, for the reason on GetHopsWithCreatingVariations.
 func (db *DB) GetHopsNeedingSelectionInputRequest(ctx context.Context) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT DISTINCT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria,
 		       h.requires_demo, h.requires_production, h.live_experiment, h.status, h.created_at, h.updated_at
 		FROM hops h
 		JOIN variations v ON v.hop_id = h.id
+		JOIN strategies s ON s.id = h.strategy_id
+		JOIN projects p ON p.id = s.project_id
 		WHERE h.status IN ('active', 'selecting')
+		  AND p.deleted_at IS NULL
 		  AND v.status = 'pending'
 		  AND NOT EXISTS (
 			SELECT 1 FROM input_requests d
@@ -1077,12 +1089,17 @@ func (db *DB) GetHopsNeedingSelectionInputRequest(ctx context.Context) ([]domain
 
 // GetHopsReadyForSelection returns active hops where all variations are done
 // (no variations in 'creating' status) and at least one is 'pending'.
+//
+// Skips retired projects, for the reason on GetHopsWithCreatingVariations.
 func (db *DB) GetHopsReadyForSelection(ctx context.Context) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria,
 		       h.requires_demo, h.requires_production, h.live_experiment, h.status, h.created_at, h.updated_at
 		FROM hops h
+		JOIN strategies s ON s.id = h.strategy_id
+		JOIN projects p ON p.id = s.project_id
 		WHERE h.status = 'active'
+		  AND p.deleted_at IS NULL
 		  AND EXISTS (
 			SELECT 1 FROM variations v WHERE v.hop_id = h.id AND v.status = 'pending'
 		  )
@@ -1214,11 +1231,16 @@ func (db *DB) GetCompletedTransitiveDependencies(ctx context.Context, hopID uuid
 
 // GetHopsNeedingVariationProposal returns active hops that have no variations
 // and no existing variation_review input request (pending or resolved).
+//
+// Skips retired projects, for the reason on GetHopsWithCreatingVariations.
 func (db *DB) GetHopsNeedingVariationProposal(ctx context.Context) ([]domain.Hop, error) {
 	rows, err := db.Pool.Query(ctx, `
 		SELECT h.id, h.strategy_id, h.name, h.commentary, h.params, h.evaluation_criteria, h.status, h.created_at, h.updated_at
 		FROM hops h
+		JOIN strategies s ON s.id = h.strategy_id
+		JOIN projects p ON p.id = s.project_id
 		WHERE h.status = 'active'
+		  AND p.deleted_at IS NULL
 		  AND NOT EXISTS (
 			SELECT 1 FROM variations v WHERE v.hop_id = h.id
 		  )
@@ -2615,7 +2637,7 @@ func (db *DB) GetUserProjects(ctx context.Context, userID uuid.UUID) ([]struct {
 		SELECT p.id, p.name, p.config, p.brief, p.created_at, p.updated_at, pm.role
 		FROM project_members pm
 		JOIN projects p ON pm.project_id = p.id
-		WHERE pm.user_id = $1
+		WHERE pm.user_id = $1 AND p.deleted_at IS NULL
 		ORDER BY p.name
 	`, userID)
 	if err != nil {
@@ -2647,7 +2669,8 @@ func (db *DB) AssignOwnerToUnownedProjects(ctx context.Context, userID uuid.UUID
 		INSERT INTO project_members (id, project_id, user_id, role, created_at)
 		SELECT gen_random_uuid(), p.id, $1, 'owner', NOW()
 		FROM projects p
-		WHERE NOT EXISTS (
+		WHERE p.deleted_at IS NULL
+		  AND NOT EXISTS (
 			SELECT 1 FROM project_members pm
 			WHERE pm.project_id = p.id AND pm.role = 'owner'
 		)

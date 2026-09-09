@@ -126,4 +126,63 @@
     {{end}}
 </div>
 {{end}}
+
+{{if or (not .AuthEnabled) .IsOwner}}
+<div class="card">
+    <div class="card-head"><h2 class="card-title">Delete this project</h2></div>
+    <p class="card-note">
+        Deleting hides the project from Mendel and stops it doing any further work &mdash; no
+        code generation, no agent spend, no pages. Nothing is erased: what was decided, built
+        and paid for is kept, and an administrator can restore the project later.
+    </p>
+
+    {{if eq .DeleteError "name"}}
+    <div class="callout callout-failure">
+        <p class="callout-title">That name did not match</p>
+        <p class="callout-body">Type the project's name exactly to confirm.</p>
+    </div>
+    {{end}}
+
+    {{if .DeletionBlockers}}
+    <div class="callout callout-waiting">
+        <p class="callout-title">
+            {{if eq .DeleteError "blocked"}}Not deleted, because something is still running{{else}}Something is still running{{end}}
+        </p>
+        <ul class="prereqs-list">
+            {{range .DeletionBlockers}}
+            <li>
+                {{.Name}} &mdash; {{.Missing}}
+                {{if .Path}}<a href="{{.Path}}">Go there</a>{{end}}
+            </li>
+            {{end}}
+        </ul>
+        <p class="callout-body">
+            Deleting marks the project; it does not reach out and stop anything. Mendel
+            declines rather than leave these running against a project nothing will list.
+        </p>
+    </div>
+    {{end}}
+
+    {{if .ProdStillUp}}
+    <div class="callout callout-warning">
+        <p class="callout-title">Production stays up</p>
+        <p class="callout-body">
+            Mendel has no way to take a production deployment down, so deleting this project
+            leaves <strong>{{.ProdStillUp}}</strong> serving and billing on the hosting
+            platform. Take it down there if you want it stopped.
+        </p>
+    </div>
+    {{end}}
+
+    <form method="POST" action="/p/{{.ProjectID}}/settings/delete" class="row row-end">
+        <div class="field">
+            <label for="confirm_name">Type <strong>{{.ProjectName}}</strong> to confirm</label>
+            <span class="hint">A deliberate keystroke, not a comprehension test.</span>
+            <input type="text" id="confirm_name" name="confirm_name" required
+                   autocomplete="off" class="input-inline">
+        </div>
+        <button type="submit" class="btn btn-danger">Delete project</button>
+    </form>
+</div>
+{{end}}
 {{end}}

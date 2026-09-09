@@ -665,6 +665,7 @@ func (s *Server) setupRoutes() {
 
 		// Project-scoped pages
 		r.Route("/p/{projectID}", func(r chi.Router) {
+			r.Use(s.requireLiveProject)
 			if s.authEnabled {
 				r.Use(s.requireProjectAccess)
 			}
@@ -680,6 +681,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/settings/credentials/{credentialID}/delete", s.handleDeleteCloudCredential)
 		r.Post("/settings/members", s.handleAddMember)
 		r.Post("/settings/members/{userID}/remove", s.handleRemoveMember)
+		r.Post("/settings/delete", s.handleDeleteProject)
 		r.Post("/redeploy", s.handleRedeploy)
 
 		// Deployment channel routes
@@ -786,9 +788,16 @@ func (s *Server) setupRoutes() {
 		// API endpoints (for htmx)
 		r.Route("/api", func(r chi.Router) {
 			r.Get("/projects", s.apiListProjects)
-			r.Get("/projects/{projectID}/strategy", s.apiGetStrategy)
-			r.Get("/projects/{projectID}/hops/{hopID}/evaluate", s.apiEvaluateVariations)
-			r.Post("/projects/{projectID}/okr/tune", s.apiTuneOKRs)
+
+			// The JSON endpoints that name a project are closed by the same
+			// rule as its pages. Two of them spend money on agent calls, which
+			// is the thing deleting a project is meant to stop.
+			r.Group(func(r chi.Router) {
+				r.Use(s.requireLiveProject)
+				r.Get("/projects/{projectID}/strategy", s.apiGetStrategy)
+				r.Get("/projects/{projectID}/hops/{hopID}/evaluate", s.apiEvaluateVariations)
+				r.Post("/projects/{projectID}/okr/tune", s.apiTuneOKRs)
+			})
 			r.Get("/demos/{demoID}/status", s.apiGetDemoStatus)
 
 			// Log feeds for the in-place tailer (see logtail.go).
@@ -816,6 +825,44 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		}
 		ctx := context.WithValue(r.Context(), userContextKey, user)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// requireLiveProject closes a retired project's pages.
+//
+// Every project-scoped page hangs off this one route, which is why the check
+// lives here: without it "deleted" would mean no more than "absent from the
+// dashboard", and every bookmark, redirect and form action a person or a
+// browser had kept would go on working.
+//
+// It runs whether or not auth is enabled, unlike requireProjectAccess, because
+// retirement is a fact about the project rather than about who is asking.
+func (s *Server) requireLiveProject(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+		if err != nil {
+			http.Error(w, "Invalid project ID", http.StatusBadRequest)
+			return
+		}
+
+		live, exists, err := s.db.ProjectIsLive(r.Context(), projectID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		switch {
+		case !exists:
+			http.Error(w, "No such project.", http.StatusNotFound)
+			return
+		case !live:
+			// Said plainly rather than redirected away: a bookmark that lands
+			// on the dashboard leaves the reader guessing which project they
+			// were looking for and what became of it.
+			http.Error(w, "This project has been deleted. An administrator can restore it.",
+				http.StatusNotFound)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

@@ -631,10 +631,11 @@ func (s *Server) apiGetStrategy(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(view)
 }
 
-// listProjects returns all projects.
+// listProjects returns every project that has not been retired.
 func (s *Server) listProjects(ctx context.Context) ([]domain.Project, error) {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, name, brief, created_at, updated_at FROM projects ORDER BY name
+		SELECT id, name, brief, created_at, updated_at
+		FROM projects WHERE deleted_at IS NULL ORDER BY name
 	`)
 	if err != nil {
 		return nil, err

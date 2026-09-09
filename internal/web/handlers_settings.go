@@ -124,9 +124,20 @@ func (s *Server) handleProjectSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// What is still live under this project, re-read on every render so the
+	// danger zone shows what would actually stop delete right now.
+	blockers, _ := s.db.ProjectDeletionBlockers(ctx, projectID)
+	prodStillUp, _ := s.db.ProdDeploymentStillUp(ctx, projectID)
+
+	var projectName string
+	if project != nil {
+		projectName = project.Name
+	}
+
 	data := map[string]interface{}{
 		"Title":               "Project Settings",
 		"ProjectID":           projectID.String(),
+		"ProjectName":         projectName,
 		"SettingsTab":         "project",
 		"Settings":            settings,
 		"Success":             success,
@@ -135,6 +146,9 @@ func (s *Server) handleProjectSettings(w http.ResponseWriter, r *http.Request) {
 		"IsOwner":             isOwner,
 		"DemoHostingPlatform": demoHostingPlatform,
 		"DemoScriptStatus":    demoScriptStatus,
+		"DeletionBlockers":    blockers,
+		"ProdStillUp":         prodStillUp,
+		"DeleteError":         r.URL.Query().Get("delete"),
 	}
 
 	if err := s.renderPageFor(w, r, "project_settings.html", data); err != nil {
@@ -1535,4 +1549,65 @@ func pivotSupportMatrix(platforms []domain.HostingPlatform, combos []domain.Supp
 // setupPlaceholder0 is the token in a setup script the user has to replace.
 func setupPlaceholder0(script string) string {
 	return setupPlaceholder.FindString(script)
+}
+
+// handleDeleteProject retires a project, or declines and says what is live.
+//
+// Retiring marks the row; it does not remove anything. The ledger, the roadmap
+// and the record of what was deployed are all evidence about money already
+// spent, which stays worth keeping whether or not anyone still wants the
+// project, and an administrator can reverse the decision.
+//
+// Typing the name is friction against a reflexive click, in the same spirit as
+// the dissonance phrase on a live experiment, not a comprehension test.
+func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	project, err := s.db.GetProject(ctx, projectID)
+	if err != nil || project == nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	var deletedBy *uuid.UUID
+	if s.authEnabled {
+		currentUser := UserFromContext(ctx)
+		if currentUser == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		role, err := s.db.GetProjectMemberRole(ctx, projectID, currentUser.ID)
+		if err != nil || role != domain.ProjectMemberRoleOwner {
+			http.Error(w, "only owners can delete a project", http.StatusForbidden)
+			return
+		}
+		deletedBy = &currentUser.ID
+	}
+
+	settings := "/p/" + projectID.String() + "/settings"
+
+	if strings.TrimSpace(r.FormValue("confirm_name")) != project.Name {
+		http.Redirect(w, r, settings+"?delete=name", http.StatusSeeOther)
+		return
+	}
+
+	blockers, err := s.db.SoftDeleteProject(ctx, projectID, deletedBy)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(blockers) > 0 {
+		// The settings page re-reads the blockers as it renders, so sending the
+		// reader back there shows what is live now rather than what was live
+		// when the button was pressed.
+		http.Redirect(w, r, settings+"?delete=blocked", http.StatusSeeOther)
+		return
+	}
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
