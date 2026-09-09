@@ -70,7 +70,7 @@ func (db *DB) CreateAdapterInvocation(
 
 	err := db.Pool.QueryRow(ctx, `
 		INSERT INTO adapter_invocations (id, project_id, phase, token_hash, expires_at, instruction)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		VALUES ($1, $2, $3, $4, $5, COALESCE($6, '{}'::jsonb))
 		RETURNING created_at
 	`, inv.ID, projectID, phase, HashAdapterToken(token), inv.ExpiresAt, instruction).Scan(&inv.CreatedAt)
 	if err != nil {
@@ -147,4 +147,21 @@ func (db *DB) LatestAdapterInvocation(ctx context.Context, projectID uuid.UUID, 
 		return nil, nil
 	}
 	return inv, nil
+}
+
+// SetAdapterInstruction records the question as asked, once the token that went
+// with it has been handed to the job and not before.
+//
+// Separate from creating the invocation because the two carry different things.
+// Creating mints a token; this stores the instruction with that token taken out,
+// so the credential lives in exactly one place a job can read and nowhere a
+// database can.
+func (db *DB) SetAdapterInstruction(ctx context.Context, id uuid.UUID, instruction []byte) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE adapter_invocations SET instruction = $2 WHERE id = $1
+	`, id, instruction)
+	if err != nil {
+		return fmt.Errorf("record the instruction: %w", err)
+	}
+	return nil
 }
