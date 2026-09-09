@@ -127,12 +127,22 @@ func TestMainlineIsNotRedeployed(t *testing.T) {
 
 // Everything is labelled with the experiment, so teardown can find what it made
 // without knowing what each object is.
+//
+// Counted from the parsed documents rather than from the text: the label value
+// is quoted, and a test that counts `mendel-experiment: exp-checkout` would go
+// from counting objects to counting nothing without saying so.
 func TestResourcesCarryTheExperimentLabel(t *testing.T) {
 	m, err := experimentFixture().Manifest()
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	if n := strings.Count(m, "mendel-experiment: exp-checkout"); n < 4 {
+	n := 0
+	for path, v := range parsedLabelValues(t, m) {
+		if strings.HasSuffix(path, ".metadata.labels.mendel-experiment") && v == "exp-checkout" {
+			n++
+		}
+	}
+	if n < 4 {
 		t.Errorf("only %d objects carry the experiment label; teardown finds objects by it", n)
 	}
 }

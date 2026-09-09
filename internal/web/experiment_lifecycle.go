@@ -482,6 +482,10 @@ func (g *gkeSession) routeBackendNamespace(ctx context.Context, route string) (s
 // load balancer GKE provisions, and Gateway API has no portable way to describe
 // one. It is applied here rather than rendered with the rest because it names
 // the proxy Service, whose name Envoy chooses.
+//
+// The label value is quoted for the reason every other one is: YAML would read
+// an experiment name like `2024` as a number, and the API server refuses the
+// whole object over it.
 func (g *gkeSession) healthCheckProxy(ctx context.Context, proxyService, experimentName string) error {
 	manifest := fmt.Sprintf(`apiVersion: networking.gke.io/v1
 kind: HealthCheckPolicy
@@ -489,7 +493,7 @@ metadata:
   name: %[1]s
   namespace: %[2]s
   labels:
-    mendel-experiment: %[4]s
+    mendel-experiment: %[4]q
 spec:
   default:
     config:

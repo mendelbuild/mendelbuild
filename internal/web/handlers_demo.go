@@ -689,6 +689,11 @@ func (s *Server) deployToCloudRun(
 // to cover them all -- and it is cheaper besides, since a LoadBalancer bills per
 // hour and there was previously one per demo. Without a hostname the old shape
 // stands, so a project that has given Mendel no domain keeps working.
+//
+// The `app` label and the selectors that match it are quoted: a label value is a
+// string, and YAML does not know that. A deployment name that reads as a number
+// or a boolean would parse as one, and the API server refuses the whole object
+// rather than the field -- see envSecretManifest, where this happened for real.
 func k8sManifestFor(deploymentName, imageName, envFrom, hostname, staticIPName string) string {
 	serviceType := "LoadBalancer"
 	if hostname != "" {
@@ -711,11 +716,11 @@ spec:
       maxSurge: 1
   selector:
     matchLabels:
-      app: %s
+      app: %q
   template:
     metadata:
       labels:
-        app: %s
+        app: %q
     spec:
       containers:
       - name: app
@@ -747,7 +752,7 @@ metadata:
 spec:
   type: %s
   selector:
-    app: %s
+    app: %q
   ports:
   - port: 80
     targetPort: %d

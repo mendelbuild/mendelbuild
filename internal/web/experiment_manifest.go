@@ -175,6 +175,12 @@ func (d ExperimentDeployment) Validate() string {
 }
 
 // Manifest renders the experiment.
+//
+// Every label value is quoted, because a label value is a string and YAML does
+// not know that. These are slugified Variation names, so an Arm called "True"
+// or "2024" would render `mendel-arm: true` or `app: 2024` and the API server
+// would refuse the whole object -- "cannot unmarshal bool into ... labels of
+// type string" -- from a manifest that reads exactly as intended.
 func (d ExperimentDeployment) Manifest() (string, error) {
 	if msg := d.Validate(); msg != "" {
 		return "", fmt.Errorf("%s", msg)
@@ -194,19 +200,19 @@ metadata:
   name: %[1]s
   namespace: %[7]s
   labels:
-    mendel-experiment: %[4]s
-    mendel-arm: %[5]s
+    mendel-experiment: %[4]q
+    mendel-arm: %[5]q
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: %[1]s
+      app: %[1]q
   template:
     metadata:
       labels:
-        app: %[1]s
-        mendel-experiment: %[4]s
-        mendel-arm: %[5]s
+        app: %[1]q
+        mendel-experiment: %[4]q
+        mendel-arm: %[5]q
     spec:
       containers:
       - name: app
@@ -223,11 +229,11 @@ metadata:
   name: %[1]s
   namespace: %[7]s
   labels:
-    mendel-experiment: %[4]s
+    mendel-experiment: %[4]q
 spec:
   type: ClusterIP
   selector:
-    app: %[1]s
+    app: %[1]q
   ports:
   - port: 80
     targetPort: %[3]d
@@ -250,7 +256,7 @@ metadata:
   name: %[1]s
   namespace: %[4]s
   labels:
-    mendel-experiment: %[3]s
+    mendel-experiment: %[3]q
 spec:
   gatewayClassName: %[2]s
   listeners:
@@ -272,7 +278,7 @@ metadata:
   name: %[1]s
   namespace: %[2]s
   labels:
-    mendel-experiment: %[1]s
+    mendel-experiment: %[1]q
 spec:
   from:
   - group: gateway.networking.k8s.io
@@ -299,7 +305,7 @@ metadata:
   name: %s
   namespace: %s
   labels:
-    mendel-experiment: %s
+    mendel-experiment: %q
 spec:
   parentRefs:
   - name: %s

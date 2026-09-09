@@ -1351,11 +1351,11 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      app: %s
+      app: %q
   template:
     metadata:
       labels:
-        app: %s
+        app: %q
     spec:
       containers:
       - name: hello
