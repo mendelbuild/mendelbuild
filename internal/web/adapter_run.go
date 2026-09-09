@@ -127,3 +127,80 @@ func (g *gkeSession) jobUID(ctx context.Context, name string) (string, error) {
 	}
 	return uid, nil
 }
+
+// ProbeProject asks one project's datastore what it is, end to end.
+//
+// The entry point both callers use: the CLI, so a probe can be run by hand
+// against staging, and the reconcile loop when there is one. One function with
+// two callers rather than two paths that agree by inspection.
+//
+// Everything it needs beyond the project is what the deployment channel already
+// holds — which is the point of running the adapter there: Mendel authenticates
+// to the cluster the way it does for any deploy, and the adapter reaches the
+// datastore the way the application does.
+func (s *Server) ProbeProject(ctx context.Context, projectID uuid.UUID, image, reportTo string) (*domain.AdapterInvocation, error) {
+	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
+	if err != nil || channel == nil {
+		return nil, fmt.Errorf("this project has no deployment channel, so there is nowhere to run an adapter")
+	}
+
+	env, err := s.deployCredentialsForChannel(ctx, projectID, channel)
+	if err != nil {
+		return nil, fmt.Errorf("the channel's credentials are not available: %w", err)
+	}
+
+	session, err := newGKESession(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	defer session.cleanup()
+
+	// The variable the application reads its datastore from. Mendel knows it
+	// because Mendel wrote the application; where it does not, that is a
+	// `secret` requirement like any other rather than something to guess at.
+	datastoreEnv := AdapterDatastoreEnv
+
+	// Production's own environment, applied the way an Arm's is: the values the
+	// merged code needs, in a Secret the pod names.
+	//
+	// Whether the datastore connection is among them depends on whether it is a
+	// declared requirement, and where it is not, §13 §15's unfinished half is
+	// what fills the gap -- Mendel recovering how the application connects from
+	// the repository it wrote. Until then a project whose connection comes from
+	// somewhere else gets a probe that reports it could not find the datastore,
+	// naming the variable it looked for, which is the right failure to have.
+	values, err := s.appSecretsFor(ctx, projectID, mergedStatuses(ctx, s, projectID))
+	if err != nil {
+		return nil, fmt.Errorf("read the values production runs with: %w", err)
+	}
+	envSecret := AdapterJobName(uuid.New().String()) + "-env"
+	prodEnvFrom, err := session.applyEnvSecret(ctx, envSecret, values,
+		map[string]string{"mendel-adapter": "true"})
+	if err != nil {
+		return nil, fmt.Errorf("give the adapter production's environment: %w", err)
+	}
+
+	return s.startProbe(ctx, projectID, session, image, datastoreEnv, reportTo, prodEnvFrom)
+}
+
+// AdapterDatastoreEnv is the variable an adapter reads its connection from.
+//
+// One name for now, and a placeholder for a per-project answer rather than a
+// convention worth keeping: §13 §15 says Mendel can recover how the application
+// connects from the repository it wrote, and until it does, a project whose
+// application reads something else needs this told to it rather than assumed.
+const AdapterDatastoreEnv = "DATABASE_URL"
+
+// mergedStatuses is what the code on main needs to run, which is what
+// production runs with.
+func mergedStatuses(ctx context.Context, s *Server, projectID uuid.UUID) []domain.RequirementStatus {
+	statuses, err := s.prodRequirementStatus(ctx, projectID, "")
+	if err != nil {
+		// Not fatal: an adapter with fewer values than production has fails by
+		// saying it could not find the datastore, which is a better failure
+		// than refusing to start over a lookup that may have found nothing to
+		// begin with.
+		return nil
+	}
+	return statuses
+}

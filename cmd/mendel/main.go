@@ -52,6 +52,8 @@ func main() {
 		runPlatforms(args)
 	case "rates":
 		runRates(args)
+	case "adapter":
+		runAdapter(args)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -72,6 +74,7 @@ Commands:
   assign-owner      Assign a user as owner to all projects without an owner
   platforms         Manage hosting platforms (list, refresh)
   rates             Manage model and hosting price rate cards (list, refresh, reprice)
+  adapter           Run a datastore adapter against a project (probe)
 
 Environment:
   MENDEL_DB_URL       Postgres connection string (default: postgres://localhost:5432/mendelbuild?sslmode=disable)
@@ -79,6 +82,72 @@ Environment:
   MENDEL_WORK_DIR     Working directory for git clones (default: ~/.mendel/work)
 
 Run 'mendel <command> -h' for more information on a command.`)
+}
+
+// runAdapter starts a datastore adapter against one project.
+//
+// A command rather than only a background loop, because the first time this runs
+// anywhere it should be because someone asked it to and is watching. It creates
+// a Job in that project's cluster; nothing about that should be a surprise.
+func runAdapter(args []string) {
+	fs := flag.NewFlagSet("adapter", flag.ExitOnError)
+	image := fs.String("image", "", "adapter image to run (required)")
+	reportTo := fs.String("report-to", "", "where the adapter posts its result, e.g. https://mendel.example/adapters/report (required)")
+
+	if len(args) < 1 || args[0] != "probe" {
+		fmt.Println(`Usage: mendel adapter probe <project-id> --image <ref> --report-to <url>
+
+Asks a project's datastore what it is: which engine, what it can do, and
+whether Mendel may create a verification database on it.
+
+The adapter runs as a Job in the project's own cluster and posts its answer
+back to --report-to, which must be a Mendel this cluster can reach. Nothing
+waits for it: the answer arrives separately and the invocation records it.
+
+Both flags are required and neither can be guessed. --image is the adapter
+built for this project's datastore; --report-to is where a job in someone
+else's network can find Mendel, which Mendel cannot know about itself.`)
+		os.Exit(1)
+	}
+	if err := fs.Parse(args[1:]); err != nil || fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "usage: mendel adapter probe <project-id> --image <ref> --report-to <url>")
+		os.Exit(1)
+	}
+	if *image == "" || *reportTo == "" {
+		fmt.Fprintln(os.Stderr, "--image and --report-to are both required; neither can be guessed")
+		os.Exit(1)
+	}
+
+	projectID, err := uuid.Parse(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "not a project id: %v\n", err)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	database, err := db.Connect(ctx, getConnString())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error connecting to database: %v\n", err)
+		os.Exit(1)
+	}
+	defer database.Close()
+
+	inv, err := web.NewServer(database, "", Version, BuildTime).ProbeProject(ctx, projectID, *image, *reportTo)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "could not start the probe: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf(`Started a probe of project %s.
+
+  invocation  %s
+  job         kubectl -n mendel-apps get job %s
+  logs        kubectl -n mendel-apps logs job/%s
+
+The answer arrives at %s and is recorded against the invocation; nothing here
+waits for it. The Job stops itself after 20 minutes and the cluster removes it,
+and its Secret, an hour after that.
+`, projectID, inv.ID, web.AdapterJobName(inv.ID.String()), web.AdapterJobName(inv.ID.String()), *reportTo)
 }
 
 func getConnString() string {
