@@ -1349,6 +1349,32 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
 .draft-notes li { margin-bottom: var(--sp-1); }
 .draft-notes > :last-child { margin-bottom: 0; }
 
+/* What the first drafting pass worked out about a project, shown above the
+   objectives that were written against it. Each item carries its own verdict:
+   answered by an objective, declined with a reason, or -- the third state --
+   not judged at all, which the colour deliberately does not reassure about. */
+.consideration-list { list-style: none; margin: var(--sp-4) 0 0; padding: 0; }
+.consideration {
+    border-left: 3px solid var(--line-strong);
+    padding: 0 0 0 var(--sp-4);
+    margin-bottom: var(--sp-4);
+}
+.consideration:last-child { margin-bottom: 0; }
+.consideration-kind {
+    display: inline-block;
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-3);
+}
+.consideration-statement { margin: var(--sp-1) 0 var(--sp-2); }
+.consideration-coverage { font-size: var(--text-sm); margin: 0; }
+.consideration-coverage.covered   { color: var(--tone-success-ink); }
+.consideration-coverage.declined  { color: var(--ink-2); }
+.consideration-coverage.unjudged  { color: var(--tone-waiting-ink); }
+.consideration:has(.covered)  { border-left-color: var(--tone-success); }
+.consideration:has(.unjudged) { border-left-color: var(--tone-waiting); }
+
 .draft-objective {
     border-left: 4px solid var(--brand);
     padding: 2px 0 2px var(--sp-4);

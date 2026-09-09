@@ -39,6 +39,9 @@ var templateFuncs = template.FuncMap{
 		}
 		return "poor"
 	},
+	// One-based position, for the places a template shows a list to a person.
+	// "Objective 0" is not a thing anyone has ever been asked to look at.
+	"add1": func(i int) int { return i + 1 },
 	"mul100": func(score *float64) float64 {
 		if score == nil {
 			return 0

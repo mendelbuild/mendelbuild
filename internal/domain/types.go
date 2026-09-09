@@ -1066,3 +1066,58 @@ func BaseModelID(model string) string {
 // datedSnapshotSuffix matches a trailing -YYYYMMDD. Deliberately simple so the
 // SQL form ('-[0-9]{8}$') can be identical rather than merely similar.
 var datedSnapshotSuffix = regexp.MustCompile(`-[0-9]{8}$`)
+
+// StrategicConsideration is something the drafting agent worked out about a
+// project before writing any objective, and then had to either cover with one
+// or decline in as many words [054].
+//
+// It exists because a brief describes a mechanism, and objectives drafted
+// straight from a brief are that mechanism restated. Both kinds are derived
+// from the project rather than carried by Mendel as a list of dimensions to
+// check -- naming "software quality" or "growth" in a prompt would make every
+// project answer the same questions whether or not they were its questions.
+type StrategicConsideration struct {
+	ID         uuid.UUID `json:"id"`
+	StrategyID uuid.UUID `json:"strategy_id"`
+
+	Kind      string `json:"kind"` // ConsiderationFailureMode, ConsiderationParty
+	Statement string `json:"statement"`
+
+	// Exactly one of these is set once a draft has judged this consideration.
+	// Both nil is the third state: not yet looked at, which is not the same as
+	// looked at and left uncovered.
+	CoveredByObjectiveID *uuid.UUID `json:"covered_by_objective_id,omitempty"`
+	UncoveredReason      *string    `json:"uncovered_reason,omitempty"`
+
+	Position  int       `json:"position"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// The two kinds of Strategic Consideration [054].
+const (
+	// ConsiderationFailureMode: a way this project fails with the software
+	// working exactly as described. Stipulating that the code works is what
+	// excludes the mechanism, since the mechanism is what the brief already
+	// said -- which is how this reaches adoption, trust and effort without
+	// naming any of them.
+	ConsiderationFailureMode = "failure_mode"
+
+	// ConsiderationParty: someone or something the system exchanges with,
+	// whose experience of that exchange decides whether the project succeeds.
+	// A person, another program, an agent, or a supplier whose outage is
+	// indistinguishable from your own. For a party that cannot complain, a bad
+	// experience is latency, error semantics and uptime, so software quality
+	// arrives here rather than through a rule of its own.
+	ConsiderationParty = "party"
+)
+
+// Covered reports whether a drafted objective was made responsible for this.
+func (c StrategicConsideration) Covered() bool { return c.CoveredByObjectiveID != nil }
+
+// Judged reports whether any draft has decided about this consideration yet.
+// Unjudged is not uncovered: one means Mendel has not looked, the other that it
+// looked and said why not.
+func (c StrategicConsideration) Judged() bool {
+	return c.CoveredByObjectiveID != nil || c.UncoveredReason != nil
+}

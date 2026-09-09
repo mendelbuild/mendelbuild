@@ -50,6 +50,12 @@ type SetupOKRView struct {
 	Strategy   *domain.Strategy
 	Notes      *domain.StrategyDraftNotes
 	Objectives []SetupObjectiveView
+
+	// What the first drafting pass worked out, and what the second pass did
+	// about each item. Empty when that pass could not run, which the screen
+	// says rather than showing as "nothing to consider".
+	Considerations []SetupConsiderationView
+
 	Funding    *domain.FundingSource
 	Ribbon     *RibbonView
 	Error      string
@@ -60,6 +66,19 @@ type SetupOKRView struct {
 	DraftFailed  bool
 	DraftError   string
 	PollSeconds  int // How soon the waiting page should re-check
+}
+
+// SetupConsiderationView is one Strategic Consideration as the review screen
+// shows it: what was worked out about the project, and what the draft did about
+// it.
+//
+// The covering objective travels as its position and its text rather than as an
+// id, because the point on screen is for a reader to look up and find the line
+// that answers this one.
+type SetupConsiderationView struct {
+	Consideration domain.StrategicConsideration
+	CoveredBy     string // The covering objective's text, empty if none covers it.
+	CoveredIndex  int    // Its 1-based position on the page, 0 if none covers it.
 }
 
 // SetupObjectiveView is one drafted objective with its key results.
@@ -226,14 +245,21 @@ func (s *Server) draftStrategy(ctx context.Context, projectID, strategyID uuid.U
 	if err != nil {
 		return fmt.Errorf("agent client: %w", err)
 	}
+	// Pass one: what does success depend on, before anyone writes an objective.
+	// Its output is not shown as a draft and nothing is planned against it -- it
+	// exists so pass two has a standard to be checked against, and so the user
+	// can see what was weighed rather than only what was chosen.
+	considerations, keyed := s.drawConsiderations(ctx, strategyID, brief, feedback)
+
+	// Pass two.
 	strategist := agent.NewStrategist(client)
 
 	var drafted *agent.DraftedStrategy
 	var spend agent.Spend
 	if current != nil {
-		drafted, spend, err = strategist.ReviseStrategy(ctx, brief, current, feedback)
+		drafted, spend, err = strategist.ReviseStrategy(ctx, brief, keyed, current, feedback)
 	} else {
-		drafted, spend, err = strategist.DraftStrategy(ctx, brief)
+		drafted, spend, err = strategist.DraftStrategy(ctx, brief, keyed)
 	}
 	s.recordStrategySpend(ctx, strategyID, "strategist", spend)
 	if err != nil {
@@ -255,8 +281,16 @@ func (s *Server) draftStrategy(ctx context.Context, projectID, strategyID uuid.U
 		objectives = append(objectives, o)
 	}
 
-	if err := s.db.ReplaceDraftOKRs(ctx, strategyID, objectives); err != nil {
+	objectiveIDs, err := s.db.ReplaceDraftOKRs(ctx, strategyID, objectives)
+	if err != nil {
 		return fmt.Errorf("save draft: %w", err)
+	}
+
+	// Coverage is written after the objectives exist, because until they do
+	// there is nothing for a covered consideration to point at.
+	if err := s.db.SetConsiderationCoverage(ctx,
+		coverageFromDraft(drafted, considerations, objectiveIDs)); err != nil {
+		return fmt.Errorf("save coverage: %w", err)
 	}
 	if drafted.StrategyName != "" {
 		if err := s.db.RenameStrategy(ctx, strategyID, drafted.StrategyName); err != nil {
@@ -485,6 +519,7 @@ func (s *Server) renderSetupOKRs(ctx context.Context, w http.ResponseWriter, r *
 		}
 		view.Objectives = objViews
 		view.Notes = strategy.Notes()
+		view.Considerations = considerationViews(ctx, s, strategy.ID, objViews)
 
 		if sources, err := s.db.GetFundingSourcesByStrategy(ctx, strategy.ID); err == nil && len(sources) > 0 {
 			view.Funding = &sources[0]
@@ -905,4 +940,157 @@ func (s *Server) addOnboardingRibbon(ctx context.Context, data map[string]interf
 		return
 	}
 	data["OnboardingRibbon"] = ribbonView(domain.OnboardingLifecycle(state))
+}
+
+// drawConsiderations runs the first drafting pass and stores what it produced,
+// returning both the stored rows and the keyed form the second pass reads.
+//
+// A failure here is deliberately not fatal. Drafting objectives from the brief
+// alone is what Mendel did before this pass existed, and it is a much better
+// outcome than a user watching a spinner turn into an error because the step
+// that was meant to broaden their objectives could not run. What is lost is the
+// coverage check, and the review screen says so rather than showing an empty
+// list that reads as "nothing to consider".
+func (s *Server) drawConsiderations(ctx context.Context, strategyID uuid.UUID,
+	brief agent.StrategyBrief, feedback string) ([]domain.StrategicConsideration, []agent.KeyedConsideration) {
+
+	client, err := agent.NewClient("")
+	if err != nil {
+		log.Printf("setup: consideration client for strategy %s: %v", strategyID, err)
+		return nil, nil
+	}
+
+	// The previous list travels with a revision so that feedback refines the
+	// reasoning instead of rerolling it: a user who says "you are ignoring the
+	// people being surveyed" should watch that appear and watch the rest survive.
+	existing, err := s.db.GetStrategicConsiderations(ctx, strategyID)
+	if err != nil {
+		log.Printf("setup: reading considerations for strategy %s: %v", strategyID, err)
+	}
+	prior := make([]agent.DrawnConsideration, 0, len(existing))
+	for _, c := range existing {
+		prior = append(prior, agent.DrawnConsideration{Kind: c.Kind, Statement: c.Statement})
+	}
+
+	drawn, spend, err := agent.NewConsiderationDrawer(client).Draw(ctx, agent.ConsiderationsInput{
+		Brief:    brief,
+		Existing: prior,
+		Feedback: feedback,
+	})
+	s.recordStrategySpend(ctx, strategyID, "consideration_drawer", spend)
+	if err != nil {
+		log.Printf("setup: drawing considerations for strategy %s: %v", strategyID, err)
+		return nil, nil
+	}
+
+	toStore := make([]db.DraftConsideration, 0, len(drawn))
+	for _, c := range drawn {
+		toStore = append(toStore, db.DraftConsideration{Kind: c.Kind, Statement: c.Statement})
+	}
+	ids, err := s.db.ReplaceStrategicConsiderations(ctx, strategyID, toStore)
+	if err != nil {
+		log.Printf("setup: saving considerations for strategy %s: %v", strategyID, err)
+		return nil, nil
+	}
+
+	stored := make([]domain.StrategicConsideration, 0, len(drawn))
+	keyed := make([]agent.KeyedConsideration, 0, len(drawn))
+	for i, c := range drawn {
+		stored = append(stored, domain.StrategicConsideration{
+			ID: ids[i], StrategyID: strategyID, Kind: c.Kind, Statement: c.Statement, Position: i,
+		})
+		keyed = append(keyed, agent.KeyedConsideration{
+			Ref: agent.ConsiderationRef(i), Kind: c.Kind, Statement: c.Statement,
+		})
+	}
+	return stored, keyed
+}
+
+// coverageFromDraft turns the drafting agent's answer -- which talks in
+// reference keys and objective order -- into rows about real ids.
+//
+// Two things are dropped on the floor on purpose. A reference key that matches
+// no consideration is a hallucination and names nothing to record. And a
+// consideration the agent mentioned in neither place is left unjudged rather
+// than written down as a decline: "it did not say" and "it said no, because"
+// are different facts, and the screen shows them differently.
+func coverageFromDraft(drafted *agent.DraftedStrategy, considerations []domain.StrategicConsideration,
+	objectiveIDs []uuid.UUID) []db.ConsiderationCoverage {
+
+	byRef := make(map[string]uuid.UUID, len(considerations))
+	for i, c := range considerations {
+		byRef[agent.ConsiderationRef(i)] = c.ID
+	}
+
+	coverage := make([]db.ConsiderationCoverage, 0, len(considerations))
+	claimed := make(map[string]bool, len(considerations))
+
+	for i, obj := range drafted.Objectives {
+		if i >= len(objectiveIDs) {
+			break
+		}
+		objectiveID := objectiveIDs[i]
+		for _, ref := range obj.Covers {
+			considerationID, ok := byRef[ref]
+			if !ok || claimed[ref] {
+				continue
+			}
+			claimed[ref] = true
+			coverage = append(coverage, db.ConsiderationCoverage{
+				ConsiderationID: considerationID, ObjectiveID: &objectiveID,
+			})
+		}
+	}
+
+	// Covered wins over declined when the agent said both, because an objective
+	// naming a consideration is the more specific claim of the two.
+	for _, u := range drafted.Uncovered {
+		considerationID, ok := byRef[u.Ref]
+		if !ok || claimed[u.Ref] || u.Reason == "" {
+			continue
+		}
+		claimed[u.Ref] = true
+		coverage = append(coverage, db.ConsiderationCoverage{
+			ConsiderationID: considerationID, UncoveredReason: u.Reason,
+		})
+	}
+
+	return coverage
+}
+
+// considerationViews pairs each Strategic Consideration with the objective that
+// answers it, so the review screen can show the two together.
+//
+// A read failure here yields no considerations rather than an error page. The
+// draft itself is the thing the user came for, and losing the reasoning beside
+// it is worth strictly less than losing the screen.
+func considerationViews(ctx context.Context, s *Server, strategyID uuid.UUID,
+	objectives []SetupObjectiveView) []SetupConsiderationView {
+
+	considerations, err := s.db.GetStrategicConsiderations(ctx, strategyID)
+	if err != nil {
+		log.Printf("setup: reading considerations for strategy %s: %v", strategyID, err)
+		return nil
+	}
+
+	type placed struct {
+		index int
+		text  string
+	}
+	byObjective := make(map[uuid.UUID]placed, len(objectives))
+	for i, o := range objectives {
+		byObjective[o.Objective.ID] = placed{index: i + 1, text: o.Objective.Description}
+	}
+
+	views := make([]SetupConsiderationView, 0, len(considerations))
+	for _, c := range considerations {
+		v := SetupConsiderationView{Consideration: c}
+		if c.CoveredByObjectiveID != nil {
+			if p, ok := byObjective[*c.CoveredByObjectiveID]; ok {
+				v.CoveredIndex, v.CoveredBy = p.index, p.text
+			}
+		}
+		views = append(views, v)
+	}
+	return views
 }

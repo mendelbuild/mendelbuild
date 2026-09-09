@@ -127,16 +127,21 @@ func (db *DB) ApproveOKRs(ctx context.Context, strategyID uuid.UUID) error {
 	return err
 }
 
-// ReplaceDraftOKRs swaps a strategy's entire OKR set for a freshly drafted one.
+// ReplaceDraftOKRs swaps a strategy's entire OKR set for a freshly drafted one,
+// returning the new objectives' ids in the order they were given.
+//
+// The order is what lets Strategic Consideration coverage be recorded: the
+// drafting agent answers in terms of the objectives it just wrote, which have no
+// identity until this function gives them one.
 //
 // Only safe on an unapproved strategy, which the caller must check: it hard
 // deletes the objectives and key results it replaces rather than soft deleting
 // them, because a draft nobody has looked at is not history worth keeping and
 // leaving tombstones behind would clutter the OKR editor from day one.
-func (db *DB) ReplaceDraftOKRs(ctx context.Context, strategyID uuid.UUID, objectives []DraftObjective) error {
+func (db *DB) ReplaceDraftOKRs(ctx context.Context, strategyID uuid.UUID, objectives []DraftObjective) ([]uuid.UUID, error) {
 	tx, err := db.Pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
@@ -144,29 +149,31 @@ func (db *DB) ReplaceDraftOKRs(ctx context.Context, strategyID uuid.UUID, object
 		DELETE FROM objective_key_result_pairs
 		WHERE objective_id IN (SELECT id FROM objectives WHERE strategy_id = $1)
 	`, strategyID); err != nil {
-		return fmt.Errorf("clear okr links: %w", err)
+		return nil, fmt.Errorf("clear okr links: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		DELETE FROM funding_success_criteria
 		WHERE key_result_id IN (SELECT id FROM key_results WHERE strategy_id = $1)
 	`, strategyID); err != nil {
-		return fmt.Errorf("clear funding links: %w", err)
+		return nil, fmt.Errorf("clear funding links: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM key_results WHERE strategy_id = $1`, strategyID); err != nil {
-		return fmt.Errorf("clear key results: %w", err)
+		return nil, fmt.Errorf("clear key results: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM objectives WHERE strategy_id = $1`, strategyID); err != nil {
-		return fmt.Errorf("clear objectives: %w", err)
+		return nil, fmt.Errorf("clear objectives: %w", err)
 	}
 
 	now := time.Now()
+	objectiveIDs := make([]uuid.UUID, 0, len(objectives))
 	for _, obj := range objectives {
 		objID := uuid.New()
+		objectiveIDs = append(objectiveIDs, objID)
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO objectives (id, strategy_id, description, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $4)
 		`, objID, strategyID, obj.Description, now); err != nil {
-			return fmt.Errorf("insert objective: %w", err)
+			return nil, fmt.Errorf("insert objective: %w", err)
 		}
 
 		for _, kr := range obj.KeyResults {
@@ -178,18 +185,21 @@ func (db *DB) ReplaceDraftOKRs(ctx context.Context, strategyID uuid.UUID, object
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
 			`, krID, strategyID, kr.Description,
 				kr.TargetComparator, kr.TargetValue, kr.TargetUnit, kr.TargetDate, now); err != nil {
-				return fmt.Errorf("insert key result: %w", err)
+				return nil, fmt.Errorf("insert key result: %w", err)
 			}
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO objective_key_result_pairs (objective_id, key_result_id, created_at)
 				VALUES ($1, $2, $3)
 			`, objID, krID, now); err != nil {
-				return fmt.Errorf("link key result: %w", err)
+				return nil, fmt.Errorf("link key result: %w", err)
 			}
 		}
 	}
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return objectiveIDs, nil
 }
 
 // DraftObjective is one objective and its key results, as written by the

@@ -350,6 +350,20 @@ type DraftedKeyResult struct {
 type DraftedObjective struct {
 	Description string             `json:"description" desc:"The outcome, in plain English: who ends up better off and how. Not the mechanism -- an objective that lists actions ('the user can do X, then Y, then Z') is a feature list; say what those actions were for instead. It should still read true if the design changed. One or two sentences, no jargon."`
 	KeyResults  []DraftedKeyResult `json:"key_results" desc:"2 to 3 key results that together tell you whether this objective was met."`
+	Covers      []string           `json:"covers" desc:"Reference keys of the considerations this objective is responsible for, copied exactly from the input ('C1', 'C4'). Empty only if this objective genuinely answers none of them, which is worth a second look."`
+}
+
+// UncoveredConsideration is a consideration the drafter chose not to write an
+// objective for, and why.
+//
+// Declining is a real outcome and not a failure: a brief with a fixed budget
+// cannot cover everything success depends on, and four objectives is a hard
+// cap. What is not allowed is deciding silently. The reason shows up beside the
+// consideration on the review screen, which is the one place a user who would
+// not have thought of it themselves can disagree.
+type UncoveredConsideration struct {
+	Ref    string `json:"ref" desc:"The consideration's reference key, copied exactly from the input ('C3')."`
+	Reason string `json:"reason" desc:"Why no objective covers this, in one plain sentence addressed to the user. Say what would have to change for it to be worth covering. Not 'out of scope' -- say why."`
 }
 
 // DraftedStrategy is the drafting agent's first pass at a strategy: what the
@@ -366,6 +380,7 @@ type DraftedStrategy struct {
 	BudgetName    string             `json:"budget_name" desc:"A short label for the budget covering this work, e.g. 'MVP build' or 'Q3 build'. Two or three words."`
 	Assumptions   []string           `json:"assumptions" desc:"Specifics you filled in that the brief did not state -- platform, audience, scale, tech choices. One short sentence each. Empty array only if the brief genuinely left nothing open."`
 	OpenQuestions []string           `json:"open_questions" desc:"Questions whose answers would change these objectives, phrased for the user to answer. One sentence each. Empty array if there are none worth asking."`
+	Uncovered     []UncoveredConsideration `json:"uncovered" desc:"Every consideration from the input that no objective covers, with the reason. A consideration must appear either in some objective's covers list or here -- never in neither, and never in both."`
 	BudgetNote    string             `json:"budget_note" desc:"Whether the stated budget and deadline look like enough for this scope, and what you would cut first if they are not. Say plainly when you cannot tell. Do not invent dollar figures for individual pieces of work -- you have no cost history to base them on. 1-3 sentences."`
 }
 

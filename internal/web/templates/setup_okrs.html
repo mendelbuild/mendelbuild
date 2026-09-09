@@ -108,6 +108,51 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
 </div>
 {{end}}
 
+{{if .Considerations}}
+{{/* Shown above the objectives because they came first: this is what the
+     drafting agent worked out before writing any of them, and every line below
+     was chosen against it. The coverage is the point -- a reader who would not
+     have thought of one of these themselves can still disagree with a "not
+     covered" and say so in the feedback box. */}}
+<div class="card">
+    <div class="card-head">
+        <h2 class="card-title">Taken into account</h2>
+    </div>
+    <p class="text-sm subtle prose">
+        Before drafting anything, Mendel worked out what this project's success
+        depends on &mdash; the ways it fails even with the software working, and
+        who or what it has to serve. Each one is either answered by an objective
+        below or declined with a reason.
+    </p>
+
+    <ul class="consideration-list">
+        {{range .Considerations}}
+        <li class="consideration">
+            <span class="consideration-kind">
+                {{if eq .Consideration.Kind "failure_mode"}}Fails if{{else}}Has to serve{{end}}
+            </span>
+            <p class="consideration-statement">{{.Consideration.Statement}}</p>
+            {{if .Consideration.Covered}}
+            <p class="consideration-coverage covered">
+                Objective {{.CoveredIndex}} &mdash; {{.CoveredBy}}
+            </p>
+            {{else if .Consideration.UncoveredReason}}
+            <p class="consideration-coverage declined">
+                Not covered &mdash; {{derefString .Consideration.UncoveredReason}}
+            </p>
+            {{else}}
+            {{/* Neither covered nor declined. Mendel did not say, which is not
+                 the same as saying no, and is worth showing as the gap it is. */}}
+            <p class="consideration-coverage unjudged">
+                Mendel did not say whether this is covered.
+            </p>
+            {{end}}
+        </li>
+        {{end}}
+    </ul>
+</div>
+{{end}}
+
 {{if .Funding}}
 <div class="card card-tight">
     <strong>{{usd .Funding.AmountUSD}}</strong> budgeted as &ldquo;{{.Funding.Name}}&rdquo;
@@ -121,10 +166,13 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
         <h2 class="card-title">Objectives</h2>
 
         {{if .Objectives}}
-        {{range .Objectives}}
+        {{range $i, $o := .Objectives}}
+        {{with $o}}
         <div class="draft-objective">
             <div class="field field-tight">
-                <label for="obj_{{.Objective.ID}}">Objective</label>
+                {{/* Numbered because the considerations above point here by
+                     position: "Objective 2" has to be findable. */}}
+                <label for="obj_{{.Objective.ID}}">Objective {{add1 $i}}</label>
                 <span class="hint">Clear this box to drop this objective and its key results.</span>
                 <input type="text" id="obj_{{.Objective.ID}}" name="obj_{{.Objective.ID}}"
                        value="{{.Objective.Description}}">
@@ -177,6 +225,7 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
             </div>
             {{end}}
         </div>
+        {{end}}
         {{end}}
 
         <div class="actions">

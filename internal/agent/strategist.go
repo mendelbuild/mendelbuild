@@ -25,7 +25,15 @@ Objectives -- the outcome, never the mechanism:
 
 - A good objective survives a change of implementation. If a different design would satisfy the same brief, the objective should still read true; only the key results would change.
 - Plain language. No "leverage", "delight", "world-class", "seamless".
-- Cover what the brief actually asked for. Do not add an objective for something the user never mentioned just because it is good practice; put it in open_questions instead.
+- Cover what the brief actually asked for. Do not widen the scope: an objective for a feature the user never mentioned is work they did not ask to pay for, and belongs in open_questions.
+- A success condition on the scope they *did* ask for is not extra scope. Whether anyone adopts the thing, whether it is fast enough to be used, whether the people it asks work of will do that work -- these are not additions to the brief, they are what makes the brief worth building. The considerations below are exactly this, and they were worked out from this project rather than from a list Mendel carries.
+
+Considerations:
+You are given what a first pass worked out about this project: the ways it fails with the software working exactly as described, and the parties whose experience decides whether it succeeds. They are the standard your objectives are checked against.
+- Every consideration must end up in exactly one place: in some objective's covers list, or in uncovered with a reason. Never both, never neither.
+- Do not pad to cover them all. Four objectives is the cap and it binds: choosing to leave something uncovered, and saying why, is a better answer than a fifth objective or a bloated third one.
+- Weigh them on merit against what the brief asked for. A consideration that would sink the project beats a restatement of the brief, even though the brief is what the user wrote down.
+- The reason on an uncovered consideration is read by the user. Write it for them: what would have to be true for this to be worth an objective.
 
 Key Results:
 - 2 to 3 per objective. Each must be checkable: a reader must be able to say yes or no.
@@ -52,7 +60,8 @@ Beyond that:
 - The feedback is the point. Act on it directly rather than producing a differently-worded version of the same draft.
 - Keep the parts the user did not object to. Rewriting untouched objectives wastes their re-reading.
 - If the feedback conflicts with something you believe matters, do what they asked and record your concern in open_questions rather than quietly ignoring them.
-- If the feedback is too vague to act on, say what you would need to know in open_questions instead of guessing at length.`
+- If the feedback is too vague to act on, say what you would need to know in open_questions instead of guessing at length.
+- The considerations travel with the draft and the coverage rule still holds: every one of them lands in an objective's covers list or in uncovered with a reason. If the feedback asks for something you had declined, cover it now and say in budget_note what gave way to make room.`
 
 // errUnusableDraft is a response that satisfied the schema but not the point.
 // Two shapes have been seen in practice: every field present and blank, and a
@@ -68,6 +77,23 @@ const emptyRetryNudge = `Your previous attempt came back as a stub -- blank fiel
 
 Write the actual objectives this time, in real words about this specific project. If the brief genuinely leaves something open, say so in assumptions or open_questions; that is never a reason to return a stub.`
 
+// KeyedConsideration is a Strategic Consideration as the drafting pass sees it:
+// the statement, plus a short reference the model points back at.
+//
+// The reference exists because coverage has to survive the round trip. Objectives
+// do not have identities until they are written, so the model cannot answer
+// "which objective covers this"; it can answer "which of these does this
+// objective cover", and a short opaque key is far harder to garble than an index
+// or a restatement of the sentence.
+type KeyedConsideration struct {
+	Ref       string `json:"ref" desc:"Short reference for this consideration. Copy it exactly when pointing back at it."`
+	Kind      string `json:"kind" desc:"'failure_mode' -- a way this project fails with the software working as described -- or 'party', someone or something whose experience of the exchange decides whether it succeeds."`
+	Statement string `json:"statement" desc:"What was worked out about this project."`
+}
+
+// ConsiderationRef is the reference key for the nth consideration.
+func ConsiderationRef(n int) string { return fmt.Sprintf("C%d", n+1) }
+
 // Strategist drafts a strategy -- objectives, key results, and a budget label --
 // from the plain-English brief a user writes when creating a project.
 type Strategist struct {
@@ -81,8 +107,13 @@ func NewStrategist(client *Client) *Strategist {
 
 // DraftStrategy produces a first-pass strategy from a brief. The result is a
 // draft: nothing is built from it until a human approves it.
-func (s *Strategist) DraftStrategy(ctx context.Context, brief StrategyBrief) (*DraftedStrategy, Spend, error) {
-	briefJSON, err := json.MarshalIndent(brief, "", "  ")
+func (s *Strategist) DraftStrategy(ctx context.Context, brief StrategyBrief, considerations []KeyedConsideration) (*DraftedStrategy, Spend, error) {
+	payload := struct {
+		Brief          StrategyBrief        `json:"brief"`
+		Considerations []KeyedConsideration `json:"considerations"`
+	}{brief, considerations}
+
+	briefJSON, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return nil, Spend{}, fmt.Errorf("marshal brief: %w", err)
 	}
@@ -103,12 +134,15 @@ that belongs in assumptions and open_questions.`, string(briefJSON))
 // ReviseStrategy redrafts a strategy from the user's feedback on the previous
 // draft. The brief travels with it: the feedback is a correction to the reading
 // of the brief, not a replacement for it.
-func (s *Strategist) ReviseStrategy(ctx context.Context, brief StrategyBrief, current *DraftedStrategy, feedback string) (*DraftedStrategy, Spend, error) {
+func (s *Strategist) ReviseStrategy(ctx context.Context, brief StrategyBrief, considerations []KeyedConsideration,
+	current *DraftedStrategy, feedback string) (*DraftedStrategy, Spend, error) {
+
 	payload := struct {
-		Brief        StrategyBrief    `json:"brief"`
-		CurrentDraft *DraftedStrategy `json:"current_draft"`
-		Feedback     string           `json:"feedback"`
-	}{brief, current, feedback}
+		Brief          StrategyBrief        `json:"brief"`
+		Considerations []KeyedConsideration `json:"considerations"`
+		CurrentDraft   *DraftedStrategy     `json:"current_draft"`
+		Feedback       string               `json:"feedback"`
+	}{brief, considerations, current, feedback}
 
 	payloadJSON, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
