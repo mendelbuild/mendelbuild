@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -89,12 +90,66 @@ Run 'mendel <command> -h' for more information on a command.`)
 // A command rather than only a background loop, because the first time this runs
 // anywhere it should be because someone asked it to and is watching. It creates
 // a Job in that project's cluster; nothing about that should be a surprise.
-func runAdapter(args []string) {
-	fs := flag.NewFlagSet("adapter", flag.ExitOnError)
+// probeArgs is one probe as asked for on a command line.
+type probeArgs struct {
+	ProjectID uuid.UUID
+	Image     string
+	ReportTo  string
+	Force     bool
+}
+
+// parseProbeArgs reads `probe <project-id> --image <ref> --report-to <url>`.
+//
+// Two passes over the same FlagSet, and the reason is worth stating because a
+// single pass fails in a way that reads as the user's mistake. Go's flag package
+// **stops at the first non-flag argument** and leaves the rest alone, so with the
+// project id first -- which is the documented form -- every flag after it went
+// unparsed, and the command rejected a line that named both required flags with
+// "--image and --report-to are both required". So: parse until the id, take it,
+// parse what follows.
+//
+// A function rather than inline, because the failure above was invisible to the
+// suite. Nothing here calls the cluster, so the parsing can be checked on its
+// own, which is the only part of this command a test can reach.
+func parseProbeArgs(args []string) (*probeArgs, error) {
+	fs := flag.NewFlagSet("adapter probe", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 	image := fs.String("image", "", "adapter image to run (required)")
-	reportTo := fs.String("report-to", "", "where the adapter posts its result, e.g. https://mendel.example/adapters/report (required)")
+	reportTo := fs.String("report-to", "", "where the adapter posts its result (required)")
 	force := fs.Bool("force", false, "probe even if a recent answer stands")
 
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if fs.NArg() == 0 {
+		return nil, fmt.Errorf("usage: mendel adapter probe <project-id> --image <ref> --report-to <url>")
+	}
+	first := fs.Arg(0)
+	// Copied before the second Parse, which reassigns what Args reads from.
+	tail := append([]string(nil), fs.Args()[1:]...)
+	if err := fs.Parse(tail); err != nil {
+		return nil, err
+	}
+	if fs.NArg() > 0 {
+		return nil, fmt.Errorf("unexpected argument %q; a probe names one project", fs.Arg(0))
+	}
+
+	if *image == "" || *reportTo == "" {
+		return nil, fmt.Errorf("--image and --report-to are both required; neither can be guessed")
+	}
+	id, err := uuid.Parse(first)
+	if err != nil {
+		return nil, fmt.Errorf("not a project id: %v", err)
+	}
+	return &probeArgs{ProjectID: id, Image: *image, ReportTo: *reportTo, Force: *force}, nil
+}
+
+// runAdapter starts a datastore adapter against one project.
+//
+// A command rather than only a background loop, because the first time this runs
+// anywhere it should be because someone asked it to and is watching. It creates
+// a Job in that project's cluster; nothing about that should be a surprise.
+func runAdapter(args []string) {
 	if len(args) < 1 || args[0] != "probe" {
 		fmt.Println(`Usage: mendel adapter probe <project-id> --image <ref> --report-to <url>
 
@@ -114,18 +169,10 @@ left alone either way: its answer is what would refresh this, and a second
 job would report against an invocation that is not its own.`)
 		os.Exit(1)
 	}
-	if err := fs.Parse(args[1:]); err != nil || fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "usage: mendel adapter probe <project-id> --image <ref> --report-to <url>")
-		os.Exit(1)
-	}
-	if *image == "" || *reportTo == "" {
-		fmt.Fprintln(os.Stderr, "--image and --report-to are both required; neither can be guessed")
-		os.Exit(1)
-	}
 
-	projectID, err := uuid.Parse(fs.Arg(0))
+	opts, err := parseProbeArgs(args[1:])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "not a project id: %v\n", err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
@@ -137,12 +184,14 @@ job would report against an invocation that is not its own.`)
 	}
 	defer database.Close()
 
-	inv, err := web.NewServer(database, "", Version, BuildTime).ProbeProject(ctx, projectID, *image, *reportTo, *force)
+	inv, err := web.NewServer(database, "", Version, BuildTime).
+		ProbeProject(ctx, opts.ProjectID, opts.Image, opts.ReportTo, opts.Force)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "could not start the probe: %v\n", err)
 		os.Exit(1)
 	}
 
+	job := web.AdapterJobName(inv.ID.String())
 	fmt.Printf(`Started a probe of project %s.
 
   invocation  %s
@@ -152,7 +201,7 @@ job would report against an invocation that is not its own.`)
 The answer arrives at %s and is recorded against the invocation; nothing here
 waits for it. The Job stops itself after 20 minutes and the cluster removes it,
 and its Secret, an hour after that.
-`, projectID, inv.ID, web.AdapterJobName(inv.ID.String()), web.AdapterJobName(inv.ID.String()), *reportTo)
+`, opts.ProjectID, inv.ID, job, job, opts.ReportTo)
 }
 
 func getConnString() string {
