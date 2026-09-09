@@ -93,6 +93,7 @@ func runAdapter(args []string) {
 	fs := flag.NewFlagSet("adapter", flag.ExitOnError)
 	image := fs.String("image", "", "adapter image to run (required)")
 	reportTo := fs.String("report-to", "", "where the adapter posts its result, e.g. https://mendel.example/adapters/report (required)")
+	force := fs.Bool("force", false, "probe even if a recent answer stands")
 
 	if len(args) < 1 || args[0] != "probe" {
 		fmt.Println(`Usage: mendel adapter probe <project-id> --image <ref> --report-to <url>
@@ -106,7 +107,11 @@ waits for it: the answer arrives separately and the invocation records it.
 
 Both flags are required and neither can be guessed. --image is the adapter
 built for this project's datastore; --report-to is where a job in someone
-else's network can find Mendel, which Mendel cannot know about itself.`)
+else's network can find Mendel, which Mendel cannot know about itself.
+
+A recent answer is left alone unless --force. A probe already running is
+left alone either way: its answer is what would refresh this, and a second
+job would report against an invocation that is not its own.`)
 		os.Exit(1)
 	}
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() < 1 {
@@ -132,7 +137,7 @@ else's network can find Mendel, which Mendel cannot know about itself.`)
 	}
 	defer database.Close()
 
-	inv, err := web.NewServer(database, "", Version, BuildTime).ProbeProject(ctx, projectID, *image, *reportTo)
+	inv, err := web.NewServer(database, "", Version, BuildTime).ProbeProject(ctx, projectID, *image, *reportTo, *force)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "could not start the probe: %v\n", err)
 		os.Exit(1)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -138,7 +139,21 @@ func (g *gkeSession) jobUID(ctx context.Context, name string) (string, error) {
 // holds — which is the point of running the adapter there: Mendel authenticates
 // to the cluster the way it does for any deploy, and the adapter reaches the
 // datastore the way the application does.
-func (s *Server) ProbeProject(ctx context.Context, projectID uuid.UUID, image, reportTo string) (*domain.AdapterInvocation, error) {
+func (s *Server) ProbeProject(ctx context.Context, projectID uuid.UUID, image, reportTo string, force bool) (*domain.AdapterInvocation, error) {
+	// Asked before anything is spent, because starting one costs a Job and a pod
+	// in someone's cluster. The case that matters is a second probe joining one
+	// already running: two jobs against a datastore means two reports, and the
+	// second is refused as a duplicate for an invocation it does not belong to.
+	// Not overridable by force for that reason -- what a person asking for a
+	// refresh wants is a fresh answer, and one is already on its way.
+	latest, err := s.db.LatestAdapterInvocation(ctx, projectID, string(experiment.PhaseProbe))
+	if err != nil {
+		return nil, err
+	}
+	if d := ShouldProbe(latest, time.Now(), force); !d.Start {
+		return nil, fmt.Errorf("%s", d.Because)
+	}
+
 	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
 	if err != nil || channel == nil {
 		return nil, fmt.Errorf("this project has no deployment channel, so there is nowhere to run an adapter")
