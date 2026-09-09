@@ -179,6 +179,47 @@ refs that map, refs that do not exist, a consideration claimed and declined at
 once (covered wins — it is the more specific claim), and one mentioned nowhere
 (stays unjudged).
 
+## What followed, from using it
+
+Four changes came out of the first real draft read on screen.
+
+**Open questions became answerable.** The agent is told to raise a question only
+when the answer would change the objectives, and it asks good ones. They were a
+bullet list with nothing to answer them with. Each now carries two to four
+plausible answers as choices plus a free-text box, and answering redrafts.
+Recognising a good answer is far easier than composing one -- the same reason
+the objectives are drafted rather than asked for. Answers survive redrafts and
+travel as part of the brief, since they are the parts of it the user had not
+thought to write down until they were asked. `strategy_open_questions` [055].
+
+**One editor.** There were two, and the second could nest objectives, share a
+key result between them, and add or remove rows. The first two were used by
+nobody -- zero of each in staging -- and were wired halfway: every other screen
+reads root objectives, so anything nested was invisible outside the editor that
+made it. The review screen became the editor: before approval it is the review
+that sets the project in motion, afterwards the same fields save in place.
+Single level for now, with `parent_id` and the junction table left in place so a
+richer OKR model stays an addition rather than a migration.
+
+**The grader's critique is acted on before the draft is shown.** The screen had
+put a key result in front of someone over Mendel's own verdict that its
+done-or-not target could not say whether the work was going well. That asks the
+reader to make the edit the grader just described, which is exactly the edit
+someone new to writing key results cannot make. Lines below 0.6 -- where the
+tuner's guide stops saying "one edit away" -- are redrafted with the grader's own
+sentence as the instruction, then graded again. Once: another pass is a loop
+with a model in it and a person waiting on it. Whatever survives is shown with
+its score, because a critique that survives a rewrite is worth reading.
+
+This is the "invert the signal" decision made concrete. The grade targets a
+redraft; it still locks nothing.
+
+**Key result dates align on the cycle end.** The drafter is no longer asked for
+a date and the per-row date field is gone. A cycle is not a sequence of
+deadlines: what tells you mid-cycle whether the work is going well is that each
+key result can be measured weekly, which is already required. A staggered due
+date is a milestone, and a milestone is a Hop.
+
 ## Not done yet
 
 These were designed alongside the above and deliberately left:
