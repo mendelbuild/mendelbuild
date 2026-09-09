@@ -19,13 +19,6 @@ func TestStatusViewsCoverEveryValue(t *testing.T) {
 		}
 	}
 
-	for _, s := range []DemoInstanceStatus{
-		DemoInstanceStatusStarting, DemoInstanceStatusRunning,
-		DemoInstanceStatusStopped, DemoInstanceStatusError,
-	} {
-		seen(t, "demo "+string(s), DemoStatus(s))
-	}
-
 	for _, s := range []VariationRevisionStatus{
 		VariationRevisionStatusPending, VariationRevisionStatusInProgress,
 		VariationRevisionStatusCompleted, VariationRevisionStatusFailed,
@@ -44,9 +37,6 @@ func TestStatusViewsCoverEveryValue(t *testing.T) {
 // The rule that motivates the whole file: a thing that went wrong and a thing
 // that finished must not share a tone.
 func TestStatusViewsSeparateFailureFromSuccess(t *testing.T) {
-	if DemoStatus(DemoInstanceStatusError).Tone == DemoStatus(DemoInstanceStatusRunning).Tone {
-		t.Error("a failed demo shares a tone with a running one")
-	}
 	if DeploymentStatus(HostingDeploymentStatusFailed).Tone == DeploymentStatus(HostingDeploymentStatusRunning).Tone {
 		t.Error("a failed deploy shares a tone with a live one")
 	}
@@ -58,9 +48,6 @@ func TestStatusViewsSeparateFailureFromSuccess(t *testing.T) {
 // A demo that was deliberately torn down did not go wrong. Colouring it as a
 // failure is how a reader learns to ignore the failure colour.
 func TestStoppedIsNotAFailure(t *testing.T) {
-	if got := DemoStatus(DemoInstanceStatusStopped).Tone; got != ToneNeutral {
-		t.Errorf("a stopped demo should be neutral, got %q", got)
-	}
 	if got := DeploymentStatus(HostingDeploymentStatusTerminated).Tone; got != ToneNeutral {
 		t.Errorf("a torn-down deployment should be neutral, got %q", got)
 	}

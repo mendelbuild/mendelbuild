@@ -13,26 +13,28 @@ import (
 // ProjectDeletionBlockers is what is still live in a project, and so what has
 // to be stopped before it can be retired.
 //
-// Two things qualify, and the test for both is the same: Mendel believes it is
-// running, Mendel can stop it, and leaving it running would cost money against
-// a project nothing in the app still lists.
+// Three things qualify, and the test for all of them is the same: Mendel
+// believes it is running, Mendel can stop it, and leaving it running would cost
+// money against a project nothing in the app still lists.
 //
-// A production deployment is deliberately not among them. Nothing in Mendel
-// ever moves a production deployment off 'running' -- there is no route that
-// takes one down and no code that marks one terminated -- so a gate on that
-// status would refuse forever, and a gate nobody can satisfy is worse than no
-// gate at all. What is true of production is said as a warning instead; see
-// ProdDeploymentStillUp.
+// A production deployment used to fail the middle test and was said as a
+// warning instead. It no longer does. Nothing moved a hosting deployment off
+// 'running' when that was written, so the status was not worth gating on, and
+// there was no route that took production down even if it had been. Both are
+// now true -- see TerminateHostingDeployment and handleTeardownProd -- so
+// production is a gate like the others, with a page that satisfies it.
 func (db *DB) ProjectDeletionBlockers(ctx context.Context, projectID uuid.UUID) ([]domain.ProjectDeletionBlocker, error) {
 	var out []domain.ProjectDeletionBlocker
 
+	// Demos, named by the Variation they are demonstrating. Read straight off
+	// hosting_deployments, which since 053 is where a demo lives; the variation
+	// join is only for the name, and project_id is on the deployment itself.
 	rows, err := db.Pool.Query(ctx, `
-		SELECT v.id, COALESCE(v.name, '')
-		FROM demo_instances d
+		SELECT d.variation_id, COALESCE(v.name, '')
+		FROM hosting_deployments d
 		JOIN variations v ON v.id = d.variation_id
-		JOIN hops h ON h.id = v.hop_id
-		JOIN strategies s ON s.id = h.strategy_id
-		WHERE s.project_id = $1 AND d.status IN ('starting', 'running')
+		WHERE d.project_id = $1 AND d.kind = 'demo'
+		  AND d.status IN ('deploying', 'running')
 		ORDER BY d.started_at
 	`, projectID)
 	if err != nil {
@@ -55,6 +57,31 @@ func (db *DB) ProjectDeletionBlockers(ctx context.Context, projectID uuid.UUID) 
 		})
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	prodRows, err := db.Pool.Query(ctx, `
+		SELECT app_name FROM hosting_deployments
+		WHERE project_id = $1 AND kind = 'prod'
+		  AND status IN ('deploying', 'running')
+		ORDER BY started_at
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer prodRows.Close()
+	for prodRows.Next() {
+		var appName string
+		if err := prodRows.Scan(&appName); err != nil {
+			return nil, err
+		}
+		out = append(out, domain.ProjectDeletionBlocker{
+			Name:    fmt.Sprintf("Production is serving as %s", appName),
+			Missing: "Take production down, so it stops serving and stops billing.",
+			Path:    fmt.Sprintf("/p/%s/deployment", projectID),
+		})
+	}
+	if err := prodRows.Err(); err != nil {
 		return nil, err
 	}
 
@@ -82,21 +109,6 @@ func (db *DB) ProjectDeletionBlockers(ctx context.Context, projectID uuid.UUID) 
 	return out, expRows.Err()
 }
 
-// ProdDeploymentStillUp names the production deployment Mendel last saw
-// running, or "" if there is none.
-//
-// This gates nothing. Retiring a project does not take a production deployment
-// down, and Mendel has no way to do that at all, so the only useful thing it
-// can do is say so before the button is pressed. A warning beside a gate, never
-// a gate.
-func (db *DB) ProdDeploymentStillUp(ctx context.Context, projectID uuid.UUID) (string, error) {
-	d, err := db.GetCurrentProdDeployment(ctx, projectID)
-	if err != nil || d == nil {
-		return "", err
-	}
-	return d.AppName, nil
-}
-
 // SoftDeleteProject retires a project, or declines and says what is still live.
 //
 // The check and the write are one statement so that a demo started between
@@ -118,11 +130,8 @@ func (db *DB) SoftDeleteProject(ctx context.Context, projectID uuid.UUID, by *uu
 		SET deleted_at = NOW(), deleted_by = $2, updated_at = NOW()
 		WHERE id = $1 AND deleted_at IS NULL
 		  AND NOT EXISTS (
-			SELECT 1 FROM demo_instances d
-			JOIN variations v ON v.id = d.variation_id
-			JOIN hops h ON h.id = v.hop_id
-			JOIN strategies s ON s.id = h.strategy_id
-			WHERE s.project_id = $1 AND d.status IN ('starting', 'running')
+			SELECT 1 FROM hosting_deployments d
+			WHERE d.project_id = $1 AND d.status IN ('deploying', 'running')
 		  )
 		  AND NOT EXISTS (
 			SELECT 1 FROM experiments e

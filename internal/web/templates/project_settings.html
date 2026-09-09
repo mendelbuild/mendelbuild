@@ -163,17 +163,6 @@
     </div>
     {{end}}
 
-    {{if .ProdStillUp}}
-    <div class="callout callout-warning">
-        <p class="callout-title">Production stays up</p>
-        <p class="callout-body">
-            Mendel has no way to take a production deployment down, so deleting this project
-            leaves <strong>{{.ProdStillUp}}</strong> serving and billing on the hosting
-            platform. Take it down there if you want it stopped.
-        </p>
-    </div>
-    {{end}}
-
     <form method="POST" action="/p/{{.ProjectID}}/settings/delete" class="row row-end">
         <div class="field">
             <label for="confirm_name">Type <strong>{{.ProjectName}}</strong> to confirm</label>

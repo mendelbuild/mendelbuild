@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -98,13 +99,8 @@ func TestDeleteDeclinesWhileADemoIsRunning(t *testing.T) {
 	ctx := context.Background()
 
 	variationID := seedVariation(t, db, projectID, "pending")
-	demoID := uuid.New()
-	if _, err := db.Pool.Exec(ctx,
-		`INSERT INTO demo_instances (id, variation_id, url, teardown_instructions, status)
-		 VALUES ($1, $2, 'https://demo.example', 'true', 'running')`,
-		demoID, variationID); err != nil {
-		t.Fatalf("seed demo: %v", err)
-	}
+	channelID := seedDeploymentChannel(t, db, projectID)
+	demoID := seedDeployment(t, db, projectID, channelID, "demo", &variationID, "acme-demo", "running")
 
 	blockers, err := db.SoftDeleteProject(ctx, projectID, nil)
 	if err != nil {
@@ -123,9 +119,7 @@ func TestDeleteDeclinesWhileADemoIsRunning(t *testing.T) {
 		t.Fatalf("the project was retired anyway: %v", err)
 	}
 
-	if _, err := db.Pool.Exec(ctx,
-		`UPDATE demo_instances SET status = 'stopped', stopped_at = NOW() WHERE id = $1`,
-		demoID); err != nil {
+	if err := db.TerminateHostingDeployment(ctx, demoID, ""); err != nil {
 		t.Fatalf("stop demo: %v", err)
 	}
 	if blockers, err := db.SoftDeleteProject(ctx, projectID, nil); err != nil || len(blockers) > 0 {
@@ -167,22 +161,74 @@ func TestDeleteDeclinesWhileAnExperimentIsRunning(t *testing.T) {
 	}
 }
 
-// A production deployment is a warning, not a gate, and the reason is that
-// nothing in Mendel ever moves one off 'running': there is no route that takes
-// one down and no code that marks one terminated. Gating on that status would
-// refuse forever, and a gate nobody can satisfy is worse than no gate. What is
-// true of production is said instead, on the page, before the button.
-func TestAProductionDeploymentWarnsButDoesNotBlock(t *testing.T) {
+// Production serving is now a gate rather than a warning, and this is the pair
+// of assertions that makes it a legitimate one: it refuses while production is
+// up, and it stops refusing once production is taken down. Before there was a
+// route that took production down, and code that marked the row terminated, the
+// second half of that could not have been written -- which is why this was a
+// warning and not a gate.
+func TestDeleteDeclinesWhileProductionIsServing(t *testing.T) {
 	db, projectID := testDB(t)
 	ctx := context.Background()
 
-	seedRunningProdDeployment(t, db, projectID, "acme-prod")
+	channelID := seedDeploymentChannel(t, db, projectID)
+	deploymentID := seedDeployment(t, db, projectID, channelID, "prod", nil, "acme-prod", "running")
 
-	if up, err := db.ProdDeploymentStillUp(ctx, projectID); err != nil || up != "acme-prod" {
-		t.Fatalf("the warning does not name the deployment: %v, %q", err, up)
+	blockers, err := db.SoftDeleteProject(ctx, projectID, nil)
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if len(blockers) != 1 {
+		t.Fatalf("a serving production deployment did not stop the delete: %v", blockers)
+	}
+	if !strings.Contains(blockers[0].Name, "acme-prod") {
+		t.Errorf("the blocker does not name the deployment: %q", blockers[0].Name)
+	}
+	if blockers[0].Missing == "" || blockers[0].Path == "" {
+		t.Error("the blocker does not say what would make deletion possible, or where")
+	}
+	if _, err := db.GetProject(ctx, projectID); err != nil {
+		t.Fatalf("the project was retired anyway: %v", err)
+	}
+
+	if err := db.TerminateHostingDeployment(ctx, deploymentID, ""); err != nil {
+		t.Fatalf("take production down: %v", err)
 	}
 	if blockers, err := db.SoftDeleteProject(ctx, projectID, nil); err != nil || len(blockers) > 0 {
-		t.Fatalf("production blocked the delete: %v, %v", err, blockers)
+		t.Fatalf("still declined once production was taken down: %v, %v", err, blockers)
+	}
+}
+
+// A deploy still coming up is as much a reason to refuse as one already
+// serving: it is creating infrastructure right now, and a project retired
+// underneath it would leave an app nobody can find the page for.
+func TestDeleteDeclinesWhileADeployIsStillInFlight(t *testing.T) {
+	db, projectID := testDB(t)
+
+	channelID := seedDeploymentChannel(t, db, projectID)
+	seedDeployment(t, db, projectID, channelID, "prod", nil, "acme-prod", "deploying")
+
+	blockers, err := db.SoftDeleteProject(context.Background(), projectID, nil)
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if len(blockers) != 1 {
+		t.Fatalf("an in-flight deploy did not stop the delete: %v", blockers)
+	}
+}
+
+// A deployment that is over stops mattering. Failed and terminated are the two
+// ways that happens, and neither should keep a project alive forever.
+func TestFinishedDeploymentsDoNotBlockDeletion(t *testing.T) {
+	db, projectID := testDB(t)
+
+	variationID := seedVariation(t, db, projectID, "pending")
+	channelID := seedDeploymentChannel(t, db, projectID)
+	seedDeployment(t, db, projectID, channelID, "prod", nil, "acme-prod", "terminated")
+	seedDeployment(t, db, projectID, channelID, "demo", &variationID, "acme-demo", "failed")
+
+	if blockers, err := db.SoftDeleteProject(context.Background(), projectID, nil); err != nil || len(blockers) > 0 {
+		t.Fatalf("a finished deployment blocked the delete: %v, %v", err, blockers)
 	}
 }
 
@@ -250,7 +296,9 @@ func seedActiveHopWithNoVariations(t *testing.T, db *DB, projectID uuid.UUID) uu
 	return hopID
 }
 
-func seedRunningProdDeployment(t *testing.T, db *DB, projectID uuid.UUID, appName string) {
+// seedDeploymentChannel gives a project somewhere to deploy through, which a
+// hosting deployment cannot exist without.
+func seedDeploymentChannel(t *testing.T, db *DB, projectID uuid.UUID) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
 
@@ -266,10 +314,23 @@ func seedRunningProdDeployment(t *testing.T, db *DB, projectID uuid.UUID, appNam
 		 VALUES ($1, $2, 'container', $3)`, channelID, projectID, platformID); err != nil {
 		t.Fatalf("seed channel: %v", err)
 	}
-	if _, err := db.Pool.Exec(ctx,
-		`INSERT INTO hosting_deployments (id, project_id, channel_id, kind, app_name, status)
-		 VALUES ($1, $2, $3, 'prod', $4, 'running')`,
-		uuid.New(), projectID, channelID, appName); err != nil {
-		t.Fatalf("seed prod deployment: %v", err)
+	return channelID
+}
+
+// seedDeployment writes one hosting deployment in whatever state the test needs
+// it in. Demos and production deploys are the same row since 053, so one helper
+// covers both.
+func seedDeployment(t *testing.T, db *DB, projectID, channelID uuid.UUID,
+	kind string, variationID *uuid.UUID, appName, status string) uuid.UUID {
+	t.Helper()
+
+	id := uuid.New()
+	if _, err := db.Pool.Exec(context.Background(),
+		`INSERT INTO hosting_deployments
+		   (id, project_id, channel_id, kind, variation_id, app_name, status)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		id, projectID, channelID, kind, variationID, appName, status); err != nil {
+		t.Fatalf("seed %s deployment: %v", kind, err)
 	}
+	return id
 }

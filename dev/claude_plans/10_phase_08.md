@@ -177,8 +177,9 @@ entries → summaries and component breakdown. Hand-checked arithmetic matched.
 
 - Machine shape is assumed, not observed (see above).
 - No provider-billing reconciliation yet; `reconciled_amount_usd` is the hook.
-- Nothing sets `hosting_deployments.status = 'terminated'` yet, so a torn-down
-  deployment keeps metering until that path exists.
+- ~~Nothing sets `hosting_deployments.status = 'terminated'` yet, so a torn-down
+  deployment keeps metering until that path exists.~~ Closed in
+  [22_deployment_lifecycle.md](22_deployment_lifecycle.md).
 - Budget ceilings are recorded and displayed but not enforced — exceeding one
   does not yet pause a Hop or raise a Decision, which is what
   DESIGN.md section 2.5 describes.

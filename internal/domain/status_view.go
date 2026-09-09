@@ -22,26 +22,6 @@ type StatusView struct {
 	Tone  Tone
 }
 
-// DemoStatus renders a demo instance's status.
-//
-// `stopped` is deliberately neutral rather than a failure: a demo that has been
-// torn down did not go wrong, and colouring it red teaches the reader to ignore
-// red.
-func DemoStatus(s DemoInstanceStatus) StatusView {
-	switch s {
-	case DemoInstanceStatusStarting:
-		return StatusView{"Starting", ToneProgress}
-	case DemoInstanceStatusRunning:
-		return StatusView{"Running", ToneSuccess}
-	case DemoInstanceStatusStopped:
-		return StatusView{"Stopped", ToneNeutral}
-	case DemoInstanceStatusError:
-		return StatusView{"Failed to start", ToneFailure}
-	default:
-		return StatusView{"Unrecognized (" + string(s) + ")", ToneNeutral}
-	}
-}
-
 // RevisionStatus renders one requested change.
 func RevisionStatus(s VariationRevisionStatus) StatusView {
 	switch s {
@@ -58,8 +38,12 @@ func RevisionStatus(s VariationRevisionStatus) StatusView {
 	}
 }
 
-// DeploymentStatus renders a hosting deployment, used for both production
-// deploys and channel validation runs.
+// DeploymentStatus renders a hosting deployment -- a demo, a production
+// deploy, or a channel validation run, which since 053 are one kind of thing.
+//
+// `terminated` is deliberately neutral rather than a failure: a deployment that
+// has been torn down did not go wrong, and colouring it red teaches the reader
+// to ignore red.
 func DeploymentStatus(s HostingDeploymentStatus) StatusView {
 	switch s {
 	case HostingDeploymentStatusDeploying:

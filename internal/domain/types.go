@@ -494,32 +494,6 @@ type VariationMigration struct {
 	CreatedAt        time.Time  `json:"created_at"`
 }
 
-// DemoInstanceStatus represents the lifecycle state of a demo instance.
-type DemoInstanceStatus string
-
-const (
-	DemoInstanceStatusStarting DemoInstanceStatus = "starting"
-	DemoInstanceStatusRunning  DemoInstanceStatus = "running"
-	DemoInstanceStatusStopped  DemoInstanceStatus = "stopped"
-	DemoInstanceStatusError    DemoInstanceStatus = "error"
-)
-
-// DemoInstance tracks a running demo of a variation.
-// Designed to be stateless: Mendel can crash and recover by reading teardown instructions.
-type DemoInstance struct {
-	ID                   uuid.UUID          `json:"id"`
-	VariationID          uuid.UUID          `json:"variation_id"`
-	URL                  string             `json:"url"`
-	TeardownInstructions string             `json:"teardown_instructions"` // Shell commands to stop the demo
-	StartedAt            time.Time          `json:"started_at"`
-	StoppedAt            *time.Time         `json:"stopped_at,omitempty"`
-	Status               DemoInstanceStatus `json:"status"`
-	ProcessInfo          json.RawMessage    `json:"process_info,omitempty"` // pid, port, container_id, etc.
-	ErrorMessage         *string            `json:"error_message,omitempty"`
-	SuggestedFix         *string            `json:"suggested_fix,omitempty"` // LLM-suggested fix prompt when status = error
-	CreatedAt            time.Time          `json:"created_at"`
-}
-
 // BudgetAllocation is the spend ceiling a Hop is granted from a FundingSource.
 type BudgetAllocation struct {
 	ID              uuid.UUID `json:"id"`
@@ -831,18 +805,71 @@ type HostingDeployment struct {
 	Status       HostingDeploymentStatus `json:"status"`
 	ErrorMessage *string                 `json:"error_message,omitempty"`
 
-	StartedAt  time.Time  `json:"started_at"`
+	// SuggestedFix is the prompt an agent proposed for a deploy that failed on
+	// the code rather than on the channel. Only ever set alongside a failure.
+	SuggestedFix *string `json:"suggested_fix,omitempty"`
+
+	StartedAt time.Time `json:"started_at"`
+
+	// FinishedAt is when this deployment stopped existing -- torn down,
+	// superseded, or abandoned as failed -- and nothing else. It is not when
+	// the deploy finished: a deployment that is up and serving has no
+	// FinishedAt, which is what lets the hosting meter tell a deployment that
+	// is still costing money from one that has stopped.
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// InFlight reports whether this deployment is still running.
+// InFlight reports whether this deployment is still being deployed.
 //
 // Nil-safe and single-return so a template can ask without a status comparison
 // of its own; a project that has never deployed is not deploying.
 func (d *HostingDeployment) InFlight() bool {
 	return d != nil && d.Status == HostingDeploymentStatusDeploying
+}
+
+// Live reports whether this deployment is up and serving.
+func (d *HostingDeployment) Live() bool {
+	return d != nil && d.Status == HostingDeploymentStatusRunning
+}
+
+// Failed reports whether this deployment did not come up.
+func (d *HostingDeployment) Failed() bool {
+	return d != nil && d.Status == HostingDeploymentStatusFailed
+}
+
+// TornDown reports whether this deployment has been stopped.
+func (d *HostingDeployment) TornDown() bool {
+	return d != nil && d.Status == HostingDeploymentStatusTerminated
+}
+
+// Active reports whether Mendel believes this deployment is still consuming
+// hosting -- deploying or running. This is the question the hosting meter, the
+// demo buttons and project deletion all ask, so they ask it in one place: the
+// two statuses that are not active are exactly the two that set FinishedAt.
+func (d *HostingDeployment) Active() bool {
+	return d.InFlight() || d.Live()
+}
+
+// DisplayURL is where this deployment answers, or "" if it has none yet.
+// Single-return so a template can use it without a nil check.
+func (d *HostingDeployment) DisplayURL() string {
+	if d == nil || d.URL == nil {
+		return ""
+	}
+	return *d.URL
+}
+
+// Teardown is the shell command that stops this deployment, or "" if Mendel
+// never learned one -- which is the case for a deploy that failed before it
+// landed anything.
+func (d *HostingDeployment) Teardown() string {
+	if d == nil || d.TeardownInstructions == nil {
+		return ""
+	}
+	return *d.TeardownInstructions
 }
 
 // ShortCommit returns the abbreviated commit SHA, or "" if unknown.

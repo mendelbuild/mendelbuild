@@ -83,35 +83,44 @@ func NewServer(database *db.DB, addr, version, buildTime string) *Server {
 	}
 
 	s.setupRoutes()
-	s.cleanupStaleDemos()
+	s.cleanupInterruptedDeploys()
 	s.startVariationWorker()
 	return s
 }
 
-// cleanupStaleDemos marks any demos that were "running" or "starting" before
-// a restart as stopped. This handles the case where the server restarts and
-// Docker containers are no longer running.
-func (s *Server) cleanupStaleDemos() {
+// cleanupInterruptedDeploys closes out deployments whose deploy died with the
+// process that was running it.
+//
+// Only those. A deployment that was already serving is somebody else's
+// infrastructure running in somebody else's cloud, and Mendel restarting says
+// nothing whatever about it -- it is still up, still costing money, and still
+// Mendel's to take down through the command stored on its row. This used to
+// mark every running demo stopped on the way up, written when a demo was a
+// Docker container on this host and true of nothing since. The cost of that lie
+// is a demo that goes on billing while Mendel's ledger says it stopped.
+//
+// What genuinely cannot survive a restart is a deploy still in flight: its
+// goroutine is gone and nothing will ever advance the row. Mendel does not know
+// what that deploy managed to create, so it says so rather than guessing.
+func (s *Server) cleanupInterruptedDeploys() {
 	ctx := context.Background()
 
-	demos, err := s.db.GetAllRunningDemos(ctx)
+	deployments, err := s.db.InterruptedDeployments(ctx)
 	if err != nil {
-		fmt.Printf("[startup] Warning: could not check for stale demos: %v\n", err)
+		fmt.Printf("[startup] Warning: could not check for interrupted deploys: %v\n", err)
+		return
+	}
+	if len(deployments) == 0 {
 		return
 	}
 
-	if len(demos) == 0 {
-		return
-	}
-
-	fmt.Printf("[startup] Checking %d demos marked as running/starting...\n", len(demos))
-
-	for _, d := range demos {
-		// On restart, mark demos as stopped - cloud resources may still be running
-		// but we have no way to check. User can teardown manually via the stored command.
-		fmt.Printf("[startup] Marking stale demo %s as stopped (may need manual cleanup)\n", d.ID)
-		errMsg := "Mendel restarted - demo may need manual teardown"
-		s.db.UpdateDemoInstanceStatus(ctx, d.ID, domain.DemoInstanceStatusStopped, &errMsg)
+	fmt.Printf("[startup] Closing out %d deploy(s) interrupted by a restart...\n", len(deployments))
+	for _, d := range deployments {
+		fmt.Printf("[startup] Marking interrupted %s deploy %s failed (%s may need manual cleanup)\n",
+			d.Kind, d.ID, d.AppName)
+		s.db.FailHostingDeployment(ctx,
+			d.ID, "Mendel restarted while this was deploying. Whatever it had "+
+				"created by then is unknown to Mendel and may need clearing up by hand.")
 	}
 }
 
@@ -718,6 +727,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/deployment/channel", s.handleSetDeploymentChannel)
 		r.Post("/deployment/validate-demo", s.handleValidateDemoPath)
 		r.Post("/deployment/validate-prod", s.handleValidateProdPath)
+		r.Post("/deployment/teardown-prod", s.handleTeardownProd)
 
 		// Guided setup: validating the drafted OKRs before anything is built
 		r.Get("/setup/okrs", s.handleSetupOKRs)

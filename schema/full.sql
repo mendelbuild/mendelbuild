@@ -528,7 +528,7 @@ CREATE INDEX idx_variation_history ON variation_state_history(variation_id, tran
 --------------------------------------------------------------------------------
 -- Log entries for variation operations (code generation, demos, fixes) [added in 005, extended in 011]
 -- source_type: what kind of operation generated this log (codegen, demo, fix)
--- source_id: ID of the specific instance (e.g., demo_instance_id for demo logs)
+-- source_id: ID of the specific run (e.g., the hosting_deployments id for demo logs)
 
 CREATE TABLE variation_logs (
     id UUID PRIMARY KEY,
@@ -543,29 +543,6 @@ CREATE TABLE variation_logs (
 CREATE INDEX idx_variation_logs_variation_id ON variation_logs(variation_id);
 CREATE INDEX idx_variation_logs_logged_at ON variation_logs(variation_id, logged_at DESC);
 CREATE INDEX idx_variation_logs_source ON variation_logs(source_type, source_id);
-
---------------------------------------------------------------------------------
--- DEMO INSTANCES
---------------------------------------------------------------------------------
--- Demo instances track running demos of variations [added in 008]
--- Designed to be stateless: Mendel can crash and recover by reading teardown instructions
-
-CREATE TABLE demo_instances (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    variation_id UUID NOT NULL REFERENCES variations(id),
-    url TEXT NOT NULL,
-    teardown_instructions TEXT NOT NULL,  -- shell commands to stop the demo
-    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    stopped_at TIMESTAMPTZ,
-    status TEXT NOT NULL DEFAULT 'starting',  -- starting, running, stopped, error
-    process_info JSONB,  -- pid, port, container_id, etc - whatever is needed for teardown
-    error_message TEXT,  -- populated if status = 'error'
-    suggested_fix TEXT,  -- LLM-suggested fix prompt when status = 'error' [added in 012]
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_demo_instances_variation ON demo_instances(variation_id);
-CREATE INDEX idx_demo_instances_status ON demo_instances(status) WHERE status = 'running';
 
 --------------------------------------------------------------------------------
 -- VARIATION REQUIREMENTS
@@ -746,9 +723,12 @@ CREATE INDEX idx_project_deployment_channels_project ON project_deployment_chann
 --------------------------------------------------------------------------------
 -- HOSTING DEPLOYMENTS
 --------------------------------------------------------------------------------
--- Deployments made through a project's deployment channel [added in 029]
--- Covers production deploys; shaped so demo deploys can move onto it
--- (kind = 'demo' with variation_id set) and retire demo_instances.
+-- Every deployment Mendel made through a project's deployment channel,
+-- production and demo alike [added in 029; demos moved onto it in 053].
+--
+-- One record rather than two. Demos used to live in demo_instances, and while
+-- they did, stopping a demo closed one record and left the other open -- which
+-- is how the hosting meter came to bill deployments that had been torn down.
 -- Replaced deployed_instances, which was only used by the retired
 -- script-based deploy/envoy packages.
 
@@ -771,8 +751,12 @@ CREATE TABLE hosting_deployments (
     status TEXT NOT NULL DEFAULT 'deploying'
         CHECK (status IN ('deploying', 'running', 'failed', 'terminated')),
     error_message TEXT,
+    suggested_fix TEXT,               -- LLM-proposed fix prompt for a failed deploy [053]
 
     started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- When this deployment stopped existing, and nothing else. Not when the
+    -- deploy finished: a running deployment has no finished_at, which is what
+    -- lets the hosting meter tell "still costing money" from "torn down".
     finished_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -787,6 +771,8 @@ CREATE TABLE hosting_deployments (
 CREATE INDEX idx_hosting_deployments_project ON hosting_deployments(project_id, kind, started_at DESC);
 CREATE INDEX idx_hosting_deployments_variation ON hosting_deployments(variation_id);
 CREATE INDEX idx_hosting_deployments_status ON hosting_deployments(status);
+CREATE INDEX idx_hosting_deployments_variation_status
+    ON hosting_deployments(variation_id, status);
 
 -- Log lines produced while deploying. Mendel reads these even when the UI does not.
 CREATE TABLE hosting_deployment_logs (

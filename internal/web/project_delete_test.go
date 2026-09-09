@@ -68,23 +68,54 @@ func TestABlockedDeleteNamesWhatIsRunning(t *testing.T) {
 	}
 }
 
-// Production is a warning rather than a gate, and the difference only helps if
-// the warning actually says what will be left running, and where.
-func TestAProductionDeploymentIsWarnedAboutBeforeDeleting(t *testing.T) {
+// Production serving is a gate now, and the decline has to send the reader to
+// the page that can satisfy it. A gate is only worth having when the thing it
+// asks for is reachable from the refusal.
+func TestABlockedDeleteSendsTheReaderWhereProductionCanBeStopped(t *testing.T) {
 	projectID := uuid.New().String()
 	body := renderChrome(t, "project_settings.html", "/p/"+projectID+"/settings", map[string]interface{}{
 		"ProjectID":   projectID,
 		"ProjectName": "ledger",
 		"SettingsTab": "project",
 		"Settings":    ProjectSettings{MainBranch: "main"},
-		"ProdStillUp": "ledger-prod",
+		"DeleteError": "blocked",
+		"DeletionBlockers": []domain.ProjectDeletionBlocker{{
+			Name:    "Production is serving as ledger-prod",
+			Missing: "Take production down, so it stops serving and stops billing.",
+			Path:    "/p/" + projectID + "/deployment",
+		}},
 	})
 
-	if !strings.Contains(body, "ledger-prod") {
-		t.Error("the warning does not name the deployment that stays up")
+	for _, want := range []string{
+		"ledger-prod",
+		"Take production down",
+		"/p/" + projectID + "/deployment",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the decline does not mention %q", want)
+		}
 	}
-	if !strings.Contains(body, "/p/"+projectID+"/settings/delete") {
-		t.Error("a running production deployment removed the delete form; it is a warning, not a gate")
+}
+
+// The route that satisfies that blocker has to exist, and be reachable. The
+// recurring failure in this codebase is not a broken handler but an unreachable
+// one, so the assertion is on the route table rather than on any page's copy.
+func TestProductionCanBeTakenDown(t *testing.T) {
+	s := &Server{}
+	s.setupRoutes()
+
+	found := false
+	err := chi.Walk(s.router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		if method == "POST" && strings.Contains(route, "/deployment/teardown-prod") {
+			found = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk routes: %v", err)
+	}
+	if !found {
+		t.Error("nothing takes production down, so the deletion blocker on it cannot be satisfied")
 	}
 }
 

@@ -132,11 +132,28 @@
                  deploy it blocks are read together. */}}
             {{template "requirements-panel" $.ProdRequirements}}
 
-            <form method="POST" action="/p/{{.ProjectID}}/redeploy" class="actions">
-                <button type="submit" class="btn btn-primary" {{if .LatestProdDeployment.InFlight}}disabled{{end}}>
-                    {{if .LatestProdDeployment.InFlight}}Deploying&hellip;{{else}}Deploy main to production{{end}}
-                </button>
-            </form>
+            <div class="actions">
+                <form method="POST" action="/p/{{.ProjectID}}/redeploy">
+                    <button type="submit" class="btn btn-primary" {{if .LatestProdDeployment.InFlight}}disabled{{end}}>
+                        {{if .LatestProdDeployment.InFlight}}Deploying&hellip;{{else}}Deploy main to production{{end}}
+                    </button>
+                </form>
+                {{/* Offered whenever Mendel believes something is up. Without it
+                     a production deployment is one Mendel can start and never
+                     stop, which is why retiring a project could only warn about
+                     one rather than insist it be taken down first. */}}
+                {{with .ActiveProdDeployment}}
+                <form method="POST" action="/p/{{$.ProjectID}}/deployment/teardown-prod">
+                    <button type="submit" class="btn btn-secondary">Take production down</button>
+                </form>
+                {{end}}
+            </div>
+            {{with .ActiveProdDeployment}}
+            <p class="card-note">
+                Taking it down deletes <code>{{.AppName}}</code> on the platform and stops it
+                accruing hosting cost. Deploying again brings it back at the same name.
+            </p>
+            {{end}}
 
             {{with .ProdLogPanel}}
             {{/* A finished deploy opens its log; a running one is streaming above. */}}

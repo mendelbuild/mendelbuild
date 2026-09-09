@@ -153,65 +153,95 @@ func (s *Server) handleStartDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if there's already a running or starting demo
-	existingDemo, err := s.db.GetRunningDemoByVariation(ctx, variationID)
-	if err == nil && existingDemo != nil {
+	// A demo that is already up or on its way up is the demo the user is asking
+	// for. Starting a second would leave the first with nobody to take it down.
+	existing, err := s.db.GetActiveDemoDeployment(ctx, variationID)
+	if err == nil && existing != nil {
 		http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
+		return
+	}
+
+	deployment, channel, err := s.openDemoDeployment(ctx, projectUUID, variationID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Get the work directory for this variation
 	workDir := git.WorkDirForVariation(projectID, variationID.String())
 
-	// Create demo instance with "starting" status immediately
-	// All validation happens in the background so errors get proper logging
-	demoInstanceID := uuid.New()
-
-	processInfo, _ := json.Marshal(map[string]interface{}{
-		"work_dir": workDir,
-	})
-
-	demoInstance := &domain.DemoInstance{
-		ID:                   demoInstanceID,
-		VariationID:          variationID,
-		URL:                  "",
-		TeardownInstructions: "", // Set by deployment after we know the resource names
-		Status:               domain.DemoInstanceStatusStarting,
-		ProcessInfo:          processInfo,
-	}
-
-	if err := s.db.CreateDemoInstance(ctx, demoInstance); err != nil {
-		http.Error(w, "failed to create demo instance: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	// Start the demo in a background goroutine - validation happens there
-	go s.runDemoStartup(projectID, variationID, demoInstanceID, workDir)
+	go s.runDemoStartup(projectID, variationID, deployment.ID, workDir, channel)
 
-	// Redirect immediately - user will see "starting" status
+	// Redirect immediately - user will see "deploying" status
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
 }
 
-// runDemoStartup runs the Docker-based demo startup process in the background.
-// All validation happens here so errors get proper logging and suggested fixes.
-func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uuid.UUID, workDir string) {
+// openDemoDeployment records the hosting deployment a demo is about to become,
+// before anything is spent on it.
+//
+// The row exists up front for two reasons. The demo's logs are keyed by it, so
+// there has to be something to key them to before the first line is written.
+// And it is the record that says a demo is consuming hosting -- if it were only
+// written on success, a deploy that died halfway would leave an app running
+// that nothing in Mendel knew about.
+//
+// The channel comes back with it because every caller needs it next, and
+// looking it up twice invites the two lookups to disagree about which channel
+// this deployment belongs to.
+func (s *Server) openDemoDeployment(
+	ctx context.Context,
+	projectID, variationID uuid.UUID,
+) (*domain.HostingDeployment, *domain.ProjectDeploymentChannel, error) {
+	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
+	if err != nil || channel == nil {
+		return nil, nil, fmt.Errorf("%s", declineWithChecklist(
+			s.assessDeployArea(ctx, domain.AreaDemo, projectID, variationID), projectID))
+	}
+
+	project, err := s.db.GetProject(ctx, projectID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get project: %w", err)
+	}
+
+	deployment := &domain.HostingDeployment{
+		ProjectID:   projectID,
+		ChannelID:   channel.ID,
+		Kind:        domain.HostingDeploymentKindDemo,
+		VariationID: &variationID,
+		AppName:     demoAppName(sanitizeAppName(project.Name), variationID),
+	}
+	if err := s.db.CreateHostingDeployment(ctx, deployment); err != nil {
+		return nil, nil, fmt.Errorf("create deployment record: %w", err)
+	}
+	return deployment, channel, nil
+}
+
+// runDemoStartup brings a demo up in the background. All validation happens
+// here so errors get proper logging and suggested fixes.
+func (s *Server) runDemoStartup(
+	projectID string,
+	variationID, deploymentID uuid.UUID,
+	workDir string,
+	channel *domain.ProjectDeploymentChannel,
+) {
 	ctx := context.Background()
 
 	// Helper to log with source tracking
 	logInfo := func(msg string) {
-		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelInfo, msg, domain.SourceTypeDemo, &demoInstanceID)
+		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelInfo, msg, domain.SourceTypeDemo, &deploymentID)
 	}
 	logMilestone := func(msg string) {
-		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelMilestone, msg, domain.SourceTypeDemo, &demoInstanceID)
+		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelMilestone, msg, domain.SourceTypeDemo, &deploymentID)
 	}
 	logError := func(msg string) {
-		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelError, msg, domain.SourceTypeDemo, &demoInstanceID)
+		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelError, msg, domain.SourceTypeDemo, &deploymentID)
 	}
 
 	// Helper to handle failures with suggested fix
 	failDemoWithFix := func(errMsg, suggestedFix string) {
 		logError(errMsg)
-		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, suggestedFix)
+		s.db.FailHostingDeploymentWithFix(ctx, deploymentID, errMsg, suggestedFix)
 	}
 
 	logMilestone("Checking demo configuration...")
@@ -277,20 +307,9 @@ func (s *Server) runDemoStartup(projectID string, variationID, demoInstanceID uu
 		logMilestone("Branch cloned successfully")
 	}
 
-	// Get deployment channel. Only its absence is judged here, because a nil
-	// channel is what stops the deploy from being attempted at all; everything
-	// else this demo needs is assessed inside runChannelDemoDeployment, which
-	// restart and retry-with-fix also pass through and this function does not.
+	// The channel came with the deployment row, which cannot exist without one.
 	projID, _ := uuid.Parse(projectID)
-	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projID)
-	if err != nil || channel == nil {
-		a := s.assessDeployArea(ctx, domain.AreaDemo, projID, variationID)
-		failDemoWithFix(declineReason(a), "The full list is at "+areaPath(projID, domain.AreaDemo)+".")
-		return
-	}
-
-	// Deploy using the channel
-	s.runChannelDemoDeployment(ctx, projID, variationID, demoInstanceID, workDir, channel, logMilestone, logInfo, logError)
+	s.runChannelDemoDeployment(ctx, projID, variationID, deploymentID, workDir, channel, logMilestone, logInfo, logError)
 }
 
 // runChannelDemoDeployment deploys a variation using the deployment channel.
@@ -299,7 +318,7 @@ func (s *Server) runChannelDemoDeployment(
 	ctx context.Context,
 	projectID uuid.UUID,
 	variationID uuid.UUID,
-	demoInstanceID uuid.UUID,
+	deploymentID uuid.UUID,
 	workDir string,
 	channel *domain.ProjectDeploymentChannel,
 	logMilestone func(string),
@@ -311,7 +330,7 @@ func (s *Server) runChannelDemoDeployment(
 	// Helper to fail the demo
 	failDemo := func(errMsg string) {
 		logError(errMsg)
-		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, "")
+		s.db.FailHostingDeployment(ctx, deploymentID, errMsg)
 	}
 
 	// Everything this demo needs, judged before anything is spent on it. This is
@@ -360,7 +379,9 @@ func (s *Server) runChannelDemoDeployment(
 		env[name] = string(decrypted)
 	}
 
-	// Dispatch to platform-specific deployment
+	// Dispatch to platform-specific deployment. The same name openDemoDeployment
+	// recorded, derived the same way, so the row names the app that really gets
+	// deployed and teardown can find it later.
 	appName := demoAppName(projectName, variationID)
 
 	// The requirements the assessment judged, not a fresh read: a second lookup
@@ -402,22 +423,31 @@ func (s *Server) runChannelDemoDeployment(
 		return
 	}
 
+	teardownCmd := teardownCommandFor(channel.HostingPlatform.Slug, appName, env)
+
+	// Same reasoning as production: this demo landed on the app name any earlier
+	// demo of this variation occupies, so that one no longer exists and its row
+	// has to stop claiming it does.
+	if err := s.db.TerminateSupersededDeployments(ctx, deploymentID); err != nil {
+		logError("Could not close out the superseded demo: " + err.Error())
+	}
+
+	// Still provisioning stays 'deploying' with the teardown command recorded.
+	// The command is what makes the difference on a restart: a deploying row
+	// that has one landed something real and is only waiting on a load
+	// balancer, and InterruptedDeployments leaves it alone for that reason.
 	if errors.Is(deployErr, errStillProvisioning) {
 		logMilestone("Demo deployed at " + url + ", which is not serving yet while its " +
 			"load balancer comes up.")
-	} else {
-		logMilestone("Demo deployed: " + url)
+		if err := s.db.MarkHostingDeploymentProvisioning(ctx, deploymentID, url, teardownCmd); err != nil {
+			logError("Failed to record the demo deployment: " + err.Error())
+		}
+		return
 	}
 
-	teardownCmd := teardownCommandFor(channel.HostingPlatform.Slug, appName, env)
-
-	_, err = s.db.Pool.Exec(ctx, `
-		UPDATE demo_instances
-		SET url = $2, teardown_instructions = $3, status = $4
-		WHERE id = $1
-	`, demoInstanceID, url, teardownCmd, domain.DemoInstanceStatusRunning)
-	if err != nil {
-		logError("Failed to update demo status: " + err.Error())
+	logMilestone("Demo deployed: " + url)
+	if err := s.db.CompleteHostingDeployment(ctx, deploymentID, url, teardownCmd); err != nil {
+		logError("Failed to record the demo deployment: " + err.Error())
 	}
 }
 
@@ -1247,38 +1277,48 @@ func (s *Server) handleStopDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find running demo
-	demoInst, err := s.db.GetRunningDemoByVariation(ctx, variationID)
-	if err != nil {
+	// Find the demo Mendel believes is up
+	demo, err := s.db.GetActiveDemoDeployment(ctx, variationID)
+	if err != nil || demo == nil {
 		http.Error(w, "no running demo found", http.StatusNotFound)
 		return
 	}
 
 	// Run teardown with credentials
-	teardownErr := s.runCloudTeardown(ctx, projID, variationID, demoInst)
+	teardownErr := s.runCloudTeardown(ctx, projID, demo)
 
 	if teardownErr != nil {
-		// Mark as error but continue
+		// A teardown that failed did not stop anything. The deployment is still
+		// up, still costing money, and still Mendel's to take down, so the row
+		// stays exactly as it is and only records why the attempt failed.
+		// Calling it stopped here would silence the hosting meter for an app
+		// that is still running -- which is the whole failure this file is
+		// fixing, reintroduced one status at a time.
 		errMsg := fmt.Sprintf("Teardown failed: %v", teardownErr)
-		s.db.UpdateDemoInstanceStatus(ctx, demoInst.ID, domain.DemoInstanceStatusError, &errMsg)
+		s.db.NoteHostingDeploymentError(ctx, demo.ID, errMsg)
 	} else {
-		// Mark as stopped
-		s.db.UpdateDemoInstanceStatus(ctx, demoInst.ID, domain.DemoInstanceStatusStopped, nil)
-	}
+		s.db.TerminateHostingDeployment(ctx, demo.ID, "")
 
-	// Revert migration if one was applied
-	if err := s.revertVariationMigration(ctx, projectID, variationID); err != nil {
-		// Log but don't fail - demo is already stopped
-		fmt.Printf("[demo] Warning: failed to revert migration: %v\n", err)
+		// Revert the demo's migration, but only now that the demo it belongs to
+		// is actually gone. Reverting while the deployment is still up would
+		// pull the schema out from under an app that is still serving.
+		if err := s.revertVariationMigration(ctx, projectID, variationID); err != nil {
+			fmt.Printf("[demo] Warning: failed to revert migration: %v\n", err)
+		}
 	}
 
 	// Redirect to variation detail
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
 }
 
-// runCloudTeardown runs the teardown command stored in the demo instance.
-func (s *Server) runCloudTeardown(ctx context.Context, projectID, variationID uuid.UUID, demoInst *domain.DemoInstance) error {
-	if demoInst.TeardownInstructions == "" {
+// runCloudTeardown runs the teardown command stored on a deployment.
+//
+// Takes any hosting deployment rather than a demo: a production deployment is
+// torn down by exactly the same command, recorded in exactly the same column,
+// and the only thing that used to make demo teardown special was that demos
+// lived in their own table.
+func (s *Server) runCloudTeardown(ctx context.Context, projectID uuid.UUID, deployment *domain.HostingDeployment) error {
+	if deployment.Teardown() == "" {
 		return nil // No teardown needed
 	}
 
@@ -1326,7 +1366,7 @@ func (s *Server) runCloudTeardown(ctx context.Context, projectID, variationID uu
 	}
 
 	// Run the teardown command
-	cmd := exec.CommandContext(ctx, "sh", "-c", demoInst.TeardownInstructions)
+	cmd := exec.CommandContext(ctx, "sh", "-c", deployment.Teardown())
 	cmd.Env = cmdEnv
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1375,7 +1415,7 @@ func (s *Server) apiGetDemoStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	demo, err := s.db.GetDemoInstance(ctx, demoID)
+	demo, err := s.db.GetHostingDeployment(ctx, demoID)
 	if err != nil {
 		http.Error(w, "demo not found", http.StatusNotFound)
 		return
@@ -1422,43 +1462,50 @@ func (s *Server) handleRetryDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create a new demo instance for the fix attempt with "starting" status
-	fixInstanceID := uuid.New()
-	fixInstance := &domain.DemoInstance{
-		ID:          fixInstanceID,
-		VariationID: variationID,
-		URL:         "",
-		Status:      domain.DemoInstanceStatusStarting,
+	// Open the deployment this retry is aiming at before spending anything on
+	// the fix. Without a channel there is nowhere for the fixed code to go, and
+	// finding that out after an executor run has been paid for is the expensive
+	// order to discover it in.
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
 	}
-	if err := s.db.CreateDemoInstance(ctx, fixInstance); err != nil {
-		http.Error(w, "failed to create demo instance: "+err.Error(), http.StatusInternalServerError)
+	deployment, channel, err := s.openDemoDeployment(ctx, projectUUID, variationID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Run the fix and demo startup in background
-	go s.runFixAndDemo(projectID, variationID, fixInstanceID, workDir, fixPrompt)
+	go s.runFixAndDemo(projectID, variationID, deployment.ID, workDir, fixPrompt, channel)
 
 	// Redirect immediately
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
 }
 
 // runFixAndDemo runs the executor to apply a fix, then starts the demo.
-func (s *Server) runFixAndDemo(projectID string, variationID, demoInstanceID uuid.UUID, workDir, fixPrompt string) {
+func (s *Server) runFixAndDemo(
+	projectID string,
+	variationID, deploymentID uuid.UUID,
+	workDir, fixPrompt string,
+	channel *domain.ProjectDeploymentChannel,
+) {
 	ctx := context.Background()
 
 	// Helper to log with source tracking (use "demo" so logs appear with the demo)
 	logInfo := func(msg string) {
-		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelInfo, msg, domain.SourceTypeDemo, &demoInstanceID)
+		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelInfo, msg, domain.SourceTypeDemo, &deploymentID)
 	}
 	logMilestone := func(msg string) {
-		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelMilestone, msg, domain.SourceTypeDemo, &demoInstanceID)
+		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelMilestone, msg, domain.SourceTypeDemo, &deploymentID)
 	}
 	logError := func(msg string) {
-		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelError, msg, domain.SourceTypeDemo, &demoInstanceID)
+		s.db.CreateVariationLogWithSource(ctx, variationID, domain.LogLevelError, msg, domain.SourceTypeDemo, &deploymentID)
 	}
 	failDemo := func(errMsg string) {
 		logError(errMsg)
-		s.db.UpdateDemoInstanceWithSuggestedFix(ctx, demoInstanceID, errMsg, fixPrompt)
+		s.db.FailHostingDeploymentWithFix(ctx, deploymentID, errMsg, fixPrompt)
 	}
 
 	// Get API key from project config
@@ -1521,16 +1568,8 @@ func (s *Server) runFixAndDemo(projectID string, variationID, demoInstanceID uui
 
 	logMilestone("Fix applied, starting demo...")
 
-	// Get deployment channel. As in runDemoStartup, only its absence is judged
-	// here; runChannelDemoDeployment assesses the rest.
-	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projID)
-	if err != nil || channel == nil {
-		failDemo(declineWithChecklist(s.assessDeployArea(ctx, domain.AreaDemo, projID, variationID), projID))
-		return
-	}
-
-	// Run channel-based deployment
-	s.runChannelDemoDeployment(ctx, projID, variationID, demoInstanceID, workDir, channel, logMilestone, logInfo, logError)
+	// Run channel-based deployment. The channel came with the deployment row.
+	s.runChannelDemoDeployment(ctx, projID, variationID, deploymentID, workDir, channel, logMilestone, logInfo, logError)
 }
 
 // handleRestartDemo stops any existing demo and starts fresh without code changes.
@@ -1556,38 +1595,32 @@ func (s *Server) handleRestartDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stop any existing running demo first
-	existingDemo, _ := s.db.GetRunningDemoByVariation(ctx, variationID)
-	if existingDemo != nil && existingDemo.TeardownInstructions != "" {
-		s.runCloudTeardown(ctx, projectUUID, variationID, existingDemo)
-		s.db.UpdateDemoInstanceStatus(ctx, existingDemo.ID, domain.DemoInstanceStatusStopped, nil)
+	// Stop any existing demo first, and close its row either way.
+	//
+	// Either way, because the restart replaces it on the same app name whether
+	// or not Mendel had a teardown command to run: the old deployment does not
+	// survive this, so leaving its row open would have two rows claiming the
+	// same app and the hosting meter billing it twice.
+	existing, _ := s.db.GetActiveDemoDeployment(ctx, variationID)
+	if existing != nil {
+		note := ""
+		if err := s.runCloudTeardown(ctx, projectUUID, existing); err != nil {
+			note = fmt.Sprintf("Teardown failed before restarting: %v", err)
+		}
+		s.db.TerminateHostingDeployment(ctx, existing.ID, note)
+	}
+
+	deployment, channel, err := s.openDemoDeployment(ctx, projectUUID, variationID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	// Get the work directory
 	workDir := git.WorkDirForVariation(projectID, variationID.String())
 
-	// Create new demo instance - validation happens in background
-	demoInstanceID := uuid.New()
-	processInfo, _ := json.Marshal(map[string]interface{}{
-		"work_dir": workDir,
-	})
-
-	demoInstance := &domain.DemoInstance{
-		ID:                   demoInstanceID,
-		VariationID:          variationID,
-		URL:                  "",
-		TeardownInstructions: "", // Set by deployment after we know the resource names
-		Status:               domain.DemoInstanceStatusStarting,
-		ProcessInfo:          processInfo,
-	}
-
-	if err := s.db.CreateDemoInstance(ctx, demoInstance); err != nil {
-		http.Error(w, "failed to create demo instance: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	// Start demo in background - validation happens there
-	go s.runDemoStartup(projectID, variationID, demoInstanceID, workDir)
+	go s.runDemoStartup(projectID, variationID, deployment.ID, workDir, channel)
 
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/variations/%s", projectID, variationID), http.StatusSeeOther)
 }

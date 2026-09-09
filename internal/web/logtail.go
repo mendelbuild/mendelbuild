@@ -139,7 +139,7 @@ func (s *Server) apiDemoLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	demo, err := s.db.GetDemoInstance(ctx, demoID)
+	demo, err := s.db.GetHostingDeployment(ctx, demoID)
 	if err != nil {
 		http.Error(w, "demo not found", http.StatusNotFound)
 		return

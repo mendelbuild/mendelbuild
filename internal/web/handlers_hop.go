@@ -298,11 +298,15 @@ func (s *Server) handleProposeVariations(w http.ResponseWriter, r *http.Request)
 
 // VariationDetailView holds data for rendering the variation detail page.
 type VariationDetailView struct {
-	Variation    *domain.Variation
-	Hop          *domain.Hop
-	Logs         []domain.VariationLog
-	DemoInstance *domain.DemoInstance  // Current or recent demo instance
-	DemoLogs     []domain.VariationLog // Logs specific to the current demo
+	Variation *domain.Variation
+	Hop       *domain.Hop
+	Logs      []domain.VariationLog
+
+	// Demo is the variation's most recent demo deployment, whatever became of
+	// it, or nil if it has never been demoed. Since 053 a demo is an ordinary
+	// hosting deployment with kind = "demo".
+	Demo     *domain.HostingDeployment
+	DemoLogs []domain.VariationLog // Logs specific to that demo
 
 	// Streaming log panels, rendered by the "log-tail" partial.
 	CodegenPanel *LogPanel
@@ -336,33 +340,27 @@ type VariationDetailView struct {
 	Offers domain.VariationOffers
 }
 
-// DemoStatus renders the demo instance's status as a word and a tone. Returns
-// the zero value when there is no demo, which the template guards on.
+// DemoStatus renders the demo's status as a word and a tone. Returns the zero
+// value when there is no demo, which the template guards on.
 func (v *VariationDetailView) DemoStatus() domain.StatusView {
-	if v.DemoInstance == nil {
+	if v.Demo == nil {
 		return domain.StatusView{}
 	}
-	return domain.DemoStatus(v.DemoInstance.Status)
+	return domain.DeploymentStatus(v.Demo.Status)
 }
 
 // DemoRunning and DemoStopped name the two demo states the page offers a button
 // for. Naming them here keeps the raw status out of the template.
-func (v *VariationDetailView) DemoRunning() bool {
-	return v.DemoInstance != nil && v.DemoInstance.Status == domain.DemoInstanceStatusRunning
-}
+func (v *VariationDetailView) DemoRunning() bool { return v.Demo.Live() }
 
-func (v *VariationDetailView) DemoStopped() bool {
-	return v.DemoInstance != nil && v.DemoInstance.Status == domain.DemoInstanceStatusStopped
-}
+func (v *VariationDetailView) DemoStopped() bool { return v.Demo.TornDown() }
 
-func (v *VariationDetailView) DemoFailed() bool {
-	return v.DemoInstance != nil && v.DemoInstance.Status == domain.DemoInstanceStatusError
-}
+func (v *VariationDetailView) DemoFailed() bool { return v.Demo.Failed() }
 
 // ShowDemoPanel reports whether the demo section is worth drawing at all: a
 // demo exists, or the code is built and could have one.
 func (v *VariationDetailView) ShowDemoPanel() bool {
-	return v.DemoInstance != nil ||
+	return v.Demo != nil ||
 		(v.Variation != nil && v.Variation.Status == domain.VariationStatusPending)
 }
 
@@ -396,12 +394,12 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 	logs, _ := s.db.GetVariationLogsByType(ctx, variationID, domain.SourceTypeCodegen, 500)
 
 	// Get the most recent demo instance (any status) for display
-	demoInstance, _ := s.db.GetLatestDemoByVariation(ctx, variationID)
+	demo, _ := s.db.GetLatestDemoDeployment(ctx, variationID)
 
 	// Get demo-specific logs if there's a demo instance
 	var demoLogs []domain.VariationLog
-	if demoInstance != nil {
-		demoLogs, _ = s.db.GetVariationLogsBySource(ctx, domain.SourceTypeDemo, demoInstance.ID, 200)
+	if demo != nil {
+		demoLogs, _ = s.db.GetVariationLogsBySource(ctx, domain.SourceTypeDemo, demo.ID, 200)
 	}
 
 	// Build GitHub URL for the branch
@@ -486,8 +484,8 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 	// only Fly.io permits. On the other platforms a URL-dependent
 	// acknowledgement stays deferred until the first deploy produces one.
 	demoURL := ""
-	if demoInstance != nil && demoInstance.URL != "" {
-		demoURL = demoInstance.URL
+	if demo != nil && demo.DisplayURL() != "" {
+		demoURL = demo.DisplayURL()
 	} else if channel != nil && channel.HostingPlatform != nil {
 		if project, err := s.db.GetProject(ctx, projectID); err == nil {
 			demoURL = predictedDeployURL(channel.HostingPlatform.Slug,
@@ -536,12 +534,12 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 
 	// The demo panel only exists once a demo has been started.
 	var demoPanel *LogPanel
-	if demoInstance != nil {
+	if demo != nil {
 		demoPanel = &LogPanel{
 			DOMID:     "demo-logs",
-			FeedURL:   fmt.Sprintf("/api/demos/%s/logs", demoInstance.ID),
-			Status:    string(demoInstance.Status),
-			Live:      demoInstance.Status == domain.DemoInstanceStatusStarting,
+			FeedURL:   fmt.Sprintf("/api/demos/%s/logs", demo.ID),
+			Status:    string(demo.Status),
+			Live:      demo.InFlight(),
 			Empty:     "No demo logs yet.",
 			Lines:     logLinesFromVariation(demoLogs),
 		}
@@ -557,7 +555,7 @@ func (s *Server) handleVariationDetail(w http.ResponseWriter, r *http.Request) {
 		Revisions:             revisions,
 		Ribbon: variationRibbon(projectID, variation, revisions, hop, canRetryFix),
 		Roadmap:                 s.buildMiniRoadmap(ctx, projectID, hop, variationID),
-		DemoInstance:          demoInstance,
+		Demo:                  demo,
 		DemoLogs:              demoLogs,
 		GitHubURL:             githubURL,
 		DiffURL:               diffURL,

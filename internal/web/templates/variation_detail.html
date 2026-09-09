@@ -39,18 +39,32 @@
                 {{with .DemoStatus}}<span class="badge badge-{{.Tone}}">{{.Label}}</span>{{end}}
             </div>
 
-            {{if .DemoInstance}}
-            {{if and .DemoInstance.URL .DemoRunning}}
+            {{if .Demo}}
+            {{if and .Demo.DisplayURL .DemoRunning}}
             <dl class="kv">
                 <dt>URL</dt>
-                <dd><a href="{{.DemoInstance.URL}}" target="_blank">{{.DemoInstance.URL}}</a></dd>
+                <dd><a href="{{.Demo.DisplayURL}}" target="_blank">{{.Demo.DisplayURL}}</a></dd>
             </dl>
+            {{end}}
+
+            {{/* A note on a demo that is still up is a teardown that failed, not
+                 a demo that failed: it is still running, and still costing. */}}
+            {{if and .DemoRunning .Demo.ErrorMessage}}
+            <div class="callout callout-failure">
+                <p class="callout-title">This demo is still up</p>
+                <p class="callout-detail">{{derefString .Demo.ErrorMessage}}</p>
+                <p class="callout-body">
+                    It is still deployed and still accruing hosting cost. Stopping it again
+                    is safe; if it keeps failing, remove <code>{{.Demo.AppName}}</code> on
+                    the platform by hand.
+                </p>
+            </div>
             {{end}}
 
             {{if .DemoFailed}}
             <div class="callout callout-failure">
                 <p class="callout-title">The demo did not start</p>
-                <p class="callout-detail">{{.DemoInstance.ErrorMessage}}</p>
+                <p class="callout-detail">{{derefString .Demo.ErrorMessage}}</p>
                 <div class="actions">
                     <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/restart-demo">
                         <button type="submit" class="btn btn-secondary btn-sm">Retry the demo</button>
@@ -58,11 +72,11 @@
                 </div>
             </div>
 
-            {{if .DemoInstance.SuggestedFix}}
+            {{if .Demo.SuggestedFix}}
             <div class="stack">
                 <p class="text-sm muted">Or apply a fix first. Mendel drafted this from the failure:</p>
                 <form method="POST" action="/p/{{$.ProjectID}}/variations/{{.Variation.ID}}/retry-demo" class="stack-tight">
-                    <textarea name="fix_prompt" rows="5" class="input input-mono">{{.DemoInstance.SuggestedFix}}</textarea>
+                    <textarea name="fix_prompt" rows="5" class="input input-mono">{{derefString .Demo.SuggestedFix}}</textarea>
                     <button type="submit" class="btn btn-primary btn-sm">Retry with this fix</button>
                 </form>
             </div>
@@ -227,7 +241,7 @@
                 <dl class="kv">
                     <dt>Variation status</dt><dd><code>{{.Variation.Status}}</code></dd>
                     <dt>Hop status</dt><dd><code>{{.Hop.Status}}</code></dd>
-                    {{if .DemoInstance}}<dt>Demo status</dt><dd><code>{{.DemoInstance.Status}}</code></dd>{{end}}
+                    {{if .Demo}}<dt>Demo status</dt><dd><code>{{.Demo.Status}}</code></dd>{{end}}
                 </dl>
             </div>
         </details>

@@ -1750,117 +1750,6 @@ func (db *DB) ActivateRootHops(ctx context.Context, strategyID uuid.UUID) (int, 
 }
 
 // =====================================================
-// Demo Instance Queries (added in 008)
-// =====================================================
-
-// CreateDemoInstance creates a new demo instance.
-func (db *DB) CreateDemoInstance(ctx context.Context, di *domain.DemoInstance) error {
-	now := time.Now()
-	if di.ID == uuid.Nil {
-		di.ID = uuid.New()
-	}
-	di.StartedAt = now
-	di.CreatedAt = now
-
-	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO demo_instances (id, variation_id, url, teardown_instructions, started_at, status, process_info, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, di.ID, di.VariationID, di.URL, di.TeardownInstructions, di.StartedAt, di.Status, di.ProcessInfo, di.CreatedAt)
-	return err
-}
-
-// GetDemoInstance retrieves a demo instance by ID.
-func (db *DB) GetDemoInstance(ctx context.Context, id uuid.UUID) (*domain.DemoInstance, error) {
-	var di domain.DemoInstance
-	err := db.Pool.QueryRow(ctx, `
-		SELECT id, variation_id, url, teardown_instructions, started_at, stopped_at, status, process_info, error_message, suggested_fix, created_at
-		FROM demo_instances WHERE id = $1
-	`, id).Scan(&di.ID, &di.VariationID, &di.URL, &di.TeardownInstructions, &di.StartedAt, &di.StoppedAt, &di.Status, &di.ProcessInfo, &di.ErrorMessage, &di.SuggestedFix, &di.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &di, nil
-}
-
-// GetRunningDemoByVariation retrieves the running or starting demo instance for a variation (if any).
-func (db *DB) GetRunningDemoByVariation(ctx context.Context, variationID uuid.UUID) (*domain.DemoInstance, error) {
-	var di domain.DemoInstance
-	err := db.Pool.QueryRow(ctx, `
-		SELECT id, variation_id, url, teardown_instructions, started_at, stopped_at, status, process_info, error_message, suggested_fix, created_at
-		FROM demo_instances
-		WHERE variation_id = $1 AND status IN ('starting', 'running')
-		ORDER BY started_at DESC
-		LIMIT 1
-	`, variationID).Scan(&di.ID, &di.VariationID, &di.URL, &di.TeardownInstructions, &di.StartedAt, &di.StoppedAt, &di.Status, &di.ProcessInfo, &di.ErrorMessage, &di.SuggestedFix, &di.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &di, nil
-}
-
-// GetLatestDemoByVariation retrieves the most recent demo instance for a variation (any status).
-func (db *DB) GetLatestDemoByVariation(ctx context.Context, variationID uuid.UUID) (*domain.DemoInstance, error) {
-	var di domain.DemoInstance
-	err := db.Pool.QueryRow(ctx, `
-		SELECT id, variation_id, url, teardown_instructions, started_at, stopped_at, status, process_info, error_message, suggested_fix, created_at
-		FROM demo_instances
-		WHERE variation_id = $1
-		ORDER BY started_at DESC
-		LIMIT 1
-	`, variationID).Scan(&di.ID, &di.VariationID, &di.URL, &di.TeardownInstructions, &di.StartedAt, &di.StoppedAt, &di.Status, &di.ProcessInfo, &di.ErrorMessage, &di.SuggestedFix, &di.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &di, nil
-}
-
-// GetAllRunningDemos retrieves all running or starting demo instances (for cleanup on startup).
-func (db *DB) GetAllRunningDemos(ctx context.Context) ([]domain.DemoInstance, error) {
-	rows, err := db.Pool.Query(ctx, `
-		SELECT id, variation_id, url, teardown_instructions, started_at, stopped_at, status, process_info, error_message, suggested_fix, created_at
-		FROM demo_instances
-		WHERE status IN ('starting', 'running')
-		ORDER BY started_at ASC
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var demos []domain.DemoInstance
-	for rows.Next() {
-		var di domain.DemoInstance
-		if err := rows.Scan(&di.ID, &di.VariationID, &di.URL, &di.TeardownInstructions, &di.StartedAt, &di.StoppedAt, &di.Status, &di.ProcessInfo, &di.ErrorMessage, &di.SuggestedFix, &di.CreatedAt); err != nil {
-			return nil, err
-		}
-		demos = append(demos, di)
-	}
-	return demos, nil
-}
-
-// UpdateDemoInstanceStatus updates a demo instance's status.
-func (db *DB) UpdateDemoInstanceStatus(ctx context.Context, id uuid.UUID, status domain.DemoInstanceStatus, errorMessage *string) error {
-	var stoppedAt *time.Time
-	if status == domain.DemoInstanceStatusStopped || status == domain.DemoInstanceStatusError {
-		now := time.Now()
-		stoppedAt = &now
-	}
-	_, err := db.Pool.Exec(ctx, `
-		UPDATE demo_instances SET status = $2, stopped_at = $3, error_message = $4 WHERE id = $1
-	`, id, status, stoppedAt, errorMessage)
-	return err
-}
-
-// UpdateDemoInstanceWithSuggestedFix updates a demo instance with error status and a suggested fix.
-func (db *DB) UpdateDemoInstanceWithSuggestedFix(ctx context.Context, id uuid.UUID, errorMessage, suggestedFix string) error {
-	now := time.Now()
-	_, err := db.Pool.Exec(ctx, `
-		UPDATE demo_instances SET status = $2, stopped_at = $3, error_message = $4, suggested_fix = $5 WHERE id = $1
-	`, id, domain.DemoInstanceStatusError, now, errorMessage, suggestedFix)
-	return err
-}
-
-// =====================================================
 // Variation Migration Queries (updated in 009)
 // =====================================================
 
@@ -2284,7 +2173,7 @@ func (db *DB) GetCredentialRequestForVariation(ctx context.Context, variationID 
 // =====================================================
 
 const hostingDeploymentCols = `id, project_id, channel_id, kind, variation_id, commit_sha,
-	app_name, url, teardown_instructions, status, error_message,
+	app_name, url, teardown_instructions, status, error_message, suggested_fix,
 	started_at, finished_at, created_at, updated_at`
 
 func scanHostingDeployment(row interface {
@@ -2294,7 +2183,7 @@ func scanHostingDeployment(row interface {
 	err := row.Scan(
 		&d.ID, &d.ProjectID, &d.ChannelID, &d.Kind, &d.VariationID, &d.CommitSHA,
 		&d.AppName, &d.URL, &d.TeardownInstructions, &d.Status, &d.ErrorMessage,
-		&d.StartedAt, &d.FinishedAt, &d.CreatedAt, &d.UpdatedAt,
+		&d.SuggestedFix, &d.StartedAt, &d.FinishedAt, &d.CreatedAt, &d.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -2333,12 +2222,21 @@ func (db *DB) SetHostingDeploymentCommit(ctx context.Context, id uuid.UUID, comm
 	return err
 }
 
-// CompleteHostingDeployment marks a deployment running and records where it landed.
+// CompleteHostingDeployment marks a deployment running and records where it
+// landed, along with the command that will later take it down.
+//
+// It deliberately leaves finished_at null. This used to set it, reading it as
+// "the deploy finished" -- but the hosting meter reads the same column as "the
+// deployment stopped", and a deployment that has just come up has not stopped.
+// One column cannot mean both, and the meter's reading is the one that has to
+// be right, because it is the one that decides whether an app left running
+// goes on costing money. Deployments end in exactly two places now,
+// TerminateHostingDeployment and FailHostingDeployment, and both set it.
 func (db *DB) CompleteHostingDeployment(ctx context.Context, id uuid.UUID, url, teardownInstructions string) error {
 	_, err := db.Pool.Exec(ctx, `
 		UPDATE hosting_deployments
 		SET status = 'running', url = $2, teardown_instructions = $3,
-			finished_at = now(), updated_at = now()
+			error_message = NULL, suggested_fix = NULL, updated_at = now()
 		WHERE id = $1
 	`, id, url, teardownInstructions)
 	return err
@@ -2360,20 +2258,72 @@ func (db *DB) MarkHostingDeploymentProvisioning(ctx context.Context, id uuid.UUI
 }
 
 // FailHostingDeployment marks a deployment failed with an error message.
+//
+// A failed deploy is over, so it takes a finished_at like any other ending. It
+// is excluded from the hosting meter regardless -- its wall-clock is deploy
+// time, not runtime -- but leaving the column null would make "still up" and
+// "never came up" indistinguishable to anything reading the row later.
 func (db *DB) FailHostingDeployment(ctx context.Context, id uuid.UUID, errMsg string) error {
+	return db.FailHostingDeploymentWithFix(ctx, id, errMsg, "")
+}
+
+// FailHostingDeploymentWithFix records a failure alongside the prompt an agent
+// proposed for it, so the page offering "retry with this fix" has something to
+// offer. An empty fix clears any fix left by an earlier attempt rather than
+// leaving a stale suggestion attached to a new failure.
+func (db *DB) FailHostingDeploymentWithFix(ctx context.Context, id uuid.UUID, errMsg, suggestedFix string) error {
+	var fix *string
+	if suggestedFix != "" {
+		fix = &suggestedFix
+	}
 	_, err := db.Pool.Exec(ctx, `
 		UPDATE hosting_deployments
-		SET status = 'failed', error_message = $2, finished_at = now(), updated_at = now()
+		SET status = 'failed', error_message = $2, suggested_fix = $3,
+			finished_at = now(), updated_at = now()
 		WHERE id = $1
+	`, id, errMsg, fix)
+	return err
+}
+
+// NoteHostingDeploymentError records something that went wrong without saying
+// the deployment is over.
+//
+// The case this exists for is a teardown that failed: the command errored, so
+// the app is still up and still costing money, and the honest record is a
+// running deployment with a note attached rather than a terminated one. Moving
+// it to 'terminated' would tell the hosting meter to stop billing something
+// nobody has stopped.
+func (db *DB) NoteHostingDeploymentError(ctx context.Context, id uuid.UUID, errMsg string) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE hosting_deployments SET error_message = $2, updated_at = now() WHERE id = $1
 	`, id, errMsg)
 	return err
 }
 
-// UpdateHostingDeploymentStatus sets the status of a deployment.
-func (db *DB) UpdateHostingDeploymentStatus(ctx context.Context, id uuid.UUID, status domain.HostingDeploymentStatus) error {
+// TerminateHostingDeployment closes out a deployment that has stopped: torn
+// down on request, superseded by a newer deploy of the same thing, or given up
+// on after a teardown Mendel could not run.
+//
+// This is the one write that ends a deployment that actually served traffic,
+// and until it existed no code path moved a row off 'running' at all -- so the
+// hosting meter went on charging for every deployment that had ever succeeded,
+// and project deletion could not gate on a status nothing maintained.
+//
+// Idempotent by predicate rather than by check: a row that has already ended
+// keeps the finished_at it ended with, because the second call is describing
+// the same ending as the first and the earlier instant is the true one.
+func (db *DB) TerminateHostingDeployment(ctx context.Context, id uuid.UUID, note string) error {
+	var msg *string
+	if note != "" {
+		msg = &note
+	}
 	_, err := db.Pool.Exec(ctx, `
-		UPDATE hosting_deployments SET status = $2, updated_at = now() WHERE id = $1
-	`, id, status)
+		UPDATE hosting_deployments
+		SET status = 'terminated',
+			error_message = COALESCE($2, error_message),
+			finished_at = now(), updated_at = now()
+		WHERE id = $1 AND finished_at IS NULL
+	`, id, msg)
 	return err
 }
 
@@ -2383,6 +2333,24 @@ func (db *DB) GetCurrentProdDeployment(ctx context.Context, projectID uuid.UUID)
 	d, err := scanHostingDeployment(db.Pool.QueryRow(ctx,
 		`SELECT `+hostingDeploymentCols+` FROM hosting_deployments
 		 WHERE project_id = $1 AND kind = 'prod' AND status = 'running'
+		 ORDER BY started_at DESC LIMIT 1`, projectID))
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	return d, err
+}
+
+// GetActiveProdDeployment returns the production deployment Mendel believes is
+// still up -- deploying or running -- or nil if there is none.
+//
+// Distinct from GetCurrentProdDeployment, which asks what is serving. Taking a
+// deployment down has to reach one that is still coming up too, or a deploy
+// caught mid-flight becomes an app nothing can stop.
+func (db *DB) GetActiveProdDeployment(ctx context.Context, projectID uuid.UUID) (*domain.HostingDeployment, error) {
+	d, err := scanHostingDeployment(db.Pool.QueryRow(ctx,
+		`SELECT `+hostingDeploymentCols+` FROM hosting_deployments
+		 WHERE project_id = $1 AND kind = 'prod'
+		   AND status IN ('deploying', 'running')
 		 ORDER BY started_at DESC LIMIT 1`, projectID))
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -2410,6 +2378,98 @@ func (db *DB) ListHostingDeployments(ctx context.Context, projectID uuid.UUID, k
 		`SELECT `+hostingDeploymentCols+` FROM hosting_deployments
 		 WHERE project_id = $1 AND kind = $2
 		 ORDER BY started_at DESC LIMIT $3`, projectID, kind, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.HostingDeployment
+	for rows.Next() {
+		d, err := scanHostingDeployment(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *d)
+	}
+	return out, rows.Err()
+}
+
+// GetActiveDemoDeployment returns the demo of a variation that Mendel believes
+// is still up -- deploying or running -- or nil if there is none.
+//
+// "Active" rather than "running" because a demo that is still coming up is as
+// much a reason to refuse a second one, and as much a thing that has to be
+// closed out, as one already serving.
+func (db *DB) GetActiveDemoDeployment(ctx context.Context, variationID uuid.UUID) (*domain.HostingDeployment, error) {
+	d, err := scanHostingDeployment(db.Pool.QueryRow(ctx,
+		`SELECT `+hostingDeploymentCols+` FROM hosting_deployments
+		 WHERE variation_id = $1 AND kind = 'demo'
+		   AND status IN ('deploying', 'running')
+		 ORDER BY started_at DESC LIMIT 1`, variationID))
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	return d, err
+}
+
+// GetLatestDemoDeployment returns the most recent demo of a variation whatever
+// became of it, so the page can show a failure and offer a retry. Nil if the
+// variation has never been demoed.
+func (db *DB) GetLatestDemoDeployment(ctx context.Context, variationID uuid.UUID) (*domain.HostingDeployment, error) {
+	d, err := scanHostingDeployment(db.Pool.QueryRow(ctx,
+		`SELECT `+hostingDeploymentCols+` FROM hosting_deployments
+		 WHERE variation_id = $1 AND kind = 'demo'
+		 ORDER BY started_at DESC LIMIT 1`, variationID))
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	return d, err
+}
+
+// TerminateSupersededDeployments closes out every deployment the one named here
+// has just replaced.
+//
+// A deploy lands on an app name, and Mendel derives that name from the project
+// for production and from the variation for a demo -- so a second deploy of the
+// same thing goes to the same name and the platform replaces what was there.
+// The earlier deployment does not survive that, and its row must not outlive it
+// either: two open rows on one app name means the hosting meter bills the app
+// twice for every hour after the redeploy.
+//
+// Keyed on the app name rather than on kind, because the app name is what
+// actually collides. Nothing has to remember which kinds share a namespace.
+func (db *DB) TerminateSupersededDeployments(ctx context.Context, keepID uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `
+		UPDATE hosting_deployments d
+		SET status = 'terminated', finished_at = now(), updated_at = now()
+		FROM hosting_deployments keep
+		WHERE keep.id = $1
+		  AND d.project_id = keep.project_id
+		  AND d.app_name = keep.app_name
+		  AND d.id <> keep.id
+		  AND d.status IN ('deploying', 'running')
+	`, keepID)
+	return err
+}
+
+// InterruptedDeployments returns deployments left mid-deploy by a Mendel that
+// stopped running, so a restart can close them out.
+//
+// The test is a null teardown command, not the status alone. A deployment is
+// only given one once it has actually landed, so a 'deploying' row without one
+// is a deploy whose goroutine died with the process and which nothing will ever
+// advance. A 'deploying' row that has one is the deliberate case from
+// MarkHostingDeploymentProvisioning -- deployed correctly, waiting on a load
+// balancer -- and it is still coming up whether or not Mendel is watching.
+//
+// Deployments already serving are not touched at all. They are somebody else's
+// infrastructure and Mendel restarting says nothing about them; marking them
+// stopped would silently stop billing an app that is still up.
+func (db *DB) InterruptedDeployments(ctx context.Context) ([]domain.HostingDeployment, error) {
+	rows, err := db.Pool.Query(ctx,
+		`SELECT `+hostingDeploymentCols+` FROM hosting_deployments
+		 WHERE status = 'deploying' AND teardown_instructions IS NULL
+		 ORDER BY started_at`)
 	if err != nil {
 		return nil, err
 	}

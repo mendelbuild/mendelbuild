@@ -75,7 +75,6 @@ var templateFuncs = template.FuncMap{
 	// every status a page shows arrives as a StatusView carrying a word and a
 	// tone. See internal/domain/status_view.go.
 	"revisionStatus":   domain.RevisionStatus,
-	"demoStatus":       domain.DemoStatus,
 	"deploymentStatus": domain.DeploymentStatus,
 	"validationStatus": domain.ValidationStatus,
 	"memberRole":       domain.MemberRole,

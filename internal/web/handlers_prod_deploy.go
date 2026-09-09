@@ -1,10 +1,11 @@
 package web
 
 import (
-	"errors"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/bhs/mendelbuild/internal/domain"
 	"github.com/bhs/mendelbuild/internal/git"
 	"github.com/bhs/mendelbuild/internal/hosting"
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
@@ -190,6 +192,14 @@ func (s *Server) runChannelProdDeployment(
 
 	teardown := teardownCommandFor(channel.HostingPlatform.Slug, appName, env)
 
+	// This deploy landed on the app name the last one occupies, so the last one
+	// is gone whether or not anything says so. Close its row here rather than
+	// leaving two open rows claiming the same app -- which is how a redeploy
+	// came to double the app's metered hosting cost for every hour afterwards.
+	if err := s.db.TerminateSupersededDeployments(ctx, deployment.ID); err != nil {
+		logInfo("Could not close out the superseded deployment: " + err.Error())
+	}
+
 	if provisioning {
 		if err := s.db.MarkHostingDeploymentProvisioning(ctx, deployment.ID, url, teardown); err != nil {
 			return fail(fmt.Errorf("record deployment: %w", err))
@@ -210,4 +220,83 @@ func (s *Server) runChannelProdDeployment(
 	deployment.URL = &url
 	deployment.Status = domain.HostingDeploymentStatusRunning
 	return deployment, nil
+}
+
+// handleTeardownProd takes a project's production deployment down.
+//
+// This route exists because project deletion needs it to. Retiring a project
+// with production still up leaves an app serving and billing against a project
+// nothing in Mendel lists any more, so that has to be a gate -- and a gate is
+// only legitimate when there is a way to satisfy it. Before this there was
+// none: Mendel could deploy production and had no route that stopped it, which
+// is exactly why a running production deployment could only ever be a warning.
+//
+// It is the same teardown command demos use, stored in the same column, run by
+// the same function. Only the button is new.
+func (s *Server) handleTeardownProd(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+
+	deployment, err := s.db.GetActiveProdDeployment(ctx, projectID)
+	if err != nil {
+		http.Error(w, "could not read the production deployment", http.StatusInternalServerError)
+		return
+	}
+	if deployment == nil {
+		http.Redirect(w, r, "/p/"+projectID.String()+"/deployment", http.StatusSeeOther)
+		return
+	}
+
+	// A deployment Mendel never learned a teardown command for is one it cannot
+	// stop, and saying so is better than marking it terminated and quietly
+	// leaving the app running.
+	if deployment.Teardown() == "" {
+		msg := "Mendel has no teardown command for " + deployment.AppName +
+			", so it cannot take this deployment down. It landed before Mendel " +
+			"recorded one, or the deploy did not get far enough to have one. " +
+			"Remove it on " + s.platformNameFor(ctx, projectID) + " and redeploy to " +
+			"give Mendel a deployment it can manage."
+		s.db.NoteHostingDeploymentError(ctx, deployment.ID, msg)
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
+
+	logAt := func(level domain.LogLevel, msg string) {
+		s.db.AppendHostingDeploymentLog(ctx, deployment.ID, level, msg)
+	}
+	logAt(domain.LogLevelMilestone, "Tearing down "+deployment.AppName+"...")
+
+	if err := s.runCloudTeardown(ctx, projectID, deployment); err != nil {
+		// As with a demo: a teardown that failed stopped nothing, so the row
+		// stays open and goes on being metered. It is still up.
+		msg := fmt.Sprintf("Teardown failed: %v", err)
+		logAt(domain.LogLevelError, msg)
+		s.db.NoteHostingDeploymentError(ctx, deployment.ID, msg)
+		http.Error(w, msg, http.StatusInternalServerError)
+		return
+	}
+
+	logAt(domain.LogLevelMilestone, "Production taken down.")
+	if err := s.db.TerminateHostingDeployment(ctx, deployment.ID, ""); err != nil {
+		http.Error(w, "torn down, but the record could not be updated: "+err.Error(),
+			http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/p/"+projectID.String()+"/deployment", http.StatusSeeOther)
+}
+
+// platformNameFor names a project's hosting platform, for a message telling the
+// reader where to go and clean up by hand. Falls back to "the hosting platform"
+// rather than failing the message it is part of.
+func (s *Server) platformNameFor(ctx context.Context, projectID uuid.UUID) string {
+	channel, err := s.db.GetActiveProjectDeploymentChannel(ctx, projectID)
+	if err != nil || channel == nil || channel.HostingPlatform == nil {
+		return "the hosting platform"
+	}
+	return channel.HostingPlatform.Name
 }

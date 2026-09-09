@@ -127,7 +127,6 @@ func (s *Server) handleProjectSettings(w http.ResponseWriter, r *http.Request) {
 	// What is still live under this project, re-read on every render so the
 	// danger zone shows what would actually stop delete right now.
 	blockers, _ := s.db.ProjectDeletionBlockers(ctx, projectID)
-	prodStillUp, _ := s.db.ProdDeploymentStillUp(ctx, projectID)
 
 	var projectName string
 	if project != nil {
@@ -147,7 +146,6 @@ func (s *Server) handleProjectSettings(w http.ResponseWriter, r *http.Request) {
 		"DemoHostingPlatform": demoHostingPlatform,
 		"DemoScriptStatus":    demoScriptStatus,
 		"DeletionBlockers":    blockers,
-		"ProdStillUp":         prodStillUp,
 		"DeleteError":         r.URL.Query().Get("delete"),
 	}
 
@@ -618,6 +616,12 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 	// be in progress or failed), and recent history.
 	prodDeployment, _ := s.db.GetCurrentProdDeployment(ctx, projectID)
 	latestProdDeployment, _ := s.db.GetLatestProdDeployment(ctx, projectID)
+
+	// What a teardown would act on: the deployment Mendel still believes is up,
+	// which includes one that is only part-way through coming up. Offering the
+	// button only for a serving deployment would leave a deploy caught mid-flight
+	// with nothing that can stop it.
+	activeProdDeployment, _ := s.db.GetActiveProdDeployment(ctx, projectID)
 	prodHistory, _ := s.db.ListHostingDeployments(ctx, projectID, domain.HostingDeploymentKindProd, 10)
 
 	// Logs for the most recent attempt, so failures are diagnosable in the UI.
@@ -740,6 +744,7 @@ func (s *Server) handleDeploymentChannel(w http.ResponseWriter, r *http.Request)
 		"ProdNameUnused":       prodNameUnused,
 		"ProdHostWanted":       prodHostWanted,
 		"LatestProdDeployment": latestProdDeployment,
+		"ActiveProdDeployment": activeProdDeployment,
 		"ProdLogPanel":         prodLogPanel,
 		"ProdHistory":          prodHistory,
 		"ProdRequirements":     prodRequirements,

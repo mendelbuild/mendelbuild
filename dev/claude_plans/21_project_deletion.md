@@ -138,10 +138,10 @@ not removing the form, and — walking the route table — every project-scoped
 route sitting behind `requireLiveProject`. That last one fails loudly if the
 middleware is ever dropped; it was checked by removing it.
 
-## Known gap
+## Closed in 22
 
-`hosting_deployments.status` is never moved off `running` by anything in the
-tree: `UpdateHostingDeploymentStatus` has no callers, and stopping a demo
-updates `demo_instances` instead. The hosting meter bills every deployment that
-ever succeeded, forever. That is why demos are gated on `demo_instances` here
-and production is only a warning. Worth fixing on its own.
+The gap this shipped with — nothing ever moved `hosting_deployments.status` off
+`running`, so demos were gated on `demo_instances` and production was a warning
+rather than a gate — is closed by
+[22_deployment_lifecycle.md](22_deployment_lifecycle.md). Both blockers now read
+`hosting_deployments`, and production is a gate with a route that satisfies it.

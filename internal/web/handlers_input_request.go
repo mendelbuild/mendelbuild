@@ -483,9 +483,9 @@ func (s *Server) handleInputRequestDetail(w http.ResponseWriter, r *http.Request
 						sv.Deletions = *v.DiffDeletions
 					}
 
-					// Look up running demo URL from demo_instances
-					if demo, err := s.db.GetRunningDemoByVariation(ctx, v.ID); err == nil && demo != nil {
-						sv.DemoURL = demo.URL
+					// Look up the demo URL, if this variation has one up
+					if demo, err := s.db.GetActiveDemoDeployment(ctx, v.ID); err == nil {
+						sv.DemoURL = demo.DisplayURL()
 					}
 
 					// Construct branch and diff URLs
