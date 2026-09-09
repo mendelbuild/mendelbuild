@@ -24,6 +24,19 @@ type OKREditorView struct {
 	AvailableKRs []domain.KeyResult   // KRs available to link (for objective detail view)
 }
 
+// BlankKeyResult is what the "add a key result" form renders its target fields
+// against. The shared partial reads a key result, and an add form has none yet,
+// so it needs an empty one -- defaulting to the comparator most key results use.
+//
+// Passing the view itself instead is what broke this page for a week: the
+// missing field is only reported when html/template reaches it, by which point
+// a 200 and the first two thirds of the page have already been written. The
+// script block at the foot of the page never arrived, so every Edit button on
+// the page did nothing.
+func (v OKREditorView) BlankKeyResult() domain.KeyResult {
+	return domain.KeyResult{TargetComparator: domain.TargetAtLeast}
+}
+
 // ObjectiveTreeView holds an objective with its key results for display.
 type ObjectiveTreeView struct {
 	Objective    domain.Objective

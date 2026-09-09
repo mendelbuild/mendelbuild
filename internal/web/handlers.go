@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
@@ -158,8 +159,22 @@ func parsePageTemplate(pageName string) *template.Template {
 // Prefer renderPageFor. This is the escape hatch for the handful of pages
 // whose data is not a map (the login screen).
 func renderPage(w http.ResponseWriter, pageName string, data interface{}) error {
-	t := parsePageTemplate(pageName)
-	return t.ExecuteTemplate(w, "layout", data)
+	// Rendered into a buffer first, because html/template reports a bad field
+	// reference only when it reaches it. Executing straight into the
+	// ResponseWriter means the status line and everything above the error are
+	// already sent: the browser gets a 200 and a page that stops mid-tag, with
+	// the scripts at the foot of it missing. That is how the OKR editor's Edit
+	// buttons stayed dead for a week -- nothing looked broken except that
+	// clicking did nothing.
+	//
+	// Buffering costs one page of memory and turns that into a 500 the caller
+	// can log and act on.
+	var buf bytes.Buffer
+	if err := parsePageTemplate(pageName).ExecuteTemplate(&buf, "layout", data); err != nil {
+		return err
+	}
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 // renderPageFor renders a page and stamps the chrome the layout needs but no

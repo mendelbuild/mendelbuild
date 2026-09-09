@@ -238,7 +238,7 @@
             <input type="hidden" name="objective_id" value="{{$.CurrentObjective.Objective.ID}}">
             <div class="add-form-row">
                 <input type="text" name="description" class="description-field" required placeholder="What will you measure?">
-                <span class="target-fields">{{template "target-fields" .}}</span>
+                <span class="target-fields">{{template "target-fields" .BlankKeyResult}}</span>
                 <input type="date" name="target_date" class="date-field">
                 <button type="submit" class="btn btn-primary">Add Key Result</button>
             </div>
