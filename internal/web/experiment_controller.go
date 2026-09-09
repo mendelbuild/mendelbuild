@@ -53,7 +53,7 @@ func installControllerCommand(env map[string]string) string {
 	if project == "" || cluster == "" || zone == "" {
 		return "kubectl apply --server-side -f " + envoyGatewayManifestURL()
 	}
-	context := fmt.Sprintf("gke_%s_%s_%s", project, zone, cluster)
+	context := gkeContextName(env)
 
 	// Two applies, and the note between them is not decoration.
 	//

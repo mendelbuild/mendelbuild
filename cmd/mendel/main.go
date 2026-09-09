@@ -184,24 +184,25 @@ job would report against an invocation that is not its own.`)
 	}
 	defer database.Close()
 
-	inv, err := web.NewServer(database, "", Version, BuildTime).
+	started, err := web.NewServer(database, "", Version, BuildTime).
 		ProbeProject(ctx, opts.ProjectID, opts.Image, opts.ReportTo, opts.Force)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "could not start the probe: %v\n", err)
 		os.Exit(1)
 	}
 
-	job := web.AdapterJobName(inv.ID.String())
-	fmt.Printf(`Started a probe of project %s.
+	// The commands come from Watch rather than being written here, because they
+	// have to name the project's cluster. Whoever ran this was talking to
+	// Mendel's, and a bare kubectl would look there and report the job missing.
+	fmt.Printf(`Started a probe of project %s, in that project's own cluster.
 
   invocation  %s
-  job         kubectl -n mendel-apps get job %s
-  logs        kubectl -n mendel-apps logs job/%s
+%s
 
 The answer arrives at %s and is recorded against the invocation; nothing here
 waits for it. The Job stops itself after 20 minutes and the cluster removes it,
 and its Secret, an hour after that.
-`, opts.ProjectID, inv.ID, job, job, opts.ReportTo)
+`, opts.ProjectID, started.Invocation.ID, started.Watch(), opts.ReportTo)
 }
 
 func getConnString() string {

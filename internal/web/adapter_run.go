@@ -139,7 +139,45 @@ func (g *gkeSession) jobUID(ctx context.Context, name string) (string, error) {
 // holds — which is the point of running the adapter there: Mendel authenticates
 // to the cluster the way it does for any deploy, and the adapter reaches the
 // datastore the way the application does.
-func (s *Server) ProbeProject(ctx context.Context, projectID uuid.UUID, image, reportTo string, force bool) (*domain.AdapterInvocation, error) {
+// ProbeStarted is a probe now running, and where to watch it.
+//
+// The location is not decoration. The adapter runs in the *project's* cluster,
+// and whoever started it was almost certainly talking to Mendel's -- so a
+// follow-up command without a context looks in the wrong place and says the job
+// does not exist, which is indistinguishable from it never having been created.
+type ProbeStarted struct {
+	Invocation *domain.AdapterInvocation
+
+	// Context names the project's cluster in a kubeconfig, or "" when the
+	// channel's credentials do not say enough to name it.
+	Context string
+
+	// GetCredentials is what puts that context in a kubeconfig, for a terminal
+	// that has never talked to this cluster. Empty on the same terms as Context.
+	GetCredentials string
+
+	// Namespace is where the Job is, in that cluster.
+	Namespace string
+}
+
+// Watch renders the commands for following a probe, correct in a terminal that
+// is pointed anywhere.
+func (p ProbeStarted) Watch() string {
+	job := AdapterJobName(p.Invocation.ID.String())
+	ctxFlag := ""
+	if p.Context != "" {
+		ctxFlag = " --context " + p.Context
+	}
+	lines := ""
+	if p.GetCredentials != "" {
+		lines += "  cluster     " + p.GetCredentials + "\n"
+	}
+	lines += fmt.Sprintf("  job         kubectl%s -n %s get job %s\n", ctxFlag, p.Namespace, job)
+	lines += fmt.Sprintf("  logs        kubectl%s -n %s logs job/%s", ctxFlag, p.Namespace, job)
+	return lines
+}
+
+func (s *Server) ProbeProject(ctx context.Context, projectID uuid.UUID, image, reportTo string, force bool) (*ProbeStarted, error) {
 	// Asked before anything is spent, because starting one costs a Job and a pod
 	// in someone's cluster. The case that matters is a second probe joining one
 	// already running: two jobs against a datastore means two reports, and the
@@ -195,7 +233,19 @@ func (s *Server) ProbeProject(ctx context.Context, projectID uuid.UUID, image, r
 		return nil, fmt.Errorf("give the adapter production's environment: %w", err)
 	}
 
-	return s.startProbe(ctx, projectID, session, image, datastoreEnv, reportTo, prodEnvFrom)
+	inv, err := s.startProbe(ctx, projectID, session, image, datastoreEnv, reportTo, prodEnvFrom)
+	if err != nil {
+		return nil, err
+	}
+
+	started := &ProbeStarted{Invocation: inv, Namespace: session.namespace}
+	if name := gkeContextName(env); name != "" {
+		started.Context = name
+		started.GetCredentials = fmt.Sprintf(
+			"gcloud container clusters get-credentials %s --location %s --project %s",
+			env["GKE_CLUSTER_NAME"], env["GKE_ZONE"], env["GCP_PROJECT_ID"])
+	}
+	return started, nil
 }
 
 // AdapterDatastoreEnv is the variable an adapter reads its connection from.

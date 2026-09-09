@@ -987,6 +987,23 @@ func gkeClusterHint(ctx context.Context, cmdEnv []string, projectID, wanted stri
 	return fmt.Sprintf("\nProject %s has: %s.", projectID, strings.Join(found, "; "))
 }
 
+// gkeContextName is what a kubeconfig calls the project's cluster.
+//
+// Worth naming rather than assuming, because the cluster a person's terminal
+// points at is global state and Mendel's own cluster is the likeliest thing in
+// it -- they were just running kubectl against Mendel to ask for this. A bare
+// `kubectl get job` then looks in the wrong cluster and reports NotFound, which
+// reads as "the job was never created" rather than "you are looking somewhere
+// else". Returns "" when the credentials do not say, so a caller can leave the
+// context off rather than print a wrong one.
+func gkeContextName(env map[string]string) string {
+	project, cluster, zone := env["GCP_PROJECT_ID"], env["GKE_CLUSTER_NAME"], env["GKE_ZONE"]
+	if project == "" || cluster == "" || zone == "" {
+		return ""
+	}
+	return fmt.Sprintf("gke_%s_%s_%s", project, zone, cluster)
+}
+
 // kubectl builds a kubectl command scoped to Mendel's namespace.
 func (g *gkeSession) kubectl(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "kubectl", append([]string{"--namespace", g.namespace}, args...)...)
