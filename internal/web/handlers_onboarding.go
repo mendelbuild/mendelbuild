@@ -285,6 +285,36 @@ func (s *Server) draftStrategy(ctx context.Context, projectID, strategyID uuid.U
 		return err
 	}
 
+	if err := s.saveDraftedStrategy(ctx, strategyID, drafted, considerations, deadline, budgetUSD); err != nil {
+		return err
+	}
+
+	// Quality feedback on the draft, so the user reviewing it sees which items
+	// are vague before they approve them rather than after.
+	s.tuneStrategyOKRs(ctx, strategyID)
+
+	// And then act on it. Showing someone a key result over Mendel's own
+	// verdict that it cannot say whether the work is going well, without having
+	// tried to fix it, asks them to do the edit the grader just described --
+	// which is exactly the edit a person who is new to writing key results
+	// cannot make. One repair pass, then whatever survives it is shown with its
+	// score, because a critique that survives a rewrite is worth reading.
+	s.repairWeakOKRs(ctx, projectID, strategyID, brief, keyed, deadline, budgetUSD)
+	return nil
+}
+
+// saveDraftedStrategy writes a drafted strategy over whatever was there: its
+// objectives and key results, what each consideration's fate was, the name, the
+// notes, and the budget the key results are what buys.
+//
+// Shared by the drafting pass and the repair pass that follows it, because a
+// repaired draft is a draft and has to land the same way -- the first version of
+// the repair pass wrote only the objectives, and left the coverage pointing at
+// rows that no longer existed.
+func (s *Server) saveDraftedStrategy(ctx context.Context, strategyID uuid.UUID,
+	drafted *agent.DraftedStrategy, considerations []domain.StrategicConsideration,
+	deadline *time.Time, budgetUSD float64) error {
+
 	objectives := make([]db.DraftObjective, 0, len(drafted.Objectives))
 	for _, obj := range drafted.Objectives {
 		o := db.DraftObjective{Description: obj.Description}
@@ -331,10 +361,137 @@ func (s *Server) draftStrategy(ctx context.Context, projectID, strategyID uuid.U
 		return fmt.Errorf("save budget: %w", err)
 	}
 
-	// Quality feedback on the draft, so the user reviewing it sees which items
-	// are vague before they approve them rather than after.
-	s.tuneStrategyOKRs(ctx, strategyID)
+	if err := s.syncDraftBudget(ctx, strategyID, drafted.BudgetName, budgetUSD, deadline); err != nil {
+		return fmt.Errorf("save budget: %w", err)
+	}
 	return nil
+}
+
+// weakEnoughToRepair is the score below which a drafted line is redrafted
+// before anyone sees it.
+//
+// The tuner's own guide puts 0.6-0.8 at "right in kind, and one edit away", and
+// everything below that at "needs work" or worse. A first draft nobody has
+// looked at should not go out carrying one of those: the cost of being wrong is
+// one rewrite the user can still edit, and the cost of not trying is a plan
+// built on a line Mendel had already said was not measurable.
+const weakEnoughToRepair = 0.6
+
+// repairWeakOKRs redrafts the lines Mendel's own grader marked down, once.
+//
+// Once, deliberately. A second pass would be a loop with a model in it and a
+// user waiting on the end of it, and the second-order gain is small: if a line
+// is still weak after the reviser has been told exactly what is wrong with it,
+// another go around is unlikely to be what fixes it. What is shown instead is
+// the line and the surviving critique, which is a truthful account of where the
+// draft got to.
+func (s *Server) repairWeakOKRs(ctx context.Context, projectID, strategyID uuid.UUID,
+	brief agent.StrategyBrief, considerations []agent.KeyedConsideration,
+	deadline *time.Time, budgetUSD float64) {
+
+	complaints, err := s.weakLineComplaints(ctx, strategyID)
+	if err != nil {
+		log.Printf("setup: could not read grades for strategy %s: %v", strategyID, err)
+		return
+	}
+	if len(complaints) == 0 {
+		return
+	}
+
+	strategy, err := s.db.GetStrategy(ctx, strategyID)
+	if err != nil {
+		log.Printf("setup: could not read strategy %s to repair it: %v", strategyID, err)
+		return
+	}
+	current := s.currentDraft(ctx, strategy)
+	if current == nil || len(current.Objectives) == 0 {
+		return
+	}
+
+	feedback := "Mendel graded this draft against the same rules you drafted it under, and marked these lines down. " +
+		"Rewrite them so the criticism no longer applies, and leave everything else exactly as it is.\n\n" +
+		strings.Join(complaints, "\n") +
+		"\n\nIf one of these genuinely cannot be fixed -- there is nothing to count, say -- keep it and put the reason in open_questions."
+
+	client, err := agent.NewClient("")
+	if err != nil {
+		log.Printf("setup: agent client for repairing strategy %s: %v", strategyID, err)
+		return
+	}
+	repaired, spend, err := agent.NewStrategist(client).ReviseStrategy(ctx, brief, considerations, current, feedback)
+	s.recordStrategySpend(ctx, strategyID, "strategist_repair", spend)
+	if err != nil {
+		// The unrepaired draft is still a draft, and it is already saved. This
+		// costs the user the improvement, not the screen.
+		log.Printf("setup: repairing weak lines for project %s failed: %v", projectID, err)
+		return
+	}
+
+	stored, err := s.db.GetStrategicConsiderations(ctx, strategyID)
+	if err != nil {
+		log.Printf("setup: could not read considerations for strategy %s: %v", strategyID, err)
+		return
+	}
+	if err := s.saveDraftedStrategy(ctx, strategyID, repaired, stored, deadline, budgetUSD); err != nil {
+		log.Printf("setup: saving the repaired draft for project %s failed: %v", projectID, err)
+		return
+	}
+
+	// Re-grade: the rewritten lines have no score, and the point of the pass
+	// was to change the ones that did.
+	s.tuneStrategyOKRs(ctx, strategyID)
+}
+
+// weakLineComplaints is one line per graded item that scored below the bar,
+// carrying the grader's own words about it.
+//
+// The grader's sentence goes through verbatim rather than being summarised as a
+// number. "Done/not-done obscures whether the method works; pair it with an
+// accuracy benchmark" tells the reviser what to write; "scored 0.35" does not.
+func (s *Server) weakLineComplaints(ctx context.Context, strategyID uuid.UUID) ([]string, error) {
+	objectives, err := s.db.GetObjectivesByStrategy(ctx, strategyID)
+	if err != nil {
+		return nil, err
+	}
+
+	krs := make(map[uuid.UUID][]domain.KeyResult, len(objectives))
+	for _, obj := range objectives {
+		found, err := s.db.GetKeyResultsByObjective(ctx, obj.ID)
+		if err != nil {
+			return nil, err
+		}
+		krs[obj.ID] = found
+	}
+	return complaintsFrom(objectives, krs), nil
+}
+
+// complaintsFrom is the judgement, kept apart from the reading so it can be
+// tested without a database: which lines are below the bar, and what the grader
+// said about each.
+func complaintsFrom(objectives []domain.Objective, krs map[uuid.UUID][]domain.KeyResult) []string {
+	var complaints []string
+	for _, obj := range objectives {
+		// A nil score is not a low one. Tuning may have failed or not run, and
+		// treating unknown as failing would rewrite a draft nobody had judged.
+		if obj.TuneScore != nil && *obj.TuneScore < weakEnoughToRepair {
+			complaints = append(complaints, fmt.Sprintf("- Objective %q: %s",
+				obj.Description, derefOr(obj.TuneFeedback, "graded below the bar")))
+		}
+		for _, kr := range krs[obj.ID] {
+			if kr.TuneScore != nil && *kr.TuneScore < weakEnoughToRepair {
+				complaints = append(complaints, fmt.Sprintf("- Key result %q (%s): %s",
+					kr.Description, kr.Target(), derefOr(kr.TuneFeedback, "graded below the bar")))
+			}
+		}
+	}
+	return complaints
+}
+
+func derefOr(s *string, fallback string) string {
+	if s == nil || *s == "" {
+		return fallback
+	}
+	return *s
 }
 
 // syncDraftBudget keeps a single funding source in step with the draft: the
@@ -674,12 +831,20 @@ func (s *Server) currentDraft(ctx context.Context, strategy *domain.Strategy) *a
 		draft.BudgetNote = notes.BudgetNote
 	}
 
-	objectives, err := s.db.GetRootObjectives(ctx, strategy.ID)
+	objectives, err := s.db.GetObjectivesByStrategy(ctx, strategy.ID)
 	if err != nil {
 		return draft
 	}
+
+	// Coverage travels with the draft, so a revision starts from the decisions
+	// already made about each consideration rather than re-deciding them all.
+	// Without this a repair pass aimed at one weak key result could quietly
+	// drop a decline the user had already read.
+	coveredBy, uncovered := considerationRefs(ctx, s, strategy.ID)
+	draft.Uncovered = uncovered
+
 	for _, obj := range objectives {
-		o := agent.DraftedObjective{Description: obj.Description}
+		o := agent.DraftedObjective{Description: obj.Description, Covers: coveredBy[obj.ID]}
 		krs, _ := s.db.GetKeyResultsByObjective(ctx, obj.ID)
 		for _, kr := range krs {
 			d := agent.DraftedKeyResult{
@@ -693,6 +858,34 @@ func (s *Server) currentDraft(ctx context.Context, strategy *domain.Strategy) *a
 		draft.Objectives = append(draft.Objectives, o)
 	}
 	return draft
+}
+
+// considerationRefs reads stored coverage back into the reference keys the
+// drafting agent speaks in: which refs each objective covers, and which were
+// declined with what reason.
+//
+// The keys are positional, the same way they are handed out, so they line up
+// with the list the agent is given alongside this draft.
+func considerationRefs(ctx context.Context, s *Server, strategyID uuid.UUID) (
+	map[uuid.UUID][]string, []agent.UncoveredConsideration) {
+
+	considerations, err := s.db.GetStrategicConsiderations(ctx, strategyID)
+	if err != nil {
+		return nil, nil
+	}
+
+	coveredBy := make(map[uuid.UUID][]string)
+	var uncovered []agent.UncoveredConsideration
+	for i, c := range considerations {
+		ref := agent.ConsiderationRef(i)
+		switch {
+		case c.CoveredByObjectiveID != nil:
+			coveredBy[*c.CoveredByObjectiveID] = append(coveredBy[*c.CoveredByObjectiveID], ref)
+		case c.UncoveredReason != nil:
+			uncovered = append(uncovered, agent.UncoveredConsideration{Ref: ref, Reason: *c.UncoveredReason})
+		}
+	}
+	return coveredBy, uncovered
 }
 
 // handleApproveSetupOKRs saves the user's edits, marks the OKRs approved, and

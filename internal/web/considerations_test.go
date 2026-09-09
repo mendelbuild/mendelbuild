@@ -162,3 +162,56 @@ func TestReviewScreenShowsCoverage(t *testing.T) {
 		}
 	}
 }
+
+// The grader's own words are what the repair pass acts on, not its number. A
+// score says a line is weak; only the sentence says what to write instead, and
+// rewriting is the thing a person new to key results cannot do for themselves.
+func TestWeakLineComplaintsCarryTheCritique(t *testing.T) {
+	weak, strong := 0.35, 0.82
+	critique := "Done/not-done target obscures whether the method actually works."
+
+	objectives := []domain.Objective{
+		{ID: uuid.New(), Description: "Fine as it stands", TuneScore: &strong},
+	}
+	krs := map[uuid.UUID][]domain.KeyResult{
+		objectives[0].ID: {{
+			ID: uuid.New(), Description: "A method is built and tested",
+			TargetComparator: domain.TargetDone, TargetValue: 1,
+			TuneScore: &weak, TuneFeedback: &critique,
+		}},
+	}
+
+	complaints := complaintsFrom(objectives, krs)
+	if len(complaints) != 1 {
+		t.Fatalf("want 1 complaint, got %d: %v", len(complaints), complaints)
+	}
+	for _, want := range []string{"A method is built and tested", critique} {
+		if !strings.Contains(complaints[0], want) {
+			t.Errorf("complaint should carry %q, got %q", want, complaints[0])
+		}
+	}
+	if strings.Contains(complaints[0], "0.35") {
+		t.Error("the complaint reads as a score rather than as an instruction")
+	}
+}
+
+// An ungraded line is not a weak one. Tuning can fail or not have run yet, and
+// treating unknown as failing would rewrite a whole draft nobody had judged.
+func TestUngradedLinesAreNotRepaired(t *testing.T) {
+	objectives := []domain.Objective{{ID: uuid.New(), Description: "No score yet"}}
+	if complaints := complaintsFrom(objectives, nil); len(complaints) != 0 {
+		t.Errorf("an ungraded objective must not be repaired, got %v", complaints)
+	}
+}
+
+// The bar sits where the tuner's own guide puts "one edit away".
+func TestRepairBarMatchesTheTunersGuide(t *testing.T) {
+	borderline, justUnder := 0.6, 0.59
+	id := uuid.New()
+	if c := complaintsFrom([]domain.Objective{{ID: id, TuneScore: &borderline}}, nil); len(c) != 0 {
+		t.Error("0.6 is 'one edit away' and should be left alone")
+	}
+	if c := complaintsFrom([]domain.Objective{{ID: id, TuneScore: &justUnder}}, nil); len(c) != 1 {
+		t.Error("below 0.6 is 'needs work' and should be repaired")
+	}
+}
