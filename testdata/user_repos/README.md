@@ -18,6 +18,12 @@ than by being another example:
 | `notes` | MySQL | Mendel has no adapter, and must decline **by name** rather than approximate |
 | `pong` | none | A presentation-only experiment, which must not be blocked on database requirements it does not have |
 
+None of these need Docker to be useful. A fixture is a repository on disk, and
+most of what reads one — the `.mendel` specs, the declaration, the decline for a
+datastore with no adapter — is a function over files and needs nothing running.
+`docker-compose.test.yml` is here because a real repository would have one and
+the specs are read against it, not because anything starts it.
+
 `notes` is the important one and the easiest to leave out. §13's decline is a
 designed outcome, not a failure path — "Mendel does not know a safe way to do
 this against MySQL yet" is a good answer — and a fixture set containing only

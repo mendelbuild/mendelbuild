@@ -75,6 +75,12 @@ func TestPostgresConforms(t *testing.T) {
 	})
 }
 
+// newLiveStoreFor is a non-disposable store over a scratch schema, for tests
+// about what an adapter reports rather than about what a migration does.
+func newLiveStoreFor(t *testing.T, url string) experiment.Datastore {
+	return pgstore.New(newScratchSchema(t, url))
+}
+
 // newScratchSchema gives each run its own Postgres schema, so runs from separate
 // worktrees on the shared test database cannot collide -- the same arrangement
 // go test ./schema/... already relies on.

@@ -402,10 +402,23 @@ says so.
 asking for that trade with your eyes open. `testdb.Require(t)` is where both
 halves live, so no package has to restate them and none can drift.
 
-**The heavy tier does not exist yet, and should not be built empty.** It is for
-anything that starts containers of its own — a fixture repository's datastore,
-several engines, minutes rather than seconds — and it runs on demand, and
-eventually before a production release. Staging does not need it.
+**The heavy tier does not exist yet, and is further off than it looks.** Before
+reaching for it, check that the thing actually needs infrastructure, because the
+reflex is to assume it does and the reflex is usually wrong.
+
+The distinction that matters: **how something is deployed is not what it does.**
+A datastore adapter runs as a container in the user's own environment, and none
+of its behaviour needs one to test — it reads an instruction, asks a datastore
+questions, and reports, and each of those is a function over a local database.
+Even declining an unsupported datastore needs nothing: it is an adapter that is
+`nil`, not a connection that failed. What is left over is whether Kubernetes
+schedules a Job, which is a fact about Kubernetes and belongs with the staging
+work rather than in a test tier.
+
+So the tier is for the case where a *different engine* has to actually run —
+a second adapter checked against a real MySQL, say — and that is not close.
+When it arrives it runs on demand, and eventually before a production release.
+Staging does not need it.
 
 When the first such test is written, two things are already decided. It gets an
 explicit opt-in rather than a `-short` check, because `-short` is subtractive and
