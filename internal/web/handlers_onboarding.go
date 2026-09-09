@@ -110,7 +110,11 @@ func (s *Server) renderNewProject(w http.ResponseWriter, r *http.Request, form n
 		"Title":  "New Project",
 		"Form":   form,
 		"Error":  errMsg,
-		"Ribbon": domain.OnboardingLifecycle(domain.OnboardingState{}),
+		// ribbonView, not the bare Ribbon: the partial reads Actions, which
+		// only the view carries. Passing the domain value renders most of the
+		// ribbon and then dies on that field, which took the form on this page
+		// with it for nine days.
+		"Ribbon": ribbonView(domain.OnboardingLifecycle(domain.OnboardingState{})),
 	}
 	if err := s.renderPageFor(w, r, "new_project.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
