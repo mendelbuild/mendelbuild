@@ -1009,21 +1009,7 @@ func (g *gkeSession) applyEnvSecret(ctx context.Context, secretName string,
 		return "", nil
 	}
 
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\n", secretName)
-	if len(labels) > 0 {
-		// Labelled so teardown finds it by the same query it finds everything
-		// else an experiment made, without knowing what each object is.
-		sb.WriteString("  labels:\n")
-		for _, k := range sortedKeys(labels) {
-			fmt.Fprintf(&sb, "    %s: %s\n", k, labels[k])
-		}
-	}
-	sb.WriteString("type: Opaque\nstringData:\n")
-	for _, name := range sortedKeys(values) {
-		// Block scalar: the value is copied verbatim, whatever it contains.
-		fmt.Fprintf(&sb, "  %s: |-\n    %s\n", name, strings.ReplaceAll(values[name], "\n", "\n    "))
-	}
+	manifest := envSecretManifest(secretName, values, labels)
 
 	secretFile, err := os.CreateTemp("", "mendel-secret-*.yaml")
 	if err != nil {
@@ -1031,7 +1017,7 @@ func (g *gkeSession) applyEnvSecret(ctx context.Context, secretName string,
 	}
 	secretPath := secretFile.Name()
 	defer os.Remove(secretPath)
-	if _, err := secretFile.WriteString(sb.String()); err != nil {
+	if _, err := secretFile.WriteString(manifest); err != nil {
 		secretFile.Close()
 		return "", fmt.Errorf("failed to write secret manifest: %w", err)
 	}
@@ -1041,6 +1027,41 @@ func (g *gkeSession) applyEnvSecret(ctx context.Context, secretName string,
 		return "", fmt.Errorf("failed to apply secret: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return fmt.Sprintf("\n        envFrom:\n        - secretRef:\n            name: %s", secretName), nil
+}
+
+// envSecretManifest renders the Secret holding an app's environment.
+//
+// Pure, and separated from applying it for the reason `adapterJobManifest` and
+// `k8sManifestFor` already are: what goes wrong with a manifest goes wrong in
+// the rendering, and a renderer that needs a cluster to exercise is one nobody
+// exercises. This one shipped emitting an unquoted label value, which YAML
+// reads as a boolean and the API server then refuses -- invisible for as long
+// as every caller happened to pass a label value that was not a YAML keyword.
+func envSecretManifest(secretName string, values, labels map[string]string) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\n", secretName)
+	if len(labels) > 0 {
+		// Labelled so teardown finds it by the same query it finds everything
+		// else an experiment made, without knowing what each object is.
+		//
+		// Quoted, because a label value is a string and YAML does not know
+		// that. `mendel-adapter: true` unquoted parses as a boolean and the
+		// API server refuses the whole Secret -- "cannot unmarshal bool into
+		// ... labels of type string", from a manifest that looks right.
+		// `"true"`, `"false"`, `"y"`, `"null"` and anything that reads as a
+		// number are all label values Kubernetes accepts and YAML would turn
+		// into something else.
+		sb.WriteString("  labels:\n")
+		for _, k := range sortedKeys(labels) {
+			fmt.Fprintf(&sb, "    %q: %q\n", k, labels[k])
+		}
+	}
+	sb.WriteString("type: Opaque\nstringData:\n")
+	for _, name := range sortedKeys(values) {
+		// Block scalar: the value is copied verbatim, whatever it contains.
+		fmt.Fprintf(&sb, "  %s: |-\n    %s\n", name, strings.ReplaceAll(values[name], "\n", "\n    "))
+	}
+	return sb.String()
 }
 
 // sortedKeys keeps a rendered manifest stable across runs, so re-applying an
