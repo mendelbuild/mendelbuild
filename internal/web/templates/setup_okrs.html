@@ -109,15 +109,63 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
     <ul>{{range .Notes.Assumptions}}<li>{{.}}</li>{{end}}</ul>
     {{end}}
 
-    {{if .Notes.OpenQuestions}}
-    <h3>Worth answering</h3>
-    <ul>{{range .Notes.OpenQuestions}}<li>{{.}}</li>{{end}}</ul>
-    {{end}}
-
     {{if .Notes.BudgetNote}}
     <h3>On the budget</h3>
     <p>{{.Notes.BudgetNote}}</p>
     {{end}}
+
+    {{if $.View.Answered}}
+    <h3>You told Mendel</h3>
+    <ul>{{range $.View.Answered}}<li>{{.Question}} &mdash; <strong>{{.AnswerText}}</strong></li>{{end}}</ul>
+    {{end}}
+</div>
+{{end}}
+
+{{if and .Questions (not .Approved)}}
+{{/* These are the questions the drafting agent is told to ask only when the
+     answer would change the objectives, so answering one redrafts. They used to
+     be a bullet list with nothing to answer them with: a fork in the plan that
+     Mendel had spotted and then dropped.
+
+     Suggestions come from the same pass that asked. Someone who does not know
+     what a usable answer looks like can recognise one in a second, and that is
+     the same reason the objectives are drafted rather than asked for. */}}
+<div class="card">
+    <div class="card-head">
+        <h2 class="card-title">Worth answering</h2>
+    </div>
+    <p class="text-sm subtle prose">
+        Mendel filled these in with a guess to get a draft written. Answering
+        any of them redrafts against what you actually said &mdash; leave the
+        rest blank.
+    </p>
+
+    <form method="POST" action="/p/{{$.ProjectID}}/setup/okrs/answers" data-answer-form>
+        {{range .Questions}}
+        <fieldset class="question">
+            <legend class="question-text">{{.Question}}</legend>
+            {{$q := .}}
+            {{range .SuggestedAnswers}}
+            <label class="choice">
+                <input type="radio" name="answer_{{$q.ID}}" value="{{.}}">
+                <span>{{.}}</span>
+            </label>
+            {{end}}
+            <div class="field field-tight">
+                <label for="answer_other_{{.ID}}" class="hint">Or say it yourself</label>
+                <input type="text" id="answer_other_{{.ID}}" name="answer_other_{{.ID}}"
+                       placeholder="{{if .SuggestedAnswers}}Something else{{else}}Your answer{{end}}">
+            </div>
+        </fieldset>
+        {{end}}
+
+        <div class="actions">
+            <button type="submit" class="btn btn-secondary" data-submit>Answer and redraft</button>
+            <span data-working class="text-sm muted" hidden>
+                Redrafting &mdash; this takes up to a minute.
+            </span>
+        </div>
+    </form>
 </div>
 {{end}}
 
@@ -331,13 +379,13 @@ setTimeout(function() { window.location.reload(); }, {{.PollSeconds}} * 1000);
 // Both submits here wait on a model call. Disable the button and say so rather
 // than leaving a dead page the user re-submits.
 (function() {
-    document.querySelectorAll('[data-approve-form], [data-revise-form]').forEach(function(form) {
+    document.querySelectorAll('[data-approve-form], [data-revise-form], [data-answer-form]').forEach(function(form) {
         form.addEventListener('submit', function() {
             const button = form.querySelector('[data-submit]');
             const working = form.querySelector('[data-working]');
             if (button) {
                 button.disabled = true;
-                button.textContent = form.hasAttribute('data-revise-form') ? 'Redrafting…' : 'Approving…';
+                button.textContent = form.hasAttribute('data-approve-form') ? 'Approving…' : 'Redrafting…';
             }
             if (working) working.hidden = false;
         });

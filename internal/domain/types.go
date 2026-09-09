@@ -170,10 +170,9 @@ func (s *Strategy) DraftErrorText(stale bool) string {
 // assumed on their behalf, and kept afterwards as the record of what the plan
 // was built on.
 type StrategyDraftNotes struct {
-	Summary       string   `json:"summary"`
-	Assumptions   []string `json:"assumptions"`
-	OpenQuestions []string `json:"open_questions"`
-	BudgetNote    string   `json:"budget_note"`
+	Summary     string   `json:"summary"`
+	Assumptions []string `json:"assumptions"`
+	BudgetNote  string   `json:"budget_note"`
 }
 
 // Notes decodes DraftNotes, or returns nil when there are none to show.
@@ -1120,4 +1119,42 @@ func (c StrategicConsideration) Covered() bool { return c.CoveredByObjectiveID !
 // looked and said why not.
 func (c StrategicConsideration) Judged() bool {
 	return c.CoveredByObjectiveID != nil || c.UncoveredReason != nil
+}
+
+
+// OpenQuestion is something whose answer would change a project's objectives,
+// asked by the drafting agent because a brief is almost never complete [055].
+//
+// Suggested answers come from the pass that asked the question. Someone reading
+// "what district-level benchmark data do you have access to?" may have no idea
+// what a usable answer looks like, and recognising one is a far easier act than
+// composing it -- which is the same reason a drafted objective is easier to
+// correct than to write.
+type OpenQuestion struct {
+	ID         uuid.UUID `json:"id"`
+	StrategyID uuid.UUID `json:"strategy_id"`
+
+	Question         string   `json:"question"`
+	SuggestedAnswers []string `json:"suggested_answers"`
+
+	// Nil until the user says something. Distinct from an empty answer, which
+	// nothing writes: a question with no answer stays on screen, and one
+	// answered with a shrug should not.
+	Answer     *string    `json:"answer,omitempty"`
+	AnsweredAt *time.Time `json:"answered_at,omitempty"`
+
+	Position  int       `json:"position"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Answered reports whether the user has responded to this question.
+func (q OpenQuestion) Answered() bool { return q.Answer != nil && *q.Answer != "" }
+
+// AnswerText is the answer, or empty when there is none.
+func (q OpenQuestion) AnswerText() string {
+	if q.Answer == nil {
+		return ""
+	}
+	return *q.Answer
 }

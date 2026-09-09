@@ -331,10 +331,21 @@ func (r *CostAuditResponse) BudgetExceeded() bool {
 // draft, so the drafting agent has to be explicit about what it assumed.
 type StrategyBrief struct {
 	ProjectName string  `json:"project_name" desc:"The name the user gave this project."`
+	// Answered questions travel with the brief rather than beside it, because
+	// that is what they are: the parts of the brief the user had not thought to
+	// write down until Mendel asked. Both drafting passes read them, and both
+	// are told not to ask again.
+	Answers []AnsweredQuestion `json:"answered_questions" desc:"Questions Mendel asked about this project and the user's answers. These are settled facts about the project, as good as anything in the brief. Do not ask them again."`
 	Brief       string  `json:"brief" desc:"The user's own description of what they want built, verbatim. Do not assume it is complete or precise."`
 	DeadlineISO string  `json:"deadline" desc:"The date the user wants this done by, YYYY-MM-DD. Empty if they did not give one."`
 	BudgetUSD   float64 `json:"budget_usd" desc:"Total US dollars the user is willing to spend. Zero if they did not give a figure."`
 	TodayISO    string  `json:"today" desc:"Today's date, YYYY-MM-DD. Every target date must fall between this and the deadline."`
+}
+
+// AnsweredQuestion is one open question the user has since answered.
+type AnsweredQuestion struct {
+	Question string `json:"question" desc:"What Mendel asked."`
+	Answer   string `json:"answer" desc:"What the user said. Treat this as given."`
 }
 
 // DraftedKeyResult is one measurable target in a drafted strategy.
@@ -350,6 +361,20 @@ type DraftedObjective struct {
 	Description string             `json:"description" desc:"The outcome, in plain English: who ends up better off and how. Not the mechanism -- an objective that lists actions ('the user can do X, then Y, then Z') is a feature list; say what those actions were for instead. It should still read true if the design changed. One or two sentences, no jargon."`
 	KeyResults  []DraftedKeyResult `json:"key_results" desc:"2 to 3 key results that together tell you whether this objective was met."`
 	Covers      []string           `json:"covers" desc:"Reference keys of the considerations this objective is responsible for, copied exactly from the input ('C1', 'C4'). Empty only if this objective genuinely answers none of them, which is worth a second look."`
+}
+
+// DraftedOpenQuestion is a question the drafter needs answered, together with
+// the answers it thinks are plausible.
+//
+// The suggestions are the point. A question like "what district-level benchmark
+// data do you have access to?" is a good question and a hard one to answer cold;
+// offered "the census tract file", "the state voter file" and "nothing yet",
+// the same person answers it in a second. Recognising a good answer is far
+// easier than composing one, which is why the objectives are drafted rather
+// than asked for in the first place.
+type DraftedOpenQuestion struct {
+	Question         string   `json:"question" desc:"One sentence, addressed to the user, about something whose answer would change these objectives. Ask about this project, not about software projects in general."`
+	SuggestedAnswers []string `json:"suggested_answers" desc:"2 to 4 answers a person might actually give, each a short phrase rather than a sentence. Make them genuinely different from one another, and make one of them the answer you would bet on. Include an honest 'not yet' or 'do not know' where that is a real possibility. Empty array only if you cannot imagine what the answers would look like."`
 }
 
 // UncoveredConsideration is a consideration the drafter chose not to write an
@@ -378,7 +403,7 @@ type DraftedStrategy struct {
 	Objectives    []DraftedObjective `json:"objectives" desc:"2 to 4 objectives covering the work. Fewer is better than padding: every objective here becomes work someone pays for."`
 	BudgetName    string             `json:"budget_name" desc:"A short label for the budget covering this work, e.g. 'MVP build' or 'Q3 build'. Two or three words."`
 	Assumptions   []string           `json:"assumptions" desc:"Specifics you filled in that the brief did not state -- platform, audience, scale, tech choices. One short sentence each. Empty array only if the brief genuinely left nothing open."`
-	OpenQuestions []string           `json:"open_questions" desc:"Questions whose answers would change these objectives, phrased for the user to answer. One sentence each. Empty array if there are none worth asking."`
+	OpenQuestions []DraftedOpenQuestion `json:"open_questions" desc:"Questions whose answers would change these objectives. Empty array if there are none worth asking."`
 	Uncovered     []UncoveredConsideration `json:"uncovered" desc:"Every consideration from the input that no objective covers, with the reason. A consideration must appear either in some objective's covers list or here -- never in neither, and never in both."`
 	BudgetNote    string             `json:"budget_note" desc:"Whether the stated budget and deadline look like enough for this scope, and what you would cut first if they are not. Say plainly when you cannot tell. Do not invent dollar figures for individual pieces of work -- you have no cost history to base them on. 1-3 sentences."`
 }

@@ -325,6 +325,39 @@ CREATE INDEX idx_strategic_considerations_strategy
     ON strategic_considerations(strategy_id, position);
 
 --------------------------------------------------------------------------------
+-- STRATEGY OPEN QUESTIONS
+--------------------------------------------------------------------------------
+-- Questions whose answers would change a project's objectives [added in 055].
+--
+-- They were a list of strings in draft_notes with nothing to answer them with:
+-- every one a fork in the plan Mendel had spotted and then dropped. A row
+-- because an answer has to attach to something.
+--
+-- suggested_answers comes from the pass that asked the question, so someone who
+-- does not know what a reasonable answer looks like can recognise one rather
+-- than compose it. answer is nullable because "has not said" has to be tellable
+-- from "said nothing" -- only the first keeps the question on screen.
+
+CREATE TABLE strategy_open_questions (
+    id UUID PRIMARY KEY,
+    strategy_id UUID NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
+
+    question TEXT NOT NULL,
+    suggested_answers JSONB NOT NULL DEFAULT '[]'::jsonb,
+
+    answer TEXT,
+    answered_at TIMESTAMPTZ,
+
+    position INT NOT NULL,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_strategy_open_questions_strategy
+    ON strategy_open_questions(strategy_id, position);
+
+--------------------------------------------------------------------------------
 -- KEY RESULT HISTORY
 --------------------------------------------------------------------------------
 -- Timeseries of actual KR measurements. Data volumes should be low enough

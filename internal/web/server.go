@@ -734,6 +734,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/setup/okrs/approve", s.handleApproveSetupOKRs)
 		r.Post("/setup/okrs/revise", s.handleReviseSetupOKRs)
 		r.Post("/setup/okrs/redraft", s.handleRedraftSetupOKRs)
+		r.Post("/setup/okrs/answers", s.handleAnswerOpenQuestions)
 
 		// The OKR editor. One screen, which before approval is the review that
 		// sets the project in motion and afterwards edits in place -- rather

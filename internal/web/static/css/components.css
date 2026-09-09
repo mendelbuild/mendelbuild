@@ -879,6 +879,24 @@ a.callout:hover .callout-title { color: var(--tone-progress); }
 .field-row { display: flex; gap: var(--sp-5); flex-wrap: wrap; }
 .field-row > .field { flex: 1; min-width: 200px; }
 
+/* One open question and the answers offered for it. The suggestions are
+   .choice cards, so answering is recognising rather than composing. */
+.question {
+    border: none;
+    border-left: 3px solid var(--line-strong);
+    padding: 0 0 0 var(--sp-4);
+    margin: 0 0 var(--sp-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+}
+.question:last-of-type { margin-bottom: var(--sp-4); }
+.question-text {
+    padding: 0;
+    margin-bottom: var(--sp-1);
+    font-weight: 650;
+}
+
 /* A radio or checkbox presented as a selectable card. */
 .choice {
     display: flex;

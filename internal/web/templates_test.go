@@ -426,11 +426,15 @@ func TestSetupPagesRender(t *testing.T) {
 			Project:  &domain.Project{ID: projectID, Name: "adulting-101"},
 			Strategy: &domain.Strategy{ID: strategyID, Name: "MVP Launch"},
 			Notes: &domain.StrategyDraftNotes{
-				Summary:       "A budgeting tool for people in their first job.",
-				Assumptions:   []string{"Web, mobile-first, no native app."},
-				OpenQuestions: []string{"Is there an existing audience to launch to?"},
-				BudgetNote:    "250 dollars is enough for an MVP of this shape.",
+				Summary:     "A budgeting tool for people in their first job.",
+				Assumptions: []string{"Web, mobile-first, no native app."},
+				BudgetNote:  "250 dollars is enough for an MVP of this shape.",
 			},
+			Questions: []domain.OpenQuestion{{
+				ID:               uuid.New(),
+				Question:         "Is there an existing audience to launch to?",
+				SuggestedAnswers: []string{"A mailing list", "Nothing yet"},
+			}},
 			Objectives: []SetupObjectiveView{{Objective: objective, KeyResults: []domain.KeyResult{kr}}},
 			Funding: &domain.FundingSource{
 				ID: uuid.New(), StrategyID: strategyID, Name: "MVP build",
@@ -444,6 +448,13 @@ func TestSetupPagesRender(t *testing.T) {
 			view.Ribbon.Headline,
 			"A budgeting tool for people in their first job.",
 			"Is there an existing audience to launch to?",
+
+			// A question with nowhere to answer it is what this replaced, so
+			// the suggestions and the free-text box are the assertion.
+			"Nothing yet",
+			"answer_" + view.Questions[0].ID.String(),
+			"answer_other_" + view.Questions[0].ID.String(),
+
 			objective.Description,
 			"completions", // html/template escapes the comparison in the value attribute
 			feedback,

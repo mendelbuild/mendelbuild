@@ -51,6 +51,8 @@ Assumptions and open questions:
 A brief is almost never complete. You will have to fill in specifics -- platform, audience, scale, stack -- to write anything concrete.
 - Every specific you supplied that the brief did not state goes in assumptions, one short sentence each.
 - Anything whose answer would change these objectives goes in open_questions, phrased for the user to answer.
+- Every open question carries 2 to 4 suggested answers. The person reading this wrote a paragraph about what they want and is not an expert in anything downstream of it; a good question they cannot answer cold is worth no more than a question you did not ask. Offer the answers you think are plausible, make them genuinely different from each other, and include an honest "not yet" where that is a real possibility.
+- Do not ask a question the brief already answers, and do not ask one that has been answered below. Answers you are given are settled: build on them, and put what they imply in assumptions rather than asking again in different words.
 - Do not present invented specifics as though the user had given them. The user can only correct what they can see, and they are approving this next.`
 
 const strategistReviseSystemPrompt = `You are revising a drafted strategy based on the user's feedback.
@@ -61,7 +63,8 @@ Beyond that:
 - The feedback is the point. Act on it directly rather than producing a differently-worded version of the same draft.
 - Keep the parts the user did not object to. Rewriting untouched objectives wastes their re-reading.
 - If the feedback conflicts with something you believe matters, do what they asked and record your concern in open_questions rather than quietly ignoring them.
-- If the feedback is too vague to act on, say what you would need to know in open_questions instead of guessing at length.
+- If the feedback is too vague to act on, say what you would need to know in open_questions instead of guessing at length, with suggested answers as when drafting.
+- Answered questions are settled. Do not ask them again, in any wording: act on the answer, and record what it implies in assumptions.
 - The considerations travel with the draft and the coverage rule still holds: every one of them lands in an objective's covers list or in uncovered with a reason. If the feedback asks for something you had declined, cover it now and say in budget_note what gave way to make room.`
 
 // errUnusableDraft is a response that satisfied the schema but not the point.

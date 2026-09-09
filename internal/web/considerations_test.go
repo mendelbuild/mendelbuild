@@ -1,6 +1,9 @@
 package web
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -213,5 +216,64 @@ func TestRepairBarMatchesTheTunersGuide(t *testing.T) {
 	}
 	if c := complaintsFrom([]domain.Objective{{ID: id, TuneScore: &justUnder}}, nil); len(c) != 1 {
 		t.Error("below 0.6 is 'needs work' and should be repaired")
+	}
+}
+
+// Typed text beats a chosen suggestion. Someone who picked one and then wrote
+// something meant the thing they wrote: the radio was probably how they started
+// reading the question, and the box is the more deliberate of the two acts.
+func TestTypedAnswerBeatsTheChosenSuggestion(t *testing.T) {
+	q := domain.OpenQuestion{ID: uuid.New(), Question: "One office, or many?"}
+
+	cases := []struct {
+		name           string
+		chosen, typed  string
+		want           string
+	}{
+		{"suggestion only", "One office", "", "One office"},
+		{"typed only", "", "Three, sharing a list", "Three, sharing a list"},
+		{"both", "One office", "Three, sharing a list", "Three, sharing a list"},
+		{"neither", "", "", ""},
+		{"typed whitespace is not an answer", "One office", "   ", "One office"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			form := url.Values{}
+			form.Set("answer_"+q.ID.String(), tc.chosen)
+			form.Set("answer_other_"+q.ID.String(), tc.typed)
+			r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			if got := answerFromForm(r, q); got != tc.want {
+				t.Errorf("answerFromForm = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// An answered question renders as text, not as inputs, so it submits no fields
+// at all. Reading that absence as an empty answer wiped every answer the user
+// had already given, every time they answered another one.
+func TestQuestionsAbsentFromTheFormAreLeftAlone(t *testing.T) {
+	shown := domain.OpenQuestion{ID: uuid.New(), Question: "One office, or many?"}
+	answer := "State voter file"
+	alreadyAnswered := domain.OpenQuestion{
+		ID: uuid.New(), Question: "What benchmark data do you have?", Answer: &answer,
+	}
+
+	form := url.Values{}
+	form.Set("answer_"+shown.ID.String(), "One office")
+	form.Set("answer_other_"+shown.ID.String(), "")
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := r.ParseForm(); err != nil {
+		t.Fatalf("parse form: %v", err)
+	}
+
+	if !questionWasOnTheForm(r, shown) {
+		t.Error("the question that was rendered should be treated as answerable")
+	}
+	if questionWasOnTheForm(r, alreadyAnswered) {
+		t.Error("a question absent from the form must not be touched")
 	}
 }

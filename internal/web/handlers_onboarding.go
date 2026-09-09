@@ -56,6 +56,14 @@ type SetupOKRView struct {
 	// says rather than showing as "nothing to consider".
 	Considerations []SetupConsiderationView
 
+	// The questions whose answers would change these objectives, with somewhere
+	// to answer them. Empty once they are all answered.
+	Questions []domain.OpenQuestion
+
+	// Answered ones, shown separately: they read as things Mendel now knows
+	// about the project rather than as things it is still waiting on.
+	Answered []domain.OpenQuestion
+
 	Funding    *domain.FundingSource
 	Ribbon     *RibbonView
 	Error      string
@@ -349,12 +357,27 @@ func (s *Server) saveDraftedStrategy(ctx context.Context, strategyID uuid.UUID,
 		}
 	}
 	if err := s.db.SetStrategyDraftNotes(ctx, strategyID, &domain.StrategyDraftNotes{
-		Summary:       drafted.Summary,
-		Assumptions:   drafted.Assumptions,
-		OpenQuestions: drafted.OpenQuestions,
-		BudgetNote:    drafted.BudgetNote,
+		Summary:     drafted.Summary,
+		Assumptions: drafted.Assumptions,
+		BudgetNote:  drafted.BudgetNote,
 	}); err != nil {
 		return fmt.Errorf("save draft notes: %w", err)
+	}
+
+	// Questions go to their own table, where an answer has something to attach
+	// to. Only the unanswered ones are replaced: an answer is a fact about the
+	// project rather than about the draft that prompted it.
+	questions := make([]db.DraftOpenQuestion, 0, len(drafted.OpenQuestions))
+	for _, q := range drafted.OpenQuestions {
+		if strings.TrimSpace(q.Question) == "" {
+			continue
+		}
+		questions = append(questions, db.DraftOpenQuestion{
+			Question: q.Question, SuggestedAnswers: q.SuggestedAnswers,
+		})
+	}
+	if err := s.db.ReplaceUnansweredQuestions(ctx, strategyID, questions); err != nil {
+		return fmt.Errorf("save open questions: %w", err)
 	}
 
 	if err := s.syncDraftBudget(ctx, strategyID, drafted.BudgetName, budgetUSD, deadline); err != nil {
@@ -684,6 +707,15 @@ func (s *Server) renderSetupOKRs(ctx context.Context, w http.ResponseWriter, r *
 		view.Objectives = objViews
 		view.Notes = strategy.Notes()
 		view.Considerations = considerationViews(ctx, s, strategy.ID, objViews)
+		if questions, err := s.db.GetOpenQuestions(ctx, strategy.ID); err == nil {
+			for _, q := range questions {
+				if q.Answered() {
+					view.Answered = append(view.Answered, q)
+				} else {
+					view.Questions = append(view.Questions, q)
+				}
+			}
+		}
 
 		if sources, err := s.db.GetFundingSourcesByStrategy(ctx, strategy.ID); err == nil && len(sources) > 0 {
 			view.Funding = &sources[0]
@@ -817,6 +849,21 @@ func (s *Server) rebuildBrief(ctx context.Context, project *domain.Project, stra
 			brief.DeadlineISO = deadline.Format("2006-01-02")
 		}
 	}
+
+	// What the user has since told Mendel, travelling as part of the brief.
+	// These are the parts of it they had not thought to write down until they
+	// were asked, and both drafting passes are told to treat them as given.
+	if questions, err := s.db.GetOpenQuestions(ctx, strategy.ID); err == nil {
+		for _, q := range questions {
+			if !q.Answered() {
+				continue
+			}
+			brief.Answers = append(brief.Answers, agent.AnsweredQuestion{
+				Question: q.Question, Answer: q.AnswerText(),
+			})
+		}
+	}
+
 	return brief, deadline, budgetUSD
 }
 
@@ -827,8 +874,17 @@ func (s *Server) currentDraft(ctx context.Context, strategy *domain.Strategy) *a
 	if notes := strategy.Notes(); notes != nil {
 		draft.Summary = notes.Summary
 		draft.Assumptions = notes.Assumptions
-		draft.OpenQuestions = notes.OpenQuestions
 		draft.BudgetNote = notes.BudgetNote
+	}
+	if questions, err := s.db.GetOpenQuestions(ctx, strategy.ID); err == nil {
+		for _, q := range questions {
+			if q.Answered() {
+				continue // Settled, and travelling with the brief instead.
+			}
+			draft.OpenQuestions = append(draft.OpenQuestions, agent.DraftedOpenQuestion{
+				Question: q.Question, SuggestedAnswers: q.SuggestedAnswers,
+			})
+		}
 	}
 
 	objectives, err := s.db.GetObjectivesByStrategy(ctx, strategy.ID)
@@ -1384,4 +1440,110 @@ func (s *Server) handleSaveOKRs(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	http.Redirect(w, r, fmt.Sprintf("/p/%s/okr", projectID), http.StatusSeeOther)
+}
+
+// handleAnswerOpenQuestions records the user's answers and redrafts against
+// them.
+//
+// A redraft rather than a quiet save, because the questions are the ones whose
+// answers change the objectives -- that is the test the drafting agent is told
+// to apply before asking one. Saving an answer and leaving the draft alone
+// would be collecting the answer to a question Mendel had said it needed.
+func (s *Server) handleAnswerOpenQuestions(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		http.Error(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	project, err := s.db.GetProject(ctx, projectID)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+	strategies, err := s.db.GetStrategiesByProject(ctx, projectID)
+	if err != nil || len(strategies) == 0 {
+		http.Error(w, "no strategy found", http.StatusNotFound)
+		return
+	}
+	strategy := strategies[0]
+
+	questions, err := s.db.GetOpenQuestions(ctx, strategy.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	answered := 0
+	for _, q := range questions {
+		// A question that was not on the form is not a question answered with
+		// silence. Answered ones render as text rather than inputs, so they
+		// submit no fields at all -- and reading their absence as an empty
+		// answer wiped every answer the user had already given, on every save.
+		if !questionWasOnTheForm(r, q) {
+			continue
+		}
+		answer := answerFromForm(r, q)
+		if answer == q.AnswerText() {
+			continue
+		}
+		if err := s.db.AnswerOpenQuestion(ctx, q.ID, answer); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		answered++
+	}
+
+	// Nothing said, nothing to redraft. Spending a model call to produce the
+	// same draft would only cost the user a minute of spinner.
+	if answered == 0 {
+		http.Redirect(w, r, fmt.Sprintf("/p/%s/setup/okrs", projectID), http.StatusSeeOther)
+		return
+	}
+
+	brief, deadline, budgetUSD := s.rebuildBrief(ctx, project, &strategy)
+	current := s.currentDraft(ctx, &strategy)
+
+	started, err := s.db.BeginStrategyDraft(ctx, strategy.ID)
+	if err != nil {
+		http.Error(w, "could not start the draft: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if started {
+		s.startDraft(projectID, strategy.ID, brief, deadline, budgetUSD, current,
+			"The user has answered questions you asked. Their answers are in the brief. "+
+				"Redraft against them: an answer that settles something you had assumed belongs in "+
+				"assumptions now, and an answer that changes what this project is for should change "+
+				"the objectives. Do not ask any of them again.")
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("/p/%s/setup/okrs", projectID), http.StatusSeeOther)
+}
+
+// questionWasOnTheForm reports whether the submitted form carried this
+// question's fields at all, which is a different thing from carrying them empty.
+// Presence is read from the keys rather than the values, because "left blank"
+// and "not shown" are both the empty string by the time you look at a value.
+func questionWasOnTheForm(r *http.Request, q domain.OpenQuestion) bool {
+	_, chosen := r.Form["answer_"+q.ID.String()]
+	_, typed := r.Form["answer_other_"+q.ID.String()]
+	return chosen || typed
+}
+
+// answerFromForm reads one question's answer: a chosen suggestion, or whatever
+// was typed into its own box.
+//
+// Typed text wins over a chosen suggestion. Someone who picked one and then
+// wrote something meant the thing they wrote -- the radio was probably how they
+// started reading, and the box is the more deliberate act of the two.
+func answerFromForm(r *http.Request, q domain.OpenQuestion) string {
+	if typed := strings.TrimSpace(r.FormValue("answer_other_" + q.ID.String())); typed != "" {
+		return typed
+	}
+	return strings.TrimSpace(r.FormValue("answer_" + q.ID.String()))
 }
