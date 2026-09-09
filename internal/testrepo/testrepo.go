@@ -75,3 +75,26 @@ func Path(t *testing.T, name string) string {
 // that a declaration either parses or is refused with a reason, say -- and those
 // want the whole set rather than whichever was to hand.
 func All() []string { return []string{Ledger, Notes, Pong} }
+
+// Schema returns a fixture's database schema, or "" when it has none.
+//
+// Read from the fixture rather than built in Go, for the same reason the
+// `.mendel` specs are: a schema written beside an assertion is the shape its
+// author expected, and a schema written as a repository's own file is the shape
+// something would actually have. The two drift, and only the second notices.
+//
+// An empty result is an answer rather than a gap. `pong` has no datastore, and
+// `notes` has one Mendel cannot adapt — which declines before anything connects,
+// so there is nothing for a schema to be applied to.
+func Schema(t *testing.T, name string) string {
+	t.Helper()
+
+	raw, err := os.ReadFile(filepath.Join(Path(t, name), "schema.sql"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		t.Fatalf("reading %s's schema: %v", name, err)
+	}
+	return string(raw)
+}

@@ -18,6 +18,22 @@ than by being another example:
 | `notes` | MySQL | Mendel has no adapter, and must decline **by name** rather than approximate |
 | `pong` | none | A presentation-only experiment, which must not be blocked on database requirements it does not have |
 
+A fixture carries its **database** as well as its files where it has one.
+`ledger/schema.sql` is what its migrations would have left, and it is what the
+experiment declared in its own `.mendel/experiment.json` is admitted against —
+so the declaration, the schema and the code all have to agree, and a drift in
+any of them fails rather than being discovered against a real project that
+someone had redeployed.
+
+That is the point of testing against these rather than against a live Mendel
+project: a real project changes under you, so a failure is ambiguous between
+"Mendel is broken" and "somebody deployed something", and there is no way back
+to a known state. A fixture is the same every time.
+
+`notes` and `pong` carry no schema, and that is an answer rather than a gap.
+`pong` has no datastore; `notes` has one Mendel cannot adapt, which declines
+before anything connects, so there would be nothing to apply a schema to.
+
 None of these need Docker to be useful. A fixture is a repository on disk, and
 most of what reads one — the `.mendel` specs, the declaration, the decline for a
 datastore with no adapter — is a function over files and needs nothing running.
