@@ -31,6 +31,12 @@ type MatrixRow struct {
 	// merely mention it. An area appears in at most one.
 	Required []AreaID
 	Warned   []AreaID
+
+	// Built is whether this condition has an evaluator. False means designed
+	// and not written: it reports as `unimplemented`, which is neither
+	// satisfied nor failed, and it renders differently in the table so a hole
+	// cannot be read as a finished cell.
+	Built bool
 }
 
 // Shared reports whether more than one area wants this condition. The shared
@@ -52,6 +58,7 @@ func (c *Catalogue) Matrix() []MatrixRow {
 			Remedy:      cond.Remedy,
 			DeclaredAt:  cond.DeclaredAt,
 			SatisfiedAt: cond.SatisfiedAt,
+			Built:       cond.Evaluate != nil,
 		}
 		for _, a := range c.Areas() {
 			switch {
@@ -99,6 +106,14 @@ func (c *Catalogue) MatrixMarkdown() string {
 			row.Name, row.Evidence, row.Remedy, row.DeclaredAt, row.SatisfiedAt)
 		for _, a := range areas {
 			switch {
+			case contains(row.Required, a.ID) && !row.Built:
+				// A required condition nobody has written yet. Marked apart
+				// from a built one because the alternative renders a hole as a
+				// finished cell -- and this table is the thing a reader trusts
+				// when deciding whether an area is covered. Six of these are
+				// deferred on purpose; a reader who cannot see which is a
+				// reader who has to be told, and telling does not survive.
+				b.WriteString(" ◌ |")
 			case contains(row.Required, a.ID):
 				b.WriteString(" ● |")
 			case contains(row.Warned, a.ID):

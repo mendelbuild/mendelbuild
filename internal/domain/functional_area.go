@@ -73,6 +73,14 @@ const (
 	ScopeProject
 	ScopeChannel
 	ScopeHop
+
+	// ScopeExperiment sits here because an experiment belongs to a hop and its
+	// Arms are Variations: finer than the hop that holds it, coarser than the
+	// several variations that are its arms. The placement is what makes
+	// BuildCatalogue's coarse-cannot-depend-on-fine check mean the right thing
+	// for an admission condition.
+	ScopeExperiment
+
 	ScopeVariation
 	ScopeDeployment
 )
@@ -89,6 +97,8 @@ func (s Scope) String() string {
 		return "channel"
 	case ScopeHop:
 		return "hop"
+	case ScopeExperiment:
+		return "experiment"
 	case ScopeVariation:
 		return "variation"
 	case ScopeDeployment:
@@ -204,6 +214,17 @@ type FunctionalArea struct {
 	Warns []ConditionID
 }
 
+// AdmissionObservation is one experiment and its Arms, as declared.
+//
+// Nil Experiment is a real and common state, not a gap: every condition in the
+// admission area has to answer about a project with no experiment in hand, or
+// it is not the total predicate D51 requires. They answer "there is no
+// experiment to admit", which is true rather than evasive.
+type AdmissionObservation struct {
+	Experiment *Experiment
+	Arms       []ExperimentArm
+}
+
 // Observations is everything gathered for one evaluation.
 //
 // One struct rather than a typed input per area, because conditions are shared:
@@ -229,8 +250,18 @@ type Observations struct {
 	MissingChannelCredentials   []string
 
 	// Experiment is what Mendel found about the cluster, the production
-	// hostname and the verification datastore.
+	// hostname and the verification datastore. Project-level: it answers
+	// whether this project is equipped to run experiments at all.
 	Experiment ExperimentObservation
+
+	// Admission is the particular experiment an `experiment-admission`
+	// assessment is about, and is empty for every other area.
+	//
+	// This is the first observation finer than a project, which is what §17 O25
+	// asked about. It is carried here rather than passed to Assess separately so
+	// that evaluators keep the signature that makes them testable in bulk: one
+	// pure function of one struct, whatever the subject.
+	Admission AdmissionObservation
 
 	// Requirements is what the code being deployed needs, already judged against
 	// the deployment in question by EvaluateRequirements -- which is where the

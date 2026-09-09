@@ -424,34 +424,55 @@ in *this* document means a reader reasoning about a matrix that no longer
 exists. The design is about gates saying one thing and pages saying another; a
 plan saying a third would be the joke writing itself.
 
-● required ○ a warning (§4.2.1), which does not gate
+● required ◌ required, and no evaluator written yet ○ a warning (§4.2.1), which
+does not gate
+
+A `◌` is not a gap in the design. It is a condition this document names, the
+catalogue carries, and nobody has implemented -- and `Assess` reports it as
+`unimplemented`, which is neither satisfied nor failed, so an area holding one
+is unavailable and says why. The mark exists because the alternative is that a
+deferred condition renders identically to a finished one, and this table is what
+a reader trusts when deciding whether an area is covered.
 
 <!-- BEGIN GENERATED MATRIX -->
-| Functional Area Condition | Evidence | Remedy | Declared | Satisfied | demo | experiment | named-demos | production |
-|---|---|---|---|---|:-:|:-:|:-:|:-:|
-| That combination is one Mendel can deploy | derived | unavailable | project | channel | ● |  |  | ● |
-| Choose how this project deploys | asked | user | project | project | ● |  |  | ● |
-| Store the credentials that channel needs | asked | user | channel | project | ● |  |  | ● |
-| The deployment has a URL a provider will accept | derived | unavailable | deployment | deployment | ● |  |  | ● |
-| Configure the encryption key | observed | user | installation | installation | ● |  |  | ● |
-| Store a token Mendel can push with | asked | user | project | project | ● |  |  | ● |
-| Give Mendel a repository to write into | asked | user | project | project | ● |  |  | ● |
-| Confirm the setup steps done elsewhere | declared | user | variation | deployment | ● |  |  | ● |
-| Supply the values this code needs | declared | user | variation | project | ● |  |  | ● |
-| Prove the demo path works | probed | mendel | channel | channel | ● |  |  |  |
-| Prove the production path works | probed | mendel | channel | channel |  |  |  | ● |
-| A controller that can match an experiment cookie | probed | either | channel | channel |  | ● |  |  |
-| Cluster can route per experiment arm | probed | either | channel | channel |  | ● |  |  |
-| Give Mendel a domain you control | asked | user | project | project |  |  | ● |  |
-| Certificate issued | observed | elsewhere | project | project |  |  | ● |  |
-| Create the certificate record | observed | user | project | project |  |  | ● |  |
-| Mendel reserves an address | derived | mendel | project | project |  |  | ● |  |
-| Create the wildcard A record | observed | user | project | project |  |  | ● |  |
-| Arms can be given the environment production runs with | observed | user | variation | project |  | ● |  |  |
-| A non-production datastore to verify against | asked | user | project | project |  | ● |  |  |
-| That datastore is reachable | probed | user | project | project |  | ● |  |  |
-| Production answers at a name | observed | user | project | project |  | ● |  |  |
-| That name serves https | observed | user | project | project |  | ○ |  |  |
+| Functional Area Condition | Evidence | Remedy | Declared | Satisfied | demo | experiment-admission | live-experiments | named-demos | production |
+|---|---|---|---|---|:-:|:-:|:-:|:-:|:-:|
+| That combination is one Mendel can deploy | derived | unavailable | project | channel | ● |  |  |  | ● |
+| Choose how this project deploys | asked | user | project | project | ● |  |  |  | ● |
+| Store the credentials that channel needs | asked | user | channel | project | ● |  |  |  | ● |
+| The deployment has a URL a provider will accept | derived | unavailable | deployment | deployment | ● |  |  |  | ● |
+| Configure the encryption key | observed | user | installation | installation | ● |  |  |  | ● |
+| Store a token Mendel can push with | asked | user | project | project | ● |  |  |  | ● |
+| Give Mendel a repository to write into | asked | user | project | project | ● |  |  |  | ● |
+| Confirm the setup steps done elsewhere | declared | user | variation | deployment | ● |  |  |  | ● |
+| Supply the values this code needs | declared | user | variation | project | ● |  |  |  | ● |
+| Traffic adds up, with exactly one mainline | derived | user | experiment | experiment |  | ● |  |  |  |
+| That key can be read at the edge | declared | user | experiment | experiment |  | ● |  |  |  |
+| The experiment says what one participant is | declared | user | experiment | experiment |  | ● |  |  |  |
+| Whatever it changes is purely additive | probed | user | variation | experiment |  | ◌ |  |  |  |
+| The Variation changes one deployable unit | probed | user | variation | experiment |  | ◌ |  |  |  |
+| Any schema change it declares can be undone | declared | user | variation | experiment |  | ● |  |  |  |
+| Any schema change it declares stays in its own namespace | declared | user | variation | experiment |  | ● |  |  |  |
+| The platform can route by assignment unit | declared | unavailable | channel | channel |  | ◌ |  |  |  |
+| The projected archive fits | derived | unavailable | experiment | experiment |  | ◌ |  |  |  |
+| Effect size, duration and stopping rule are set | asked | user | experiment | experiment |  | ● |  |  |  |
+| Whatever it touches has an identity | probed | unavailable | variation | experiment |  | ◌ |  |  |  |
+| The verification datastore agrees with production | probed | user | project | experiment |  | ◌ |  |  |  |
+| The withdrawal dissonance is acknowledged | asked | user | experiment | experiment |  | ● |  |  |  |
+| Prove the demo path works | probed | mendel | channel | channel | ● |  |  |  |  |
+| Prove the production path works | probed | mendel | channel | channel |  |  |  |  | ● |
+| A controller that can match an experiment cookie | probed | either | channel | channel |  |  | ● |  |  |
+| Cluster can route per experiment arm | probed | either | channel | channel |  |  | ● |  |  |
+| Give Mendel a domain you control | asked | user | project | project |  |  |  | ● |  |
+| Certificate issued | observed | elsewhere | project | project |  |  |  | ● |  |
+| Create the certificate record | observed | user | project | project |  |  |  | ● |  |
+| Mendel reserves an address | derived | mendel | project | project |  |  |  | ● |  |
+| Create the wildcard A record | observed | user | project | project |  |  |  | ● |  |
+| Arms can be given the environment production runs with | observed | user | variation | project |  |  | ● |  |  |
+| A non-production datastore to verify against | asked | user | project | project |  |  | ● |  |  |
+| That datastore is reachable | probed | user | project | project |  |  | ● |  |  |
+| Production answers at a name | observed | user | project | project |  |  | ● |  |  |
+| That name serves https | observed | user | project | project |  |  | ○ |  |  |
 <!-- END GENERATED MATRIX -->
 
 Two rows of the six this document describes are not in it. **Code** — write code
@@ -584,30 +605,39 @@ something that ribbon does well). *Enforce Arm containment* would carry the
 privileged datastore credential from §13 §15, and is blocked on the enforcement
 work rather than on anything here.
 
-**Within the experiment row, the conditions from §16 that have no evaluator
-yet:**
+**The per-experiment conditions are their own area now.** They were listed here
+as a hole in the experiment row; they are `experiment-admission` in §4.2, with a
+subject one step finer than a project (`ScopeExperiment`, between hop and
+variation — an experiment belongs to a hop and its Arms are Variations).
 
-| Condition | Evidence | Remedy | Source |
-|---|---|---|---|
-| The platform can route by Assignment Unit | declared | unavailable | §13 §6.3 — Cloud Run cannot |
-| The Assignment Unit and its key are declared | declared | user | `.mendel/experiment.json` |
-| The key is edge-extractable | declared | user | §16 D30 |
-| The Variation changes one deployable unit | probed | user | §16 D27 |
-| An effect size, duration and stopping rule are set | asked | user | `NotReadyToStart` |
-| The withdrawal dissonance is acknowledged | asked | user | typed phrase |
-| The allocation totals 100 with one mainline | derived | user | `ValidateAllocation` |
-| Any migration it declares has both an up and a down | declared | user | "an Arm that cannot be withdrawn cannot be run" |
-| Any migration it declares is namespaced | declared | user | `mendel_exp_` |
-| Whatever it changes is purely additive | probed | user | the affirmative judgment |
-| Whatever it touches exists and has an identity | probed | unavailable | else the archive cannot be restored |
-| The verification datastore agrees with production | probed | user | else the proof is about the wrong schema |
-| The projected archive size is under the ceiling | derived | unavailable | §13 §9 |
+Seven of the thirteen have evaluators. Six do not, and they are **declared in the
+catalogue with a nil evaluator rather than left in this list**, which is the
+change that matters: a nil evaluator reports as `unimplemented`, renders as `◌`
+in the generated table, and makes the area unavailable with a stated reason. A
+condition deferred in prose is one somebody has to remember. A condition deferred
+as a nil evaluator is one a test renders every time.
 
-Several of these are enforced today, correctly, by `experiment.Applier.Admit`
-and `Experiment.NotReadyToStart` — but *per experiment*, at admission, which is
-a different question from whether a project can run one at all. The area in
-§4.2 answers the project-level question; folding in the per-experiment ones
-means Assess taking a subject finer than a project, which O25 records.
+| Condition | Evidence | Why not yet |
+|---|---|---|
+| The platform can route by Assignment Unit | declared | No platform record carries this, and a hardcoded list of platforms in Go is forbidden outright |
+| The Variation changes one deployable unit | probed | Needs a real deployment to look at |
+| Whatever it changes is purely additive | probed | Settled by applying the migration and diffing, which an evaluator cannot do |
+| Whatever it touches exists and has an identity | probed | Same |
+| The verification datastore agrees with production | probed | Same |
+| The projected archive size is under the ceiling | derived | §13 §9's ceiling does not exist in code |
+
+The four `probed` ones were not merely unwritten but **architecturally
+impossible**: `Evaluate` is `func(Observations) Finding`, and that purity is what
+lets `TestEveryConditionIsATotalPredicate` interrogate every condition against
+synthetic situations and what makes the page free to render. §20's adapter is
+what dissolves the conflict — an `admit` phase runs as a Job, records its result
+in `adapter_invocations`, and the condition becomes a pure read of a stored fact,
+exactly as `probeFacts` reads a probe.
+
+**`Applier.Admit` keeps refusing regardless.** A catalogue row is a forecast; the
+check against the live datastore at the moment of action is what is actually
+safe. The area mirrors those checks so a reader can see them coming, and does not
+replace them.
 
 **Everywhere.** One condition applies to every row and is left out of the table
 because a column of solid dots carries no information: **the project exists and
@@ -750,13 +780,17 @@ draft failed" from "no objectives yet" with three different sentences for what i
 arguably one condition. Forcing it into the catalogue may lose something the
 ribbon does well. Listed, not committed.
 
-**O25 — Can `Assess` take a subject finer than a project?** §5 lists thirteen
-experiment conditions that are enforced today by `Applier.Admit` and
-`NotReadyToStart`, per experiment, at admission. The area in §4.2 answers a
-project-level question — can this project run an experiment at all — and folding
-the per-experiment ones in means an assessment about a particular experiment,
-which `Observations` can carry but nothing yet asks for. The scopes are already
-declared for it; what is missing is a caller with a reason.
+**O25 — Can `Assess` take a subject finer than a project? — yes, and it did.**
+The per-experiment conditions are `experiment-admission`, whose subject is one
+experiment carried on `Observations.Admission`. Evaluators keep the signature
+that makes them testable in bulk; only what is in the struct changed.
+
+The framing was the expensive part. Asking one question about all thirteen made
+them look like one blocked unit, when seven were only ever waiting for somebody
+to write them and six are waiting on different things — four on §20's adapter,
+one on a platform capability record, one on a ceiling that does not exist. The
+scope rung answered itself once the schema was read: `experiments` carries a
+`hop_id` and its Arms are Variations, so `ScopeExperiment` goes between the two.
 
 **O24 — What happens to an input request when its condition is satisfied some
 other way?** Step 5 stopped short of filing input requests for `yourmove` steps
@@ -1100,10 +1134,28 @@ implementation without collision. Step 6 is the merge point.
    six areas as though all six existed, where two have no conditions at all —
    §5 now says which and why.
 
-8. **What is left**, and it is additions rather than architecture. The *Code*
-   and *Enforce* rows have no conditions yet; thirteen experiment conditions are
-   enforced per-experiment at admission rather than per-project here (O25); and
-   `yourmove` steps still do not file input requests (O24). §5 has the list.
+8. **The per-experiment area.** — **done.** `experiment-admission`, thirteen
+   conditions with a subject one rung finer than a project. Seven have
+   evaluators; six are declared with none, so they report as `unimplemented`,
+   render as `◌`, and hold the area unavailable until somebody writes them.
+
+   The old `experiment` area is `live-experiments`, because one name was
+   answering two questions — whether a project is *equipped* to run experiments,
+   and whether a *particular* experiment may start — and that conflation is what
+   made O25 read as one blocked unit rather than as two pieces of very different
+   size. Not `experiment-capable`: `experiment.Capabilities` already means
+   something else two files away, which is the collision the naming rule exists
+   to catch.
+
+   The matrix grew a third mark for it. `◌` is a required condition with no
+   evaluator, and it exists because the alternative renders a deliberate hole
+   identically to a finished cell — in the one table a reader consults to decide
+   whether an area is covered.
+
+9. **What is left**, and it is additions rather than architecture. The *Code*
+   and *Enforce* rows have no conditions yet; six admission conditions have no
+   evaluator, four of them waiting on §20's `admit` phase; and `yourmove` steps
+   still do not file input requests (O24). §5 has the list.
 
 
 Steps 1 and 2 are the ones that decide whether any of the rest is worth

@@ -26,7 +26,17 @@ package domain
 // the difference that matters, since a flag anyone can set is a flag two people
 // will set for different reasons.
 
-const AreaExperiment AreaID = "experiment"
+// AreaLiveExperiments is the project-level question: can this project run live
+// experiments at all. Renamed from "experiment", which answered to two
+// questions at once -- whether a project is equipped, and whether a particular
+// experiment may start. The second is AreaExperimentAdmission, and the
+// ambiguity between them is what made §17 O25 read as one blocked unit when it
+// was two pieces of work of very different sizes.
+//
+// Not "experiment-capable": `experiment.Capabilities` is a live type two files
+// away -- the adapter's self-report about a datastore -- and CLAUDE.md's naming
+// rule records "capability" as already rejected for exactly this collision.
+const AreaLiveExperiments AreaID = "live-experiments"
 
 const (
 	CondGatewayAPI     ConditionID = "cluster.gateway-api-enabled"
@@ -198,8 +208,8 @@ func experimentConditions() []Condition {
 // renders in, and it is the order these are worth establishing.
 func experimentArea() FunctionalArea {
 	return FunctionalArea{
-		ID:   AreaExperiment,
-		Name: "Run a live-traffic experiment",
+		ID:   AreaLiveExperiments,
+		Name: "Run live-traffic experiments",
 		Requires: []ConditionID{
 			CondGatewayAPI, CondCookieMatching, CondProdHostname,
 			CondArmEnvironment, CondProvableSchema, CondVerifyReachable,

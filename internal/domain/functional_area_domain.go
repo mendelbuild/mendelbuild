@@ -111,6 +111,8 @@ var domainCatalogue = func() *Catalogue {
 	conditions := domainConditions()
 	conditions = append(conditions, deployConditions()...)
 	conditions = append(conditions, experimentConditions()...)
+	conditions = append(conditions, admissionConditions()...)
+	conditions = append(conditions, unbuiltAdmissionConditions()...)
 
 	areas := []FunctionalArea{{
 		ID:       AreaNamedDemos,
@@ -119,6 +121,7 @@ var domainCatalogue = func() *Catalogue {
 	}}
 	areas = append(areas, deployAreas()...)
 	areas = append(areas, experimentArea())
+	areas = append(areas, admissionArea())
 
 	return NewCatalogue(conditions, areas)
 }()

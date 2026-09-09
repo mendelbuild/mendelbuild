@@ -131,7 +131,7 @@ type ExperimentObservation struct {
 // functional_area_experiment.go; what is left here is the observation this is
 // judged against, and the rendering the page already expects.
 func ExperimentReadiness(obs ExperimentObservation) []ReadinessStep {
-	a := FunctionalAreas().Assess(AreaExperiment, Observations{
+	a := FunctionalAreas().Assess(AreaLiveExperiments, Observations{
 		ProjectDomain: &ProjectDomain{},
 		Experiment:    obs,
 	})
